@@ -48,7 +48,7 @@ def only_panel(plan: RenderPlan):
 
 
 def test_a_landscape_source_gets_one_static_full_height_crop_from_the_centre():
-    plan = plan_render(612.35, 655.8, source(1920, 1080, fps=29.97))
+    plan = plan_render(612.35, 655.8, source(1920, 1080, fps=29.97), canvas=PORTRAIT)
 
     assert (plan.start, plan.end, plan.duration) == (612.35, 655.8, pytest.approx(43.45))
     assert (plan.width, plan.height, plan.source_width, plan.source_height, plan.fps) == (1080, 1920, 1920, 1080, 29.97)
@@ -63,7 +63,7 @@ def test_a_landscape_source_gets_one_static_full_height_crop_from_the_centre():
 
 @pytest.mark.parametrize(("width", "height"), [(1281, 721), (853, 480), (641, 359), (1080, 1080), (321, 181)])
 def test_odd_and_unusual_sizes_still_give_an_even_centred_9_16_crop_inside_the_frame(width, height):
-    _, panel = only_panel(plan_render(10, 40, source(width, height)))
+    _, panel = only_panel(plan_render(10, 40, source(width, height), canvas=PORTRAIT))
     [at] = panel.path
 
     assert all(value % 2 == 0 for value in (panel.crop_width, panel.crop_height, at.x, at.y))
@@ -85,7 +85,7 @@ def test_odd_and_unusual_sizes_still_give_an_even_centred_9_16_crop_inside_the_f
     ],
 )
 def test_a_portrait_source_is_passed_through_whole(width, height, area):
-    scene, panel = only_panel(plan_render(0, 30, source(width, height)))
+    scene, panel = only_panel(plan_render(0, 30, source(width, height), canvas=PORTRAIT))
 
     assert scene.layout is SceneLayout.PASSTHROUGH
     assert (panel.crop_width, panel.crop_height) == (width - width % 2, height - height % 2)
@@ -94,7 +94,7 @@ def test_a_portrait_source_is_passed_through_whole(width, height, area):
 
 
 def test_the_plan_is_saved_and_read_back_as_json():
-    plan = plan_render(5, 35.5, source(1920, 1080))
+    plan = plan_render(5, 35.5, source(1920, 1080), canvas=PORTRAIT)
     adapter = TypeAdapter(RenderPlan)
     assert adapter.validate_json(adapter.dump_json(plan)) == plan
 
@@ -102,7 +102,7 @@ def test_the_plan_is_saved_and_read_back_as_json():
 @pytest.mark.parametrize(("start", "end"), [(10, 10), (10, 5), (-1, 5)])
 def test_a_clip_must_run_forwards(start, end):
     with pytest.raises(ValueError):
-        plan_render(start, end, source(1920, 1080))
+        plan_render(start, end, source(1920, 1080), canvas=PORTRAIT)
 
 
 # Face tracking (ticket 13). The Source is 1920x1080 at 25 fps, so the crop is 608 px wide, its dead-zone
@@ -135,7 +135,7 @@ def sampled(*runs: tuple[float, list[list[Face]] | list[Face] | None], start: fl
 def tracked(
     faces: list[FrameFaces], secs: float, scenes: list[Scene] | None = None, layout: Layout = Layout.AUTO
 ) -> RenderPlan:
-    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), scenes, faces, layout)
+    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), scenes, faces, layout, canvas=PORTRAIT)
 
 
 def crop_at(path: list[CropPoint], at: float) -> int:
@@ -440,7 +440,7 @@ def test_a_portrait_source_is_passed_through_whatever_its_faces_or_automatic_lay
     faces = sampled((2, people(2)), (2, people(1)))
     # (Manual frames it by hand: test_manual_layout.py.)
     for layout in (layout for layout in Layout if layout is not Layout.MANUAL):
-        plan = plan_render(0, 4, source(1080, 1920), [Scene(0, 2), Scene(2, 4)], faces, layout)
+        plan = plan_render(0, 4, source(1080, 1920), [Scene(0, 2), Scene(2, 4)], faces, layout, canvas=PORTRAIT)
         scene, panel = only_panel(plan)
         assert (scene.start, scene.end, scene.layout) == (0.0, 4.0, SceneLayout.PASSTHROUGH)
         assert (panel.area, panel.path) == (Box(0, 0, 1080, 1920), [CropPoint(0.0, 0, 0)])
@@ -469,7 +469,7 @@ def said(text: str, start: float = 0.0, secs_per_char: float = 0.06, gap: float 
 
 def captioned(words: list[Word], secs: float, scenes: list[Scene] | None = None, faces: list[FrameFaces] | None = None,
               layout: Layout = Layout.AUTO, width: int = 1920, height: int = 1080) -> list[Cue]:
-    return plan_render(100, 100 + secs, source(width, height, fps=FPS), scenes, faces, layout, words).captions
+    return plan_render(100, 100 + secs, source(width, height, fps=FPS), scenes, faces, layout, words, canvas=PORTRAIT).captions
 
 
 def shown(events: list[Cue]) -> list[str]:
@@ -557,7 +557,7 @@ def test_captions_sit_on_the_seam_in_split_and_in_the_lower_third_otherwise():
     assert {e.area for e in captioned(words, 6, scenes, faces, Layout.TRACK)} == {track}
     assert {e.area for e in captioned(words, 6, width=1080, height=1920)} == {track}
 
-    plan = plan_render(100, 106, source(1920, 1080, fps=FPS), scenes, faces, words=words)
+    plan = plan_render(100, 106, source(1920, 1080, fps=FPS), scenes, faces, words=words, canvas=PORTRAIT)
     adapter = TypeAdapter(RenderPlan)
     assert adapter.validate_json(adapter.dump_json(plan)) == plan
 
@@ -607,7 +607,7 @@ LONG_HOOK = "Racun kecil yang dibiarkan lama-lama pasti mematikan perusahaan kam
 
 
 def hooked(text: str, secs: float = 10, **options) -> HookEvent | None:
-    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), hook=text, **options).hook
+    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), hook=text, **{"canvas": PORTRAIT, **options}).hook
 
 
 def widest(hook: HookEvent) -> float:
@@ -635,25 +635,25 @@ def test_the_hook_is_shown_for_the_first_3_seconds_in_at_most_two_lines():
     for hook in (hooked(HOOK), hooked("Kenapa gagal?")):
         assert widest(hook) <= hook_width(PORTRAIT) and hook.size == HOOK_SIZE
     # What Review asks: the lines, and whether they fit at the hook's size.
-    assert fit_hook(HOOK) == (hooked(HOOK).lines, HOOK_SIZE)
-    assert fit_hook(LONG_HOOK)[1] < HOOK_SIZE
+    assert fit_hook(HOOK, canvas=PORTRAIT) == (hooked(HOOK).lines, HOOK_SIZE)
+    assert fit_hook(LONG_HOOK, canvas=PORTRAIT)[1] < HOOK_SIZE
 
 
 def test_a_blank_hook_shows_nothing():
     for text in ("", "   ", "\n\t"):
         assert hooked(text) is None
-        assert fit_hook(text) == ([], HOOK_SIZE)
+        assert fit_hook(text, canvas=PORTRAIT) == ([], HOOK_SIZE)
 
 
 def test_the_hook_sits_just_below_the_top_safe_zone_and_never_over_the_captions():
     faces, scenes = caption_scenes()
     words = said("satu dua tiga empat lima enam tujuh delapan sembilan sepuluh sebelas dua belas", 0.2, gap=0.2)
     plans = [
-        plan_render(100, 106, source(1920, 1080, fps=FPS), scenes, faces, layout, words, text)
+        plan_render(100, 106, source(1920, 1080, fps=FPS), scenes, faces, layout, words, text, canvas=PORTRAIT)
         for layout in Layout
         for text in ("Kenapa gagal?", HOOK, LONG_HOOK, "W" * 30)
     ]
-    plans.append(plan_render(100, 106, source(1080, 1920, fps=FPS), words=words, hook=HOOK))
+    plans.append(plan_render(100, 106, source(1080, 1920, fps=FPS), words=words, hook=HOOK, canvas=PORTRAIT))
     # Every Layout's captions are there: the seam's band (Split) and the lower third.
     assert {e.area for plan in plans for e in plan.captions} == {PORTRAIT.seam_captions, PORTRAIT.lower_captions}
     for plan in plans:
@@ -674,7 +674,7 @@ def test_the_hook_sits_just_below_the_top_safe_zone_and_never_over_the_captions(
     one, two = hooked("Kenapa gagal?").area, hooked(HOOK).area
     assert one.height < two.height <= 200
 
-    plan = plan_render(100, 106, source(1920, 1080, fps=FPS), scenes, faces, words=words, hook=HOOK)
+    plan = plan_render(100, 106, source(1920, 1080, fps=FPS), scenes, faces, words=words, hook=HOOK, canvas=PORTRAIT)
     adapter = TypeAdapter(RenderPlan)
     assert adapter.validate_json(adapter.dump_json(plan)) == plan
 
@@ -683,7 +683,7 @@ def test_the_hook_sits_just_below_the_top_safe_zone_and_never_over_the_captions(
 
 
 def styled(words: list[Word], secs: float, style: CaptionStyle, **options) -> list[Cue]:
-    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), words=words, caption_style=style, **options).captions
+    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), words=words, caption_style=style, **{"canvas": PORTRAIT, **options}).captions
 
 
 def test_caption_lines_are_broken_by_the_styles_limits():
@@ -758,15 +758,15 @@ def test_the_hook_goes_where_its_style_puts_it_at_its_size():
     # A smaller size: the same lines in a smaller box, and the text fits at that size.
     small = hooked(HOOK, hook_style=HookStyle(size=60))
     assert small.size == 60 and small.area.width < top.area.width and small.area.height < top.area.height
-    assert fit_hook(HOOK, HookStyle(size=60)) == (small.lines, 60)
+    assert fit_hook(HOOK, HookStyle(size=60), canvas=PORTRAIT) == (small.lines, 60)
     # Too large for two lines: set smaller than the style's size.
-    assert fit_hook(LONG_HOOK, HookStyle(size=120))[1] < 120
+    assert fit_hook(LONG_HOOK, HookStyle(size=120), canvas=PORTRAIT)[1] < 120
 
 
 def test_the_plan_keeps_its_styles():
     caption, hook = CaptionStyle(colour="#FFE600", highlight=Highlight.BOX), HookStyle(box_opacity=1.0)
     plan = plan_render(100, 106, source(1920, 1080, fps=FPS), words=said("halo semua"), hook=HOOK,
-                       caption_style=caption, hook_style=hook)
+                       caption_style=caption, hook_style=hook, canvas=PORTRAIT)
     assert (plan.caption_style, plan.hook_style) == (caption, hook)
     adapter = TypeAdapter(RenderPlan)
     assert adapter.validate_json(adapter.dump_json(plan)) == plan
@@ -776,7 +776,7 @@ def test_the_plan_keeps_its_styles():
 
 
 def edited(words: list[Word], edits: list, secs: float = 10, **options) -> list[Cue]:
-    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), words=words, word_edits=edits, **options).captions
+    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), words=words, word_edits=edits, **{"canvas": PORTRAIT, **options}).captions
 
 
 def test_a_word_edit_replaces_or_removes_its_word_keeping_its_timing():
@@ -850,7 +850,7 @@ def test_a_cue_is_one_line_keyed_by_the_middle_of_its_first_word_on_the_sources_
 def test_a_segments_cues_are_keyed_on_the_sources_timeline_whatever_its_speed():
     first = SegmentInput(10.0, 12.0, words=[Word("satu", 0.2, 0.6)])
     sped = SegmentInput(50.0, 54.0, words=[Word("dua", 1.0, 1.4), Word("tiga", 2.6, 3.0)], speed=2.0)
-    cues = plan_render(10, 54, source(1920, 1080, fps=FPS), main_track=[first, sped]).captions
+    cues = plan_render(10, 54, source(1920, 1080, fps=FPS), main_track=[first, sped], canvas=PORTRAIT).captions
     assert [(cue.text, cue.start, cue.key.at) for cue in cues] == [("SATU", 0.2, 10.4), ("DUA", 2.5, 51.2), ("TIGA", 3.3, 52.8)]
 
 
@@ -879,7 +879,7 @@ def test_a_cue_is_joinable_when_merging_it_into_the_one_before_would_fit_the_lin
 
 def test_cues_either_side_of_a_cut_or_a_layout_change_are_not_joinable():
     parts = [SegmentInput(10.0, 11.0, words=[Word("satu", 0.2, 0.6)]), SegmentInput(20.0, 21.0, words=[Word("dua", 0.1, 0.4)])]
-    cues = plan_render(10, 21, source(1920, 1080, fps=FPS), main_track=parts).captions
+    cues = plan_render(10, 21, source(1920, 1080, fps=FPS), main_track=parts, canvas=PORTRAIT).captions
     assert shown(cues) == ["SATU", "DUA"]
     assert [cue.joinable for cue in cues] == [False, False]
     faces, scenes = caption_scenes()
@@ -908,7 +908,7 @@ def test_the_hook_shows_from_its_start_for_its_time_kept_in_the_clip():
 
 def overridden(overrides: list, layout: Layout = Layout.AUTO, secs: float = 6, words: list[Word] | None = None) -> RenderPlan:
     faces, scenes = caption_scenes()
-    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), scenes, faces, layout, words, layout_overrides=overrides)
+    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), scenes, faces, layout, words, layout_overrides=overrides, canvas=PORTRAIT)
 
 
 def test_a_layout_override_changes_only_the_scene_holding_it():
@@ -955,7 +955,7 @@ def test_the_hook_takes_up_to_its_styles_max_lines_balanced_before_it_is_set_sma
     assert hooked("Kenapa gagal?", hook_style=HookStyle(max_lines=4)).lines == ["Kenapa gagal?"]
     one = hooked(HOOK, hook_style=HookStyle(max_lines=1))
     assert one.lines == [HOOK] and one.size < HOOK_SIZE
-    assert fit_hook(HEADLINE, HookStyle(max_lines=4)) == (four.lines, HOOK_SIZE)
+    assert fit_hook(HEADLINE, HookStyle(max_lines=4), canvas=PORTRAIT) == (four.lines, HOOK_SIZE)
 
 
 def test_a_hook_in_capitals_is_fitted_in_capitals():
@@ -1032,7 +1032,7 @@ def test_words_between_asterisks_are_emphasised_and_the_asterisks_arent_shown():
     plain = hooked("Orang kantoran pasti iri! anak SMP ini cuan 6 juta", hook_style=HookStyle(max_lines=3))
     assert (hook.lines, hook.size, hook.anchors) == (plain.lines, plain.size, plain.anchors)
     assert plain.emphasis == [[] for _ in plain.lines]
-    assert fit_hook("Kenapa *gagal?*") == (["Kenapa gagal?"], HOOK_SIZE)
+    assert fit_hook("Kenapa *gagal?*", canvas=PORTRAIT) == (["Kenapa gagal?"], HOOK_SIZE)
 
 
 def test_emphasis_can_cover_part_of_a_word_and_an_unpaired_asterisk_is_shown():
@@ -1230,7 +1230,7 @@ def test_a_tracked_hook_is_fitted_counting_its_tracking():
     spaced = hooked(text, hook_style=HookStyle(tracking=12))
     assert spaced.lines == ["Jangan", "lakukan ini"] and spaced.size == HOOK_SIZE
     assert all(metrics.width(line, spaced.size, 12) <= hook_width(PORTRAIT) for line in spaced.lines)
-    assert fit_hook(text, HookStyle(tracking=12)) == (spaced.lines, spaced.size)
+    assert fit_hook(text, HookStyle(tracking=12), canvas=PORTRAIT) == (spaced.lines, spaced.size)
     # The block holds the tracked lines.
     longest = max(metrics.width(line, spaced.size, 12) for line in spaced.lines)
     assert spaced.area.width == math.ceil(longest) + 2 * HOOK_PAD_X
@@ -1353,7 +1353,7 @@ def test_a_wider_padding_leaves_less_room_for_the_hooks_lines():
     assert one.lines == [text] and one.size < HOOK_SIZE
     assert kicker_widest(PORTRAIT) - 2 < metrics.width(text, one.size) + 2 * 60 * one.size / HOOK_SIZE <= kicker_widest(PORTRAIT)
     assert one.area.width == math.ceil(metrics.width(text, one.size) + 2 * 60 * one.size / HOOK_SIZE)
-    assert fit_hook(text, HookStyle(padding_x=60, max_lines=1)) == (one.lines, one.size)
+    assert fit_hook(text, HookStyle(padding_x=60, max_lines=1), canvas=PORTRAIT) == (one.lines, one.size)
     # A narrow padding leaves more.
     assert len(hooked("Setetes racun bisa bunuh").lines) == 2
     assert hooked("Setetes racun bisa bunuh", hook_style=HookStyle(padding_x=20)).lines == ["Setetes racun bisa bunuh"]
@@ -1439,7 +1439,7 @@ def test_a_cue_is_joinable_when_both_fit_the_cues_lines():
 
 
 def retimed(words: list[Word], cue_edits: list[CueEdit], secs: float = 5, **options) -> RenderPlan:
-    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), words=words, cue_edits=cue_edits, **options)
+    return plan_render(100, 100 + secs, source(1920, 1080, fps=FPS), words=words, cue_edits=cue_edits, **{"canvas": PORTRAIT, **options})
 
 
 def spans(cues: list[Cue]) -> list[tuple[float, float]]:
@@ -1500,7 +1500,7 @@ def test_a_retimed_cue_short_of_room_keeps_the_minimum_and_isnt_dropped():
     # With no more room than its Segment (shorter than the minimum), it fills it.
     first = SegmentInput(10.0, 12.0, words=[Word("satu", 0.2, 0.6)])
     tiny = SegmentInput(50.0, 50.15, words=[Word("dua", 0.0, 0.15)])
-    cues = plan_render(10, 50.15, source(1920, 1080, fps=FPS), main_track=[first, tiny], cue_edits=[CueEdit(at=50.07, shift=0.5)]).captions
+    cues = plan_render(10, 50.15, source(1920, 1080, fps=FPS), main_track=[first, tiny], cue_edits=[CueEdit(at=50.07, shift=0.5)], canvas=PORTRAIT).captions
     assert spans(cues) == [(0.2, 0.9), (2.0, 2.15)]
 
 
@@ -1527,7 +1527,7 @@ def test_each_cue_says_where_a_cue_edit_keeps_it_and_which_cue_edits_it_has():
     # its timeline.
     first = SegmentInput(10.0, 12.0, words=[Word("satu", 0.2, 0.6)])
     sped = SegmentInput(50.0, 54.0, words=[Word("dua", 1.0, 1.4), Word("tiga", 2.6, 3.0)], speed=2.0, join=Join(TransitionKind.FADE, 0.4))
-    cues = plan_render(10, 54, source(1920, 1080, fps=FPS), main_track=[first, sped]).captions
+    cues = plan_render(10, 54, source(1920, 1080, fps=FPS), main_track=[first, sped], canvas=PORTRAIT).captions
     assert [(cue.low, cue.high, cue.speed) for cue in cues] == [(0.0, 1.8, 1.0), (1.8, 2.9, 2.0), (2.6, 3.6, 2.0)]
     assert [cue.word_ats for cue in cues] == [[10.4], [51.2], [52.8]]
 
@@ -1537,7 +1537,7 @@ def test_cue_edits_are_divided_by_their_segments_speed_and_kept_in_their_segment
     sped = SegmentInput(50.0, 54.0, words=[Word("dua", 1.0, 1.4), Word("tiga", 2.6, 3.0)], speed=2.0)
 
     def cues(*edits: CueEdit) -> list[Cue]:
-        return plan_render(10, 54, source(1920, 1080, fps=FPS), main_track=[first, sped], cue_edits=list(edits)).captions
+        return plan_render(10, 54, source(1920, 1080, fps=FPS), main_track=[first, sped], cue_edits=list(edits), canvas=PORTRAIT).captions
 
     assert spans(cues()) == [(0.2, 0.9), (2.5, 3.0), (3.3, 3.8)]
     # 0.4 s of the Source is 0.2 s at 2x.
@@ -1571,11 +1571,11 @@ def test_a_cue_edit_whose_word_isnt_shown_is_unused_and_applies_again_once_it_is
     assert (spans(restored.captions)[1], restored.unused_cue_edits) == ((3.5, 4.4), [])
     # So in a Segment of its range; a Word removed by a Word Edit isn't shown either.
     part = lambda end: SegmentInput(100.0, end, words=[w for w in TALK if w.end <= end - 100])  # noqa: E731
-    plan = lambda end, **options: plan_render(100, end, source(1920, 1080, fps=FPS), main_track=[part(end)], cue_edits=[edit], **options)  # noqa: E731
+    plan = lambda end, **options: plan_render(100, end, source(1920, 1080, fps=FPS), main_track=[part(end)], cue_edits=[edit], **{"canvas": PORTRAIT, **options})  # noqa: E731
     assert plan(102.5).unused_cue_edits == [edit]
     assert plan(105).unused_cue_edits == []
     removed = SegmentInput(100.0, 105, words=TALK, word_edits=[WordEdit(at=3.1, text="")])
-    assert plan_render(100, 105, source(1920, 1080, fps=FPS), main_track=[removed], cue_edits=[edit]).unused_cue_edits == [edit]
+    assert plan_render(100, 105, source(1920, 1080, fps=FPS), main_track=[removed], cue_edits=[edit], canvas=PORTRAIT).unused_cue_edits == [edit]
     # A Cue Edit of a Media Library item doesn't apply on the Source's timeline.
     elsewhere = CueEdit(at=103.1, media="ab" * 16, shift=0.5)
     assert retimed(TALK, [elsewhere]).unused_cue_edits == [elsewhere]
@@ -1585,7 +1585,7 @@ def test_a_media_segments_cue_edits_are_on_its_items_timeline():
     media = "ab" * 16
     # A video's Segment from 0.5 s into it, saying "halo semua. apa" (in seconds into the Segment).
     talking = SegmentInput(0.5, 4.0, media=media, width=720, height=1280, words=[Word("halo", 0.5, 0.9), Word("apa", 2.5, 2.9)])
-    plan = lambda *edits: plan_render(0, 10, source(1920, 1080, fps=FPS), main_track=[talking], cue_edits=list(edits))  # noqa: E731
+    plan = lambda *edits: plan_render(0, 10, source(1920, 1080, fps=FPS), main_track=[talking], cue_edits=list(edits), canvas=PORTRAIT)  # noqa: E731
     assert [(cue.start, cue.key.at, cue.key.media) for cue in plan().captions] == [(0.5, 1.2, media), (2.5, 3.2, media)]
     # Keyed at its Word's middle on the item's timeline: 3.2 s into the video.
     moved = plan(CueEdit(at=3.2, media=media, shift=0.3))

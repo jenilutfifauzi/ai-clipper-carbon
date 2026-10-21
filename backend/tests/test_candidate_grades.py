@@ -11,6 +11,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import Adjust, Candidate, Grade, Segment, manual_candidate
+from app.canvas import PORTRAIT
 from app.config import CameraTuning
 from app.planner import SegmentInput, plan_render
 from app.rendering import candidate_plan
@@ -31,9 +32,9 @@ from test_segment_grades import GREY, SOURCE, WARM, colour_video, frame_at, grad
 
 def test_the_plan_carries_the_candidates_grade_as_given():
     warm = Grade(Adjust(temperature=9000, contrast=20))
-    assert plan_render(10, 23, SOURCE, grade=warm).grade == warm
-    assert plan_render(10, 23, SOURCE, main_track=[SegmentInput(10, 12), SegmentInput(20, 23)], grade=warm).grade == warm
-    assert plan_render(10, 23, SOURCE).grade == Grade()
+    assert plan_render(10, 23, SOURCE, grade=warm, canvas=PORTRAIT).grade == warm
+    assert plan_render(10, 23, SOURCE, main_track=[SegmentInput(10, 12), SegmentInput(20, 23)], grade=warm, canvas=PORTRAIT).grade == warm
+    assert plan_render(10, 23, SOURCE, canvas=PORTRAIT).grade == Grade()
 
 
 def test_a_candidates_grade_comes_to_its_plan_with_segments_or_without(tmp_path):

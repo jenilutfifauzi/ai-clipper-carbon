@@ -148,7 +148,7 @@ from app.candidates import (
     WordEdit,
 )
 from app.audio_effects import AudioEffect, enabled_effects
-from app.canvas import PORTRAIT, Aspect, Box, Canvas
+from app.canvas import Aspect, Box, Canvas
 from app.video_effects import VideoEffect, enabled_video_effects, scaled_effects
 from app.config import CameraTuning, DuckTuning
 from app.ducking import Span, duck_at, ducked_stretches, heard_words, speech_spans, touching
@@ -954,15 +954,15 @@ class RenderPlan:
     source_fps: float
     # Back to back, covering the Clip from 0 to its duration.
     scenes: list[ScenePlan]
+    # The Candidate's Canvas (docs/adr/0022), in whose pixels the plan is, and its Safe Area.
+    width: int
+    height: int
+    safe_area: Box
     captions: list[Cue] = field(default_factory=list)
     hook: HookEvent | None = None
     # What the captions and the hook look like.
     caption_style: CaptionStyle = CaptionStyle()
     hook_style: HookStyle = HookStyle()
-    # The Candidate's Canvas (docs/adr/0022), in whose pixels the plan is, and its Safe Area.
-    width: int = PORTRAIT.width
-    height: int = PORTRAIT.height
-    safe_area: Box = PORTRAIT.safe_area
     watermark: WatermarkEvent | None = None
     watermark_style: WatermarkStyle = WatermarkStyle()
     # The Text Layers that show, in drawing order.
@@ -1042,7 +1042,8 @@ def plan_render(
     ducking: DuckTuning = DuckTuning(),
     grade: Grade = Grade(),
     adjustment_layers: list[AdjustmentLayer] | None = None,
-    canvas: Canvas = PORTRAIT,
+    *,
+    canvas: Canvas,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -1157,7 +1158,7 @@ def plan_render(
     # Not captioned, the Words are heard only (they still duck the music above).
     captions, used = _captions(
         (words or []) if captioned else [], plans, duration, caption_style, word_edits or [], cuts,
-        keys if captioned else [], retimes, [segment.speed for segment in segments], [edit.at for edit in cue_edits or []], canvas,
+        keys if captioned else [], retimes, [segment.speed for segment in segments], [edit.at for edit in cue_edits or []], canvas=canvas,
     )
     return RenderPlan(
         start=start,
@@ -1174,7 +1175,7 @@ def plan_render(
         width=canvas.width,
         height=canvas.height,
         safe_area=canvas.safe_area,
-        watermark=watermark(watermark_style, logo_size, canvas),
+        watermark=watermark(watermark_style, logo_size, canvas=canvas),
         watermark_style=watermark_style,
         texts=[event for layer in text_layers or [] if (event := text_event(layer, duration, canvas)) is not None],
         audio=_ducked(audio, heard, music_words or {}, ducking),
@@ -1532,13 +1533,13 @@ def _showing(width: int, height: int, box: Box, canvas: Canvas) -> Framing:
 
 
 def framed_scene(
-    start: float, end: float, layout: SceneLayout, width: int, height: int, framing: Framing, canvas: Canvas = PORTRAIT
+    start: float, end: float, layout: SceneLayout, width: int, height: int, framing: Framing, canvas: Canvas
 ) -> ScenePlan:
     """A Scene from `start` to `end` of a `width` x `height` picture (a media Segment's video, or the
     Source in a Manual Scene) placed on `canvas` by its `framing`, which it carries: the
     picture (`picture_of`) over its Background, which is the largest crop of the Canvas's shape from
     the middle of what its Crop keeps, blurred, filling the frame (as Blur's background is), or its colour."""
-    picture = picture_of(width, height, framing.transform, framing.crop, canvas)
+    picture = picture_of(width, height, framing.transform, framing.crop, canvas=canvas)
     if framing.background.kind is BackgroundKind.COLOUR:
         return ScenePlan(start, end, layout, [], picture, framing.background.colour, framing)
     cropped, cover = picture.crop, _filled(picture.crop.width, picture.crop.height, start, canvas)
@@ -1546,14 +1547,14 @@ def framed_scene(
     return ScenePlan(start, end, layout, [replace(cover, path=[point], blur=True)], picture, framing=framing)
 
 
-def keyed_scene(scene: ScenePlan, transform: Transform, keys: Keys, start: float, fps: float, canvas: Canvas = PORTRAIT) -> ScenePlan:
+def keyed_scene(scene: ScenePlan, transform: Transform, keys: Keys, start: float, fps: float, canvas: Canvas) -> ScenePlan:
     """`scene`, of one picture placed by `transform` (a media Segment's or a Manual Scene's), moved by
     the `keys` of its item, whose Keyframes count from `start` seconds into the Clip (`with_motion`;
     before the Scene, for a Manual one shown from part way into it): its Background is left out when
     the picture covers `canvas` at every one of its frames at `fps` (`covers`), each at n / `fps`
     seconds into the Scene, as the renderer draws it. Unkeyed, as it is."""
     assert scene.picture is not None
-    picture = with_motion(scene.picture, transform, keys, start, canvas=canvas)
+    picture = with_motion(scene.picture, keys, start, stretched_fit(scene.picture, transform, canvas))
     if not picture.motion:
         return scene
     count = math.ceil((scene.end - scene.start) * fps - 1e-6)
@@ -1566,7 +1567,7 @@ def keyed_scene(scene: ScenePlan, transform: Transform, keys: Keys, start: float
 _COVER_REACH = 1e-3
 
 
-def covers(picture: Picture, canvas: Canvas = PORTRAIT) -> bool:
+def covers(picture: Picture, canvas: Canvas) -> bool:
     """Whether a still `picture` hides the whole of `canvas`: opaque, with every corner of it inside
     the picture once it is turned."""
     if picture.opacity < 1:
@@ -1625,7 +1626,7 @@ def _moved(scene: ScenePlan, by: float) -> ScenePlan:
     return replace(scene, start=round(scene.start + by, 3), end=round(scene.end + by, 3), panels=panels)
 
 
-def watermark(style: WatermarkStyle, logo_size: tuple[int, int] | None = None, canvas: Canvas = PORTRAIT) -> WatermarkEvent | None:
+def watermark(style: WatermarkStyle, logo_size: tuple[int, int] | None = None, *, canvas: Canvas) -> WatermarkEvent | None:
     """The Watermark in `style` on `canvas`, its Logo `logo_size` pixels; None when it shows nothing: off, blank
     text (without emoji, which the bundled fonts haven't got), or a Logo that is missing."""
     if style.kind is WatermarkKind.TEXT:
@@ -1742,12 +1743,12 @@ def own_volume(event: AudioEvent | SegmentPlan, source_volume: float) -> float:
     return source_volume if source else 1.0
 
 
-def overlay_events(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo], canvas: Canvas = PORTRAIT) -> list[OverlayEvent]:
+def overlay_events(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo], canvas: Canvas) -> list[OverlayEvent]:
     """The Overlays as drawn on `canvas` in a Clip lasting `duration` (`_overlay_event`)."""
     return [event for overlay in overlays if (event := _overlay_event(overlay, duration, items, canvas)) is not None]
 
 
-def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo], canvas: Canvas = PORTRAIT) -> list[AudioEvent]:
+def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo], canvas: Canvas) -> list[AudioEvent]:
     """The sound of the Overlays' videos that are turned up, or keyed, heard as Music Clips are, while
     they show (a Muted one's too, which isn't heard)."""
     sounds = []
@@ -1781,9 +1782,8 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     time = overlay_time(overlay.offset, overlay.secs, overlay.speed, overlay.reverse, video, duration - start)
     end = round(start + time.length, 3)
     offset = 0.0 if item.duration is None else round(time.start, 3)
-    picture = with_motion(
-        picture_of(item.width, item.height, overlay.transform, overlay.crop, canvas), overlay.transform, overlay.keys, start, canvas=canvas
-    )
+    placed = picture_of(item.width, item.height, overlay.transform, overlay.crop, canvas=canvas)
+    picture = with_motion(placed, overlay.keys, start, stretched_fit(placed, overlay.transform, canvas))
     # The radius is a share of the shorter side as drawn, so it scales with the picture; the border
     # and shadow are in output pixels, so they don't.
     radius = round(overlay.radius * min(picture.width, picture.height), 2)
@@ -1801,23 +1801,25 @@ def overlay_scale(transform: Transform) -> float:
     return transform.scale * max(transform.stretch_x, transform.stretch_y)
 
 
-def with_motion(
-    picture: Picture, transform: Transform, keys: Keys, start: float, unscaled: tuple[float, float] | None = None, canvas: Canvas = PORTRAIT
-) -> Picture:
-    """`picture`, drawn by `transform`, moved by the `keys` of an item that starts `start` seconds into
-    the Clip: its motion in seconds into the Clip, and its drawn size at scale 1 (`unscaled` when
-    given, else its crop's fitted size on `canvas` stretched). Unkeyed (a volume isn't the picture's), as it is."""
+def with_motion(picture: Picture, keys: Keys, start: float, unscaled: tuple[float, float]) -> Picture:
+    """`picture`, moved by the `keys` of an item that starts `start` seconds into the Clip: its motion
+    in seconds into the Clip, and its drawn size at scale 1, `unscaled` (`stretched_fit` for a picture
+    fitted to its Canvas). Unkeyed (a volume isn't the picture's), as it is."""
     keys = {prop: given for prop, given in keys.items() if prop in PICTURE_KEYS}
     if not keys:
         return picture
     motion = {prop: [replace(key, at=round(start + key.at, 4)) for key in given] for prop, given in keys.items()}
-    if unscaled is None:
-        across, down = fitted(picture.crop.width, picture.crop.height, canvas.size)
-        unscaled = (across * transform.stretch_x, down * transform.stretch_y)
     return replace(picture, motion=motion, unscaled=unscaled)
 
 
-def picture_at(picture: Picture, time: float, frame: tuple[int, int] = PORTRAIT.size) -> Picture:
+def stretched_fit(picture: Picture, transform: Transform, canvas: Canvas) -> tuple[float, float]:
+    """The drawn size at scale 1 of `picture`, placed by `transform`: its crop's fitted size on
+    `canvas`, stretched."""
+    across, down = fitted(picture.crop.width, picture.crop.height, canvas.size)
+    return across * transform.stretch_x, down * transform.stretch_y
+
+
+def picture_at(picture: Picture, time: float, frame: tuple[int, int]) -> Picture:
     """`picture` as drawn at `time` seconds into the Clip: each keyed property sampled from its motion
     (app/keyframes.py) and held to its range (its centre on the `frame` it is drawn on: the plan's
     Canvas, or the size the plan is drawn at), its size its drawn size at scale 1 times the sampled
@@ -1863,7 +1865,7 @@ def key_times(picture: Picture) -> list[float]:
     return sorted({key.at for keys in picture.motion.values() for key in keys})
 
 
-def picture_of(width: int, height: int, transform: Transform, crop: Crop = Crop(), canvas: Canvas = PORTRAIT) -> Picture:
+def picture_of(width: int, height: int, transform: Transform, crop: Crop = Crop(), *, canvas: Canvas) -> Picture:
     """A `width` x `height` item cut by `crop` and drawn on `canvas` as `transform` places it: what it
     keeps at its drawn size (app/pictures.py), its centre kept on the frame, the picture not."""
     cut = Box(*kept(width, height, crop))
@@ -1878,7 +1880,7 @@ def picture_of(width: int, height: int, transform: Transform, crop: Crop = Crop(
     )
 
 
-def on_frame(picture: Picture, frame: tuple[int, int] = PORTRAIT.size) -> Picture:
+def on_frame(picture: Picture, frame: tuple[int, int]) -> Picture:
     """The part of an unturned `picture` that is on the `frame` (width, height; the plan's, or the
     size it is drawn at), as a Picture of its own: what it draws there, without scaling what is off
     it (a picture zoomed in or covering the frame is larger than the frame). A turned picture is
@@ -1914,7 +1916,7 @@ def _mirrored(low: float, high: float, flipped: bool) -> tuple[float, float]:
     return (1 - high, 1 - low) if flipped else (low, high)
 
 
-def text_event(layer: TextLayer, duration: float, canvas: Canvas = PORTRAIT) -> TextEvent | None:
+def text_event(layer: TextLayer, duration: float, canvas: Canvas) -> TextEvent | None:
     """The Text Layer in a Clip lasting `duration`, until its end if that comes sooner: its words
     (what no Face nor emoji image has left out, blank lines at either end left out) broken into
     lines at its wrap width (`text_lines`), each split into runs by Face (`text_runs`), and set in its
@@ -1981,7 +1983,7 @@ def shape_event(shape: Shape, duration: float) -> ShapeEvent | None:
     )
 
 
-def text_lines(text: str, style: TextStyle, canvas: Canvas = PORTRAIT) -> list[str]:
+def text_lines(text: str, style: TextStyle, canvas: Canvas) -> list[str]:
     """A Text Layer's `text` as the lines it is set in, in `style`: without what no Face nor emoji
     image has (`text_runs`), blank lines at either end left out, broken at its newlines and between
     its words where a line, measured run by run in its Faces (an emoji 1 em), would be wider than its
@@ -1998,7 +2000,7 @@ def text_lines(text: str, style: TextStyle, canvas: Canvas = PORTRAIT) -> list[s
     )
 
 
-def text_room(style: TextStyle, canvas: Canvas = PORTRAIT) -> float:
+def text_room(style: TextStyle, canvas: Canvas) -> float:
     """How wide a Text Layer's lines in `style` may be: its wrap width, or the width of `canvas` less
     TEXT_MARGIN either side when it has none, less its plate's padding either side."""
     pad_x = style.plate.padding_x if style.plate.shape is not HookShape.NONE else 0.0
@@ -2102,7 +2104,7 @@ def layer_picture(layout: PictureLayout, origin: tuple[float, float], layer: Tex
     picture = Picture(
         Box(0, 0, *raster), raster, width, height, centre, transform.rotation, False, False, transform.opacity, bounds,
     )
-    return with_motion(picture, transform, layer.keys, start, (layout.width, layout.height))
+    return with_motion(picture, layer.keys, start, (layout.width, layout.height))
 
 
 def _turned_box(area: Box, centre: tuple[float, float], transform: Transform, to: tuple[float, float] | None = None) -> Box:
@@ -2119,7 +2121,7 @@ def _turned_box(area: Box, centre: tuple[float, float], transform: Transform, to
     return Box(round(x - across / 2), round(y - down / 2), round(across), round(down))
 
 
-def bounds_at(event: PictureLayer, time: float, frame: tuple[int, int] = PORTRAIT.size) -> Box:
+def bounds_at(event: PictureLayer, time: float, frame: tuple[int, int]) -> Box:
     """What holds a picture layer's area at `time` seconds into the Clip, as its Keyframes have it then
     (`picture_at`, on `frame`): scaled and turned about its picture's sampled centre. Unkeyed, its `bounds`."""
     picture = event.picture
@@ -2224,7 +2226,7 @@ def emoji_square(run: TextRun, baseline: float, size: float) -> tuple[float, flo
     return run.x, middle - run.width / 2, run.width
 
 
-def fit_hook(text: str, style: HookStyle = HookStyle(), canvas: Canvas = PORTRAIT) -> tuple[list[str], float]:
+def fit_hook(text: str, style: HookStyle = HookStyle(), *, canvas: Canvas) -> tuple[list[str], float]:
     """How the hook `text` is set in `style` on `canvas`: its lines (none when it is blank) and their font size.
     The fewest lines, up to the style's max_lines, that fit in `hook_width` at its size with its
     tracking (or, with the style's own padding across, whose box is as wide as the captions' area),
@@ -2361,7 +2363,7 @@ def _hook(
     they do, KICKER_GAP of the hook's size away. A Quote Mark (QUOTE_SCALE) is on the first line's
     corner: the lines move down by what of it sticks out above them, but not sideways, so they stay
     centred."""
-    lines, size = fit_hook(text, style, canvas)
+    lines, size = fit_hook(text, style, canvas=canvas)
     start = round(max(start, 0.0), 3)
     if not lines or start >= duration:
         return None
@@ -2624,7 +2626,8 @@ def _captions(
     cue_edits: list[tuple[int, CueEdit]] | None = None,
     speeds: list[float] | None = None,
     given_ats: list[float] | None = None,
-    canvas: Canvas = PORTRAIT,
+    *,
+    canvas: Canvas,
 ) -> tuple[list[Cue], set[int]]:
     """The Cues of `words` over the Clip, which lasts `duration` and is laid out in `scenes`, in
     `style`, with the Word Edits `edits` applied (match_edits): an edited Word shows the edit's text

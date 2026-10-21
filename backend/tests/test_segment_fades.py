@@ -49,7 +49,7 @@ def test_fades_together_longer_than_a_segment_are_fitted_to_its_timeline_length(
             # 8 s of the Source at 2×: 4 s on the Timeline.
             SegmentInput(10, 18, speed=2, fade_in=3, fade_out=3, id="e"),
             video(0, 4, fade_in=1, fade_out=0.5, id="w"),
-        ],
+        ], canvas=PORTRAIT,
     )
     fitted, sped, kept = planned.segments
     assert (fitted.fade_in, fitted.fade_out) == (2, 2)
@@ -63,7 +63,7 @@ def test_a_segments_fades_are_from_its_sound_start_and_to_its_end_a_transitions_
         main_track=[
             video(0, 2, fade_out=1, id="v"),
             SegmentInput(10, 13, fade_in=1, volume=0.5, join=Join(TransitionKind.FADE, 1), id="e"),
-        ],
+        ], canvas=PORTRAIT,
     )
     before, after = planned.segments
     [transition] = planned.transitions
@@ -86,7 +86,7 @@ def segmented_command() -> list[str]:
             SegmentInput(13, 15, id="b"),
         ],
         music=[MusicClip("m", 0.5, 3.0, media=SONG, volume=0.5, fade_in=0.5)],
-        media_info={VIDEO: MediaInfo(640, 360, 4.0, True), SONG: MediaInfo(0, 0, 30.0, True)},
+        media_info={VIDEO: MediaInfo(640, 360, 4.0, True), SONG: MediaInfo(0, 0, 30.0, True)}, canvas=PORTRAIT,
     )
     files = {VIDEO: Path("/media/clip.mp4"), SONG: Path("/media/song.m4a")}
     out = Path("/out")

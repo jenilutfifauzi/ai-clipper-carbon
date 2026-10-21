@@ -85,11 +85,6 @@ class Canvas:
         return Box(0, 0, half, self.height), Box(half, 0, half, self.height)
 
     @property
-    def split_height(self) -> int:
-        """The height of each of Split's two stacked panels."""
-        return self.height // 2
-
-    @property
     def caption_x(self) -> int:
         """Where a caption area starts: as far from the left edge as its right edge is from the right,
         so that lines are centred in the frame."""
@@ -103,7 +98,8 @@ class Canvas:
     @property
     def seam_captions(self) -> Box:
         """On the seam between Split's stacked panels, clear of the faces (at 40% of each panel)."""
-        return Box(self.caption_x, self.split_height - CAPTION_HEIGHT // 2, self.caption_width, CAPTION_HEIGHT)
+        seam = self.split_panels[0].height
+        return Box(self.caption_x, seam - CAPTION_HEIGHT // 2, self.caption_width, CAPTION_HEIGHT)
 
     @property
     def lower_captions(self) -> Box:
@@ -126,9 +122,9 @@ class Canvas:
     def top_captions(self) -> Box:
         return Box(self.caption_x, self.safe_area.y + TOP_CAPTIONS_BELOW, self.caption_width, CAPTION_HEIGHT)
 
-    def from_reference(self, x: float, y: float) -> tuple[float, float]:
-        """A place in the Reference Space, on this Canvas."""
-        return x * self.width / REFERENCE[0], y * self.height / REFERENCE[1]
+    def from_reference(self, x: float, y: float) -> tuple[int, int]:
+        """A place in the Reference Space, on this Canvas to the pixel."""
+        return self.x_from_reference(x), self.y_from_reference(y)
 
     def x_from_reference(self, x: float) -> int:
         """A Style's x in the Reference Space, on this Canvas to the pixel (itself on 9:16)."""

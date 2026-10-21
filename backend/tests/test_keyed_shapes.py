@@ -10,6 +10,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from app.candidates import EASE_OUT, Keyframe, KeyProperty, Shape
+from app.canvas import PORTRAIT
 from app.keyframes import value_at
 from app.planner import bounds_at, picture_at, shape_event
 from app.renderer import layer_at
@@ -55,7 +56,7 @@ def test_a_keyed_shapes_picture_moves_in_clip_time_and_its_bounds_follow():
     # Its Keyframes in seconds into the Clip, sampled by the Overlay's rule.
     assert [key.at for key in event.picture.motion[KeyProperty.X]] == [1.0, 2.0]
     for at in (1.25, 1.5, 2.5):
-        drawn = picture_at(event.picture, at)
+        drawn = picture_at(event.picture, at, frame=PORTRAIT.size)
         assert drawn.centre[0] == pytest.approx(value_at([Keyframe(1, 200), Keyframe(2, 880, EASE_OUT)], at, 0))
         scale = 1 + (min(at, 3) - 1) / 2
         assert (drawn.width, drawn.height) == pytest.approx((event.layout.width * scale, event.layout.height * scale))
@@ -63,7 +64,7 @@ def test_a_keyed_shapes_picture_moves_in_clip_time_and_its_bounds_follow():
     assert (event.area, event.picture_key) == (still.area, still.picture_key)
     assert event.layout.scale == 2 and still.layout.scale == 1
     # After its last turn and at twice its size: its area stood on end, twice as large, about x 880.
-    last = bounds_at(event, 3.0)
+    last = bounds_at(event, 3.0, frame=PORTRAIT.size)
     assert (last.width, last.height) == pytest.approx((200, 600), abs=2)
     assert last.x + last.width / 2 == pytest.approx(880, abs=1)
 
@@ -73,15 +74,15 @@ def test_pop_over_a_keyed_scale_peaks_at_the_product_of_the_two():
     popped = shape_event(shape(keys=keys, animation_in="pop", animation_out="fade", animation_ms=400), 10)
     # Its picture made for its largest keyed scale: Pop grows it to that, never past it.
     assert popped.layout.scale == 3
-    keyed, drawn = picture_at(popped.picture, 1.2), layer_at(popped, 1.2)
+    keyed, drawn = picture_at(popped.picture, 1.2, frame=PORTRAIT.size), layer_at(popped, 1.2, frame=PORTRAIT.size)
     # Half way in: 85% of its keyed scale, half its keyed opacity, at its keyed place.
     assert (drawn.width, drawn.height) == pytest.approx((keyed.width * 0.85, keyed.height * 0.85))
     assert keyed.width == pytest.approx(popped.layout.width * 2.1)
     assert drawn.opacity == pytest.approx(0.8 * 0.5)
     assert drawn.centre == pytest.approx(keyed.centre)
     # Popped in, at its keyed scale; fading out, at half its keyed opacity.
-    assert layer_at(popped, 1.4) == picture_at(popped.picture, 1.4)
-    assert layer_at(popped, 2.8).opacity == pytest.approx(0.8 * 0.5)
+    assert layer_at(popped, 1.4, frame=PORTRAIT.size) == picture_at(popped.picture, 1.4, frame=PORTRAIT.size)
+    assert layer_at(popped, 2.8, frame=PORTRAIT.size).opacity == pytest.approx(0.8 * 0.5)
 
 
 def test_a_split_keyed_shape_plays_its_motion_on_the_same_moments_in_both_halves():
@@ -94,11 +95,11 @@ def test_a_split_keyed_shape_plays_its_motion_on_the_same_moments_in_both_halves
     head = shape_event(shape(start=1.0, secs=2.0, keys=keys(x=[(0, 200), (1, 880), (2, 710)], opacity=[(0.5, 1), (2, 0.4)])), 10)
     tail = shape_event(shape(id="s2", start=3.0, secs=1.0, keys=keys(x=[(0, 710), (1, 540)], opacity=[(0, 0.4), (0.5, 0.2)])), 10)
     for at in np.linspace(1.0, 3.0, 9):
-        assert layer_at(head, at).centre == pytest.approx(layer_at(whole, at).centre)
-        assert layer_at(head, at).opacity == pytest.approx(layer_at(whole, at).opacity)
+        assert layer_at(head, at, frame=PORTRAIT.size).centre == pytest.approx(layer_at(whole, at, frame=PORTRAIT.size).centre)
+        assert layer_at(head, at, frame=PORTRAIT.size).opacity == pytest.approx(layer_at(whole, at, frame=PORTRAIT.size).opacity)
     for at in np.linspace(3.0, 4.0, 5):
-        assert layer_at(tail, at).centre == pytest.approx(layer_at(whole, at).centre)
-        assert layer_at(tail, at).opacity == pytest.approx(layer_at(whole, at).opacity)
+        assert layer_at(tail, at, frame=PORTRAIT.size).centre == pytest.approx(layer_at(whole, at, frame=PORTRAIT.size).centre)
+        assert layer_at(tail, at, frame=PORTRAIT.size).opacity == pytest.approx(layer_at(whole, at, frame=PORTRAIT.size).opacity)
 
 
 def eased_x(at: float, start: float) -> float:

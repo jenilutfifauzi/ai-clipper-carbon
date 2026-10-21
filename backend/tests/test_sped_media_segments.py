@@ -66,7 +66,7 @@ def test_a_sped_media_segment_lasts_its_range_divided_by_its_speed_and_the_next_
         main_track=[
             SegmentInput(0, 3, media=VIDEO, width=640, height=360, framing=Framing(), speed=2, pitch=True, id="v"),
             SegmentInput(10, 12, id="e"),
-        ],
+        ], canvas=PORTRAIT,
     )
     sped, episode = planned.segments
     assert (sped.start, sped.end, sped.source_start, sped.source_end, sped.speed, sped.pitch) == (0, 1.5, 0, 3, 2, True)

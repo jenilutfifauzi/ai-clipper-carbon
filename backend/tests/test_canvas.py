@@ -60,7 +60,7 @@ def test_portrait_caption_places_are_todays() -> None:
     assert PORTRAIT.seam_captions == Box(130, 860, 820, 200)
     assert PORTRAIT.lower_captions == Box(130, 1296, 820, 200)
     assert PORTRAIT.top_captions == Box(130, 430, 820, 200)
-    assert PORTRAIT.split_height == 960
+    assert PORTRAIT.split_panels[0].height == 960
 
 
 def test_a_place_in_the_reference_space_maps_in_proportion() -> None:
@@ -71,7 +71,7 @@ def test_a_place_in_the_reference_space_maps_in_proportion() -> None:
 
 def test_a_plan_is_made_on_its_canvas_with_its_safe_area() -> None:
     source = SourceMetadata(duration=3600, fps=25, width=1920, height=1080, codec="h264")
-    portrait = plan_render(0, 10, source)
+    portrait = plan_render(0, 10, source, canvas=PORTRAIT)
     assert (portrait.width, portrait.height, portrait.safe_area) == (1080, 1920, PORTRAIT.safe_area)
     landscape = canvas_for(Aspect.LANDSCAPE)
     plan = plan_render(0, 10, source, canvas=landscape)
@@ -124,7 +124,7 @@ def test_a_manual_scene_without_a_framing_is_centred_on_its_canvas():
     plan = plan_render(100, 105, WIDE, layout=Layout.MANUAL, canvas=canvas_for(Aspect.LANDSCAPE))
     [scene] = plan.scenes
     assert scene.picture.centre == (960, 540)
-    assert plan_render(100, 105, WIDE, layout=Layout.MANUAL).scenes[0].picture.centre == (540, 960)
+    assert plan_render(100, 105, WIDE, layout=Layout.MANUAL, canvas=PORTRAIT).scenes[0].picture.centre == (540, 960)
 
 
 def test_a_keyed_centre_is_held_on_the_frame_it_is_drawn_on():
@@ -134,7 +134,7 @@ def test_a_keyed_centre_is_held_on_the_frame_it_is_drawn_on():
     [event] = plan.overlays
     assert picture_at(event.picture, 1.5, (plan.width, plan.height)).centre[0] == 1800
     # On 9:16 the same Keyframe is held at the frame's right edge.
-    assert picture_at(event.picture, 1.5).centre[0] == 1080
+    assert picture_at(event.picture, 1.5, frame=PORTRAIT.size).centre[0] == 1080
 
 
 # Split, portrait Sources and captions on Auto on each Canvas (canvas-aspect/06): two speakers who
@@ -218,7 +218,7 @@ def test_a_portrait_source_on_a_wider_canvas_is_shown_over_its_blur(aspect):
 
 
 def test_a_portrait_source_is_still_passed_through_on_9_16_and_on_a_canvas_its_own_shape():
-    [scene] = plan_render(100, 105, TALL).scenes
+    [scene] = plan_render(100, 105, TALL, canvas=PORTRAIT).scenes
     assert scene.layout is SceneLayout.PASSTHROUGH and scene.panels[0].area == Box(0, 0, 1080, 1920)
     feed = SourceMetadata(duration=3600, fps=25, width=1080, height=1350, codec="h264")
     assert plan_render(100, 105, feed, canvas=canvas_for(Aspect.FEED)).scenes[0].layout is SceneLayout.PASSTHROUGH
@@ -245,7 +245,7 @@ def test_captions_on_auto_sit_under_blurs_band_where_there_is_room_and_in_the_lo
     [cue] = feed.captions
     assert cue.area.y >= band.y + band.height
     # On 9:16 that is today's lower third, under the band.
-    [cue] = plan_render(100, 105, WIDE, layout=Layout.BLUR, words=WORDS).captions
+    [cue] = plan_render(100, 105, WIDE, layout=Layout.BLUR, words=WORDS, canvas=PORTRAIT).captions
     assert cue.area == PORTRAIT.lower_captions == Box(130, 1296, 820, 200)
     # On 1:1 the band leaves too little room below it in the Safe Area.
     square = canvas_for(Aspect.SQUARE)
@@ -278,7 +278,7 @@ def test_a_custom_caption_place_is_mapped_from_the_reference_space():
     # (270, 1280) of 1080x1920 is (480, 720) of 1920x1080; its font size isn't mapped.
     assert (cue.area.x + cue.area.width / 2, cue.area.y + cue.area.height / 2) == (480, 720)
     assert cue.size == style.size
-    [cue] = plan_render(100, 105, WIDE, words=WORDS, caption_style=style).captions
+    [cue] = plan_render(100, 105, WIDE, words=WORDS, caption_style=style, canvas=PORTRAIT).captions
     assert (cue.area.x + cue.area.width / 2, cue.area.y + cue.area.height / 2) == (270, 1280)
 
 

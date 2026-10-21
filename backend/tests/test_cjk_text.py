@@ -11,6 +11,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import TextLayer
+from app.canvas import PORTRAIT
 from app.config import load_settings
 from app.fonts import FALLBACK_FACE, registry
 from app.layer_pictures import rasterised
@@ -38,7 +39,7 @@ def ink_columns(pixels: np.ndarray) -> np.ndarray:
 
 
 def test_a_line_mixing_latin_and_japanese_has_a_run_per_face_each_measured_in_its_own():
-    event = text_event(layer("HALO 日本語です!"), 10)
+    event = text_event(layer("HALO 日本語です!"), 10, canvas=PORTRAIT)
     assert event.lines == ["HALO 日本語です!"]
     # The space goes with the run it follows, and is not drawn at its end.
     assert runs(event) == [[("HALO", STYLE_FONT), ("日本語です", FALLBACK_FACE), ("!", STYLE_FONT)]]
@@ -60,7 +61,7 @@ def test_a_line_mixing_latin_and_japanese_has_a_run_per_face_each_measured_in_it
 def test_japanese_wraps_between_its_characters_measured_in_the_fallback_face():
     # .scratch/text-advanced/issues/03-wrap-width-and-fixed-height.md: no spaces, yet it breaks.
     text = "今日は良い天気ですね。散歩に行きましょう。"
-    event = text_event(layer(text, wrap_width=400), 10)
+    event = text_event(layer(text, wrap_width=400), 10, canvas=PORTRAIT)
     cjk = font_metrics(FALLBACK_FACE)
     assert len(event.lines) > 1 and "".join(event.lines) == text
     assert all(cjk.width(line, 100) <= 400 for line in event.lines)
@@ -72,8 +73,8 @@ def test_japanese_wraps_between_its_characters_measured_in_the_fallback_face():
 
 
 def test_a_cjk_run_keeps_the_line_pitch_of_the_styles_face():
-    latin = text_event(layer("HALO\nDUNIA"), 10)
-    mixed = text_event(layer("HALO\n日本語"), 10)
+    latin = text_event(layer("HALO\nDUNIA"), 10, canvas=PORTRAIT)
+    mixed = text_event(layer("HALO\n日本語"), 10, canvas=PORTRAIT)
     assert [y for _, y in mixed.anchors] == [y for _, y in latin.anchors]
     assert mixed.area.height == latin.area.height
     assert mixed.layout.height == latin.layout.height
@@ -81,13 +82,13 @@ def test_a_cjk_run_keeps_the_line_pitch_of_the_styles_face():
 
 def test_a_character_neither_face_has_is_left_out_and_the_line_closes_up():
     # Hangul: in neither Montserrat nor the bundled Chinese Face.
-    closed = text_event(layer("AB한CD"), 10)
-    plain = text_event(layer("ABCD"), 10)
+    closed = text_event(layer("AB한CD"), 10, canvas=PORTRAIT)
+    plain = text_event(layer("ABCD"), 10, canvas=PORTRAIT)
     assert closed.lines == ["ABCD"] and runs(closed) == [[("ABCD", STYLE_FONT)]]
     assert closed.area == plain.area and closed.layout.runs == plain.layout.runs
     # A line of nothing either has shows nothing; a layer of only such lines is blank.
-    assert text_event(layer("한국어\nHALO"), 10).lines == ["HALO"]
-    assert text_event(layer("한국어"), 10) is None
+    assert text_event(layer("한국어\nHALO"), 10, canvas=PORTRAIT).lines == ["HALO"]
+    assert text_event(layer("한국어"), 10, canvas=PORTRAIT) is None
 
 
 def test_the_fallback_face_is_bundled_but_not_offered():
@@ -99,7 +100,7 @@ def test_the_fallback_face_is_bundled_but_not_offered():
 
 
 def test_a_layers_picture_draws_each_run_in_its_face_where_it_is_planned():
-    event = text_event(layer("HALO 日本語"), 10)
+    event = text_event(layer("HALO 日本語"), 10, canvas=PORTRAIT)
     pixels = rasterised(load_settings().ffmpeg_bin, event.layout)
     [[halo, japanese]] = event.layout.runs
     columns = ink_columns(pixels)
@@ -117,8 +118,8 @@ def test_a_layers_picture_draws_each_run_in_its_face_where_it_is_planned():
 
 def test_tracking_spaces_every_character_of_every_run_and_each_run_is_drawn_where_it_is_planned():
     # .scratch/text-advanced/issues/04-shadow-plate-and-spacing.md: tracking across runs.
-    plain = text_event(layer("HALO 日本語"), 10)
-    spaced = text_event(layer("HALO 日本語", tracking=30), 10)
+    plain = text_event(layer("HALO 日本語"), 10, canvas=PORTRAIT)
+    spaced = text_event(layer("HALO 日本語", tracking=30), 10, canvas=PORTRAIT)
     # 8 characters, the space among them: 7 gaps.
     assert spaced.area.width - plain.area.width == pytest.approx(7 * 30, abs=1)
     [[halo, japanese]] = spaced.layout.runs
@@ -135,7 +136,7 @@ def test_tracking_spaces_every_character_of_every_run_and_each_run_is_drawn_wher
 
 def test_japanese_glyphs_are_drawn_not_missing_glyph_boxes():
     def halves(text: str) -> tuple[np.ndarray, np.ndarray]:
-        event = text_event(layer(text), 10)
+        event = text_event(layer(text), 10, canvas=PORTRAIT)
         pixels = rasterised(load_settings().ffmpeg_bin, event.layout)
         [[run]] = event.layout.runs
         middle = round(run.x + run.width / 2)

@@ -39,8 +39,8 @@ def test_a_plan_at_a_given_rate_carries_it_and_checks_a_keyed_manual_scene_at_it
     cover = cover_scale(1920, 1080, NINE_SIXTEEN.size)
     dip = {KeyProperty.SCALE: [Keyframe(0, cover + 0.1), Keyframe(0.1, cover - 0.01), Keyframe(0.2, cover + 0.1)]}
     overrides = [by_hand(1, dip, Framing())]
-    at_source = plan_render(100, 103, SOURCE, layout_overrides=overrides)
-    at_60 = plan_render(100, 103, SOURCE, layout_overrides=overrides, fps=60)
+    at_source = plan_render(100, 103, SOURCE, layout_overrides=overrides, canvas=NINE_SIXTEEN)
+    at_60 = plan_render(100, 103, SOURCE, layout_overrides=overrides, fps=60, canvas=NINE_SIXTEEN)
     assert (at_source.fps, at_source.source_fps) == (25, 25)
     assert (at_60.fps, at_60.source_fps) == (60, 25)
     [scene], [sixty] = at_source.scenes, at_60.scenes
@@ -56,17 +56,17 @@ def test_a_plan_at_another_rate_holds_freeze_frames_and_transitions_for_whole_fr
         SegmentInput(20, 22, join=Join(TransitionKind.FADE, 0.33)),
         SegmentInput(22, 22, hold=0.33),
     ]
-    at_60 = plan_render(10, 22, SOURCE, main_track=track, fps=60)
+    at_60 = plan_render(10, 22, SOURCE, main_track=track, fps=60, canvas=NINE_SIXTEEN)
     # 20 frames of 60 fps each.
     assert at_60.transitions == [TransitionEvent(TransitionKind.FADE, 1.667, 2.0)]
     assert [(s.start, s.end, s.hold) for s in at_60.segments] == [(0, 2, None), (1.667, 3.667, None), (3.667, 4.0, 0.333)]
     assert at_60.duration == 4.0
     # At the Source's rate (the Preview Plan's), as the Candidate says: its frames joined as they come.
-    at_source = plan_render(10, 22, SOURCE, main_track=track)
+    at_source = plan_render(10, 22, SOURCE, main_track=track, canvas=NINE_SIXTEEN)
     assert at_source.fps == 25
     assert at_source.transitions == [TransitionEvent(TransitionKind.FADE, 1.67, 2.0)]
     assert [(s.start, s.end, s.hold) for s in at_source.segments] == [(0, 2, None), (1.67, 3.67, None), (3.67, 4.0, 0.33)]
-    assert plan_render(10, 22, SOURCE, main_track=track, fps=25) == at_source
+    assert plan_render(10, 22, SOURCE, main_track=track, fps=25, canvas=NINE_SIXTEEN) == at_source
 
 
 # Seam A: the real ffmpeg
@@ -91,7 +91,7 @@ PORTRAIT = SourceMetadata(PORTRAIT_SECS, 30.0, 1080, 1920, "h264")
 
 def encode(settings, source: Path, tmp_path: Path, fps: float | None, **planned) -> Path:
     """Render 2 s of `source` (PORTRAIT) planned and encoded at `fps` (None: Same as Source)."""
-    plan = plan_render(0.5, 2.5, PORTRAIT, fps=fps, **planned)
+    plan = plan_render(0.5, 2.5, PORTRAIT, fps=fps, **{"canvas": NINE_SIXTEEN, **planned})
     video = tmp_path / "clip.mp4"
     pictures = make_pictures(settings.ffmpeg_bin, (event.layout for event in plan.picture_layers), tmp_path / "pictures")
     Renderer(settings.ffmpeg_bin, RenderTuning()).render(
@@ -117,7 +117,7 @@ def test_freeze_frames_and_cuts_at_60_fps_keep_the_clips_length(settings, portra
         SegmentInput(1.5, 2.5, join=join),
         SegmentInput(2.5, 2.5, hold=0.33),
     ]
-    plan = plan_render(0.2, 2.5, PORTRAIT, main_track=track, fps=60)
+    plan = plan_render(0.2, 2.5, PORTRAIT, main_track=track, fps=60, canvas=NINE_SIXTEEN)
     video = tmp_path / "clip.mp4"
     Renderer(settings.ffmpeg_bin, RenderTuning()).render(portrait_video, plan, video, tmp_path / "clip.jpg", export=ExportSettings(fps=60))
     stream = picture(settings, video)

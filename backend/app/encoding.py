@@ -96,7 +96,7 @@ TIER_MBPS = {Quality.HIGH: 16, Quality.RECOMMENDED: 8, Quality.SMALLEST: 4}
 CODEC_FACTORS = {Codec.H264: 1.0, Codec.HEVC: 0.6, Codec.AV1: 0.5}
 
 
-def output_size(settings: ExportSettings, frame: tuple[int, int] = REFERENCE) -> tuple[int, int]:
+def output_size(settings: ExportSettings, frame: tuple[int, int]) -> tuple[int, int]:
     """The output's width and height in pixels for a plan whose Canvas is `frame` (width, height):
     its shape, its short side the resolution (docs/adr/0022), each side kept even."""
     width, height = frame
@@ -104,7 +104,7 @@ def output_size(settings: ExportSettings, frame: tuple[int, int] = REFERENCE) ->
     return round(width * k / 2) * 2, round(height * k / 2) * 2
 
 
-def target_kbps(settings: ExportSettings, fps: float, frame: tuple[int, int] = REFERENCE) -> int:
+def target_kbps(settings: ExportSettings, fps: float, frame: tuple[int, int]) -> int:
     """The video bitrate the encoders aim for at `fps` for a plan whose Canvas is `frame`, in kb/s. A frame rate under 30 gets 30's, as
     the platforms recommend one bitrate up to 30 fps."""
     if settings.bitrate is not None:
@@ -114,7 +114,7 @@ def target_kbps(settings: ExportSettings, fps: float, frame: tuple[int, int] = R
     return round(mbps * 1000)
 
 
-def estimated_bytes(settings: ExportSettings, fps: float, secs: float, frame: tuple[int, int] = REFERENCE) -> int:
+def estimated_bytes(settings: ExportSettings, fps: float, secs: float, frame: tuple[int, int]) -> int:
     """The size of a Clip `secs` long at `fps` whose Canvas is `frame`: what the encoders aim for,
     video and sound."""
     return round((target_kbps(settings, fps, frame) + AUDIO_KBPS) * 1000 * secs / 8)
@@ -127,7 +127,7 @@ class EncoderArgs(NamedTuple):
     bitrate_fallback: bool
 
 
-def encoder_args(settings: ExportSettings, fps: float, encoder: str, frame: tuple[int, int] = REFERENCE) -> EncoderArgs:
+def encoder_args(settings: ExportSettings, fps: float, encoder: str, frame: tuple[int, int]) -> EncoderArgs:
     """The arguments that make `encoder` encode the Clip, whose Canvas is `frame`, as `settings` say at `fps`.
 
     VideoToolbox (and an encoder unknown here) encodes at the target as its average bitrate, and does

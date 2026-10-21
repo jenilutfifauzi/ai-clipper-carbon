@@ -9,6 +9,7 @@ import re
 import numpy as np
 import pytest
 
+from app.canvas import PORTRAIT
 from app.video_effects import Clock, VideoEffect, changes_with_time, video_effect_chain
 from test_blur_distort_stylize_effects import pictures  # noqa: F401
 from test_media_library import upload
@@ -43,7 +44,7 @@ def spread(chain: list[str]) -> float:
 @pytest.mark.parametrize("effect", [VideoEffect("glow", {"amount": 45}), VideoEffect("bloom-pulse", {"amount": 50, "speed": 2})])
 def test_the_light_of_a_full_frame_picture_spreads_alike_on_every_canvas_and_twice_as_far_at_twice_the_size(effect):
     # Measured against the Canvas (canvas-aspect/07): a full frame of 16:9 spreads as far as one of 9:16.
-    portrait = spread(video_effect_chain([effect], (1080, 1920)))
+    portrait = spread(video_effect_chain([effect], (1080, 1920), frame=PORTRAIT.size))
     assert spread(video_effect_chain([effect], (1920, 1080), frame=(1920, 1080))) == portrait
     assert spread(video_effect_chain([effect], (1080, 1080), frame=(1080, 1080))) == portrait
     # A 4K 16:9 render draws it twice as large.
@@ -59,7 +60,7 @@ def test_only_grain_and_pulse_change_with_time():
 
 def test_a_pulse_counts_its_time_from_its_clock():
     """The strength's sin is of the picture's own time: the frames' time less its start, times its rate."""
-    [chain] = video_effect_chain([VideoEffect("bloom-pulse", {"amount": 50, "speed": 2})], (64, 64), clock=Clock(1.5, 0.5))[1:]
+    [chain] = video_effect_chain([VideoEffect("bloom-pulse", {"amount": 50, "speed": 2})], (64, 64), clock=Clock(1.5, 0.5), frame=PORTRAIT.size)[1:]
     assert "sin((T-1.5)*0.5*2)" in chain, chain
 
 
@@ -68,8 +69,8 @@ def test_a_pulses_weight_is_a_table_and_only_its_gain_changes_with_time_each_pul
     and each frame's strength a gain `sendcmd` sets on its own `colorchannelmixer`, named apart from
     another pulse's in the same graph."""
     pulse = VideoEffect("bloom-pulse", {"amount": 50, "speed": 2})
-    [first] = video_effect_chain([pulse], (64, 64), label="a")[1:]
-    [second] = video_effect_chain([pulse], (64, 64), label="b")[1:]
+    [first] = video_effect_chain([pulse], (64, 64), label="a", frame=PORTRAIT.size)[1:]
+    [second] = video_effect_chain([pulse], (64, 64), label="b", frame=PORTRAIT.size)[1:]
     assert "geq" not in first and "lutrgb=" in first
     assert "[expr] colorchannelmixer@a0_pulse rr 0.5000*(0.6+0.4*sin(T*2))" in first and "colorchannelmixer@a0_pulse=" in first
     assert "colorchannelmixer@b0_pulse" in second and "@a0_" not in second

@@ -58,7 +58,7 @@ export function captionCentres(canvas: Canvas): { min: number; max: number } {
   return { min: toReference(canvas, { x: 0, y: y + CAPTION_HEIGHT / 2 }).y, max: toReference(canvas, { x: 0, y: y + height - CAPTION_HEIGHT / 2 }).y };
 }
 
-/** A Style's place in the Reference Space on `canvas`, to the pixel, as the planner maps it (canvas.py's x_from_reference, y_from_reference). */
+/** A Style's place in the Reference Space on `canvas`, to the pixel, as the planner maps it (canvas.py's from_reference). */
 export function fromReference(canvas: { width: number; height: number }, place: { x: number; y: number }): { x: number; y: number } {
   return { x: Math.round((place.x * canvas.width) / REFERENCE.width), y: Math.round((place.y * canvas.height) / REFERENCE.height) };
 }

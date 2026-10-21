@@ -41,7 +41,7 @@ def test_a_manual_scenes_keyframes_come_out_in_timeline_time_in_every_segment_th
     whole = SegmentInput(10, 20, scenes=[Scene(0, 2), Scene(2, 10)], layout_overrides=[by_hand(5)])
     # Starting 2 s into that shot, and shown twice.
     later = SegmentInput(14, 18, scenes=[Scene(0, 4)], layout_overrides=[by_hand(1)])
-    planned = plan_render(10, 20, SOURCE, main_track=[whole, later, whole])
+    planned = plan_render(10, 20, SOURCE, main_track=[whole, later, whole], canvas=PORTRAIT)
     [_, first, middle, _, again] = planned.scenes
     assert {first.layout, middle.layout, again.layout} == {SceneLayout.MANUAL}
     # In Timeline time, from where the shot starts: 2 s in, 10 s less 2, and 14 s plus 2.
@@ -58,13 +58,13 @@ def test_a_manual_scenes_keyframes_come_out_in_timeline_time_in_every_segment_th
 def test_a_manual_scene_covering_the_frame_throughout_has_no_background_and_its_keyframes_past_its_end_are_ignored():
     cover = cover_scale(1920, 1080, PORTRAIT.size)
     push = {KeyProperty.SCALE: [Keyframe(0, cover + 0.1), Keyframe(2, cover + 0.5), Keyframe(9, 1)]}
-    [scene] = plan_render(100, 103, SOURCE, layout_overrides=[by_hand(1, push, Framing())]).scenes
+    [scene] = plan_render(100, 103, SOURCE, layout_overrides=[by_hand(1, push, Framing())], canvas=PORTRAIT).scenes
     # The 3 s Scene never reaches its Keyframe at 9 s, which is left out of its track.
     assert [key.at for key in scene.picture.motion[KeyProperty.SCALE]] == [0, 2]
     assert scene.ignored == {KeyProperty.SCALE: [Keyframe(9, 1)]}
     assert (scene.panels, scene.colour) == ([], None)
     # The Candidate's own Manual Framing and an unkeyed override stay still.
-    for planned in (plan_render(100, 103, SOURCE, layout=Layout.MANUAL, framing=OVER_BLUE), plan_render(100, 103, SOURCE, layout_overrides=[by_hand(1, {})])):
+    for planned in (plan_render(100, 103, SOURCE, layout=Layout.MANUAL, framing=OVER_BLUE, canvas=PORTRAIT), plan_render(100, 103, SOURCE, layout_overrides=[by_hand(1, {})], canvas=PORTRAIT)):
         [still] = planned.scenes
         assert still.layout is SceneLayout.MANUAL and not still.picture.motion
 

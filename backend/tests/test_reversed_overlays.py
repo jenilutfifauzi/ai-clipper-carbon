@@ -9,6 +9,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from app.canvas import PORTRAIT
 from app.config import load_settings
 from app.planner import overlay_events, overlay_sound
 from app.retimed import CopySize, Retime, copies_used
@@ -28,22 +29,22 @@ from test_sped_overlays import COVER, ITEMS, VIDEO, blue, library_lumas, overlay
 
 
 def test_a_reversed_overlay_reads_the_same_part_of_its_video_backwards_picture_and_sound():
-    [event] = overlay_events([overlay(speed=2, reverse=True)], 6, ITEMS)
+    [event] = overlay_events([overlay(speed=2, reverse=True)], 6, ITEMS, canvas=PORTRAIT)
     assert (event.start, event.end, event.offset, event.speed, event.reverse) == (0.5, 4.5, 1.0, 2, True)
-    [sound] = overlay_sound([overlay(speed=2, reverse=True)], 6, ITEMS)
+    [sound] = overlay_sound([overlay(speed=2, reverse=True)], 6, ITEMS, canvas=PORTRAIT)
     assert (sound.start, sound.end, sound.offset, sound.reverse) == (0.5, 4.5, 1.0, True)
-    assert not overlay_events([overlay()], 6, ITEMS)[0].reverse
+    assert not overlay_events([overlay()], 6, ITEMS, canvas=PORTRAIT)[0].reverse
 
 
 def test_a_reversed_overlay_cut_by_the_clips_end_shows_the_end_of_its_part_so_it_begins_later():
     # Shown from 0.5 to 3 s of its 4 s: forwards 1..3.5 s of its video; backwards 4.5..2 s at 1×.
-    assert overlay_events([overlay()], 3, ITEMS)[0].offset == 1.0
-    assert overlay_events([overlay(reverse=True)], 3, ITEMS)[0].offset == 2.5
+    assert overlay_events([overlay()], 3, ITEMS, canvas=PORTRAIT)[0].offset == 1.0
+    assert overlay_events([overlay(reverse=True)], 3, ITEMS, canvas=PORTRAIT)[0].offset == 2.5
     # At 2× it shows 1..9 s, of which 9..4 s before the Clip ends.
-    assert overlay_events([overlay(speed=2, reverse=True)], 3, ITEMS)[0].offset == 4.0
-    assert overlay_sound([overlay(speed=2, reverse=True)], 3, ITEMS)[0].offset == 4.0
+    assert overlay_events([overlay(speed=2, reverse=True)], 3, ITEMS, canvas=PORTRAIT)[0].offset == 4.0
+    assert overlay_sound([overlay(speed=2, reverse=True)], 3, ITEMS, canvas=PORTRAIT)[0].offset == 4.0
     # Cut by its video's end, it still shows its part up to there: 6 s at 2× from 1 s reach 10 s at 5 s.
-    assert overlay_events([overlay(secs=6, speed=2, reverse=True)], 20, ITEMS)[0].offset == 1.0
+    assert overlay_events([overlay(secs=6, speed=2, reverse=True)], 20, ITEMS, canvas=PORTRAIT)[0].offset == 1.0
 
 
 def test_a_reversed_overlay_plays_from_reversed_copies_of_the_part_it_shows():

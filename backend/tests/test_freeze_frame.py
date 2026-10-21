@@ -122,7 +122,7 @@ def test_a_freeze_frame_of_a_keyed_manual_scene_shows_its_picture_as_at_its_fram
     assert held.layout is SceneLayout.MANUAL and not held.picture.motion
     assert held.framing.transform == Transform(x=500, scale=2)
     # The picture the head shows as it reaches the frame, held (to the pixel a still picture's size is rounded to).
-    shown = picture_at(first.picture, 3 / speed)
+    shown = picture_at(first.picture, 3 / speed, frame=PORTRAIT.size)
     assert held.picture.centre == shown.centre
     assert (held.picture.width, held.picture.height) == pytest.approx((shown.width, shown.height), abs=1)
 

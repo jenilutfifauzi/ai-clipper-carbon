@@ -12,6 +12,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import AdjustmentLayer, BlendMode, Candidate, Grade, Overlay, manual_candidate
+from app.canvas import PORTRAIT
 from app.config import CameraTuning, load_settings
 from app.planner import AdjustmentEvent, MediaInfo, plan_render
 from app.renderer import _adjustment, _at_frame
@@ -41,7 +42,7 @@ OFF = VideoEffect("gaussian-blur", {"radius": 6}, enabled=False)
 
 def test_an_adjustment_layers_enabled_effects_reach_its_event_at_the_frames_own_size():
     layers = [AdjustmentLayer("a", 1.0, 2.0, video_effects=[BLUR]), AdjustmentLayer("b", 0.0, 4.0, video_effects=[OFF])]
-    planned = plan_render(10, 23, SOURCE, adjustment_layers=layers)
+    planned = plan_render(10, 23, SOURCE, adjustment_layers=layers, canvas=PORTRAIT)
     # A neutral Grade with effects alone is a layer; a stack all off draws nothing.
     assert planned.adjustment_layers == [
         AdjustmentEvent("a", 1.0, 3.0, Grade(), video_effects=[BLUR]), AdjustmentEvent("b", 0.0, 4.0, Grade()),
@@ -141,7 +142,7 @@ def test_a_layers_effects_run_on_its_spans_frames_alone_and_draw_them_as_on_ever
     stack = checked_video_effects([VideoEffect("chromatic-aberration")], "Adjustment Layer a")
     event = AdjustmentEvent("a", 1.21, 1.9, Grade(), video_effects=stack)
     span = "between(t\\,1.210\\,1.900)"
-    every = ",".join(video_effect_chain(stack, (360, 640), label="every", clock=Clock(event.start)))
+    every = ",".join(video_effect_chain(stack, (360, 640), label="every", clock=Clock(event.start), frame=PORTRAIT.size))
     graphs = {
         "spanned": _adjustment(event, "[0:v]", "[out]", 0, (360, 640), 30),
         "every": f"[0:v]split[a][b];[b]{every},format=yuva420p[g];[a][g]overlay=0:0:enable='{span}':eof_action=pass[out]",
@@ -167,7 +168,7 @@ def test_a_frame_drawn_alone_leaves_out_the_overlays_and_layers_that_dont_show_o
     stack = [VideoEffect("film-grain")]
     overlays = [Overlay("o", "v", 1.0, 2.0, blend=BlendMode.SCREEN, video_effects=[VideoEffect("chroma-key")])]
     layers = [AdjustmentLayer("a", 3.0, 1.0, video_effects=stack)]
-    plan = plan_render(10, 16, SOURCE, overlays=overlays, adjustment_layers=layers, media_info={"v": MediaInfo(320, 180, 9.0, False)})
+    plan = plan_render(10, 16, SOURCE, overlays=overlays, adjustment_layers=layers, media_info={"v": MediaInfo(320, 180, 9.0, False)}, canvas=PORTRAIT)
     assert (len(plan.overlays), len(plan.adjustment_layers)) == (1, 1)
 
     def drawn(at: float) -> tuple[list[str], list[str]]:

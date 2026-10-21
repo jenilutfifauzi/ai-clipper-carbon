@@ -49,7 +49,7 @@ def test_a_media_segment_is_its_picture_over_its_background_and_has_no_captions(
             SegmentInput(0, 2, media=INTRO, width=720, height=1280),
             SegmentInput(10, 12),
             SegmentInput(0, 1, media=INTRO, width=1280, height=720, framing=small),
-        ],
+        ], canvas=PORTRAIT,
     )
     [intro, episode, outro] = planned.scenes
     assert [segment.media for segment in planned.segments] == [INTRO, None, INTRO]
@@ -65,7 +65,7 @@ def test_a_media_segment_is_its_picture_over_its_background_and_has_no_captions(
     assert (outro.panels, outro.colour) == ([], "#123456")
     assert box(outro.picture.bounds) == (270, 808, 540, 304)
     # The blur is of what its Crop keeps: here the right half of the video.
-    [blurred] = framed_scene(0, 1, SceneLayout.MEDIA, 1280, 720, Framing(crop=Crop(left=0.5))).panels
+    [blurred] = framed_scene(0, 1, SceneLayout.MEDIA, 1280, 720, Framing(crop=Crop(left=0.5)), canvas=PORTRAIT).panels
     assert (blurred.path[0].x, blurred.crop_width, blurred.crop_height) == (640 + 118, 404, 720)
 
     # Captions come from the Source's Segments only.
@@ -89,12 +89,12 @@ def test_an_old_filled_or_fitted_segment_becomes_a_framing_that_shows_the_same_b
         assert fitted == old | {"framing": {"transform": {"scale": 1.0}, "background": {"kind": "blur"}}}
         assert migrated_segment(filled, {}) == filled
         [filled_scene, fitted_scene] = (
-            framed_scene(0, 1, SceneLayout.MEDIA, *size, _FRAMING.validate_python(segment["framing"])) for segment in (filled, fitted)
+            framed_scene(0, 1, SceneLayout.MEDIA, *size, _FRAMING.validate_python(segment["framing"]), canvas=PORTRAIT) for segment in (filled, fitted)
         )
         # Filled, it was the largest 9:16 crop from the middle of the video, filling the frame: so
         # is the part of its picture on the frame now.
         was = _filled(*size, 0.0, PORTRAIT)
-        shown = on_frame(filled_scene.picture)
+        shown = on_frame(filled_scene.picture, frame=PORTRAIT.size)
         assert (shown.width, shown.height) == (PORTRAIT.width, PORTRAIT.height), size
         assert within_a_pixel(box(shown.crop), (was.path[0].x, was.path[0].y, was.crop_width, was.crop_height)), size
         # Fitted, it was the whole video as large as fits in the middle of the frame, over a blur of
@@ -122,17 +122,17 @@ def within_a_pixel(a: tuple[int, ...], b: tuple[int, ...]) -> bool:
 
 def test_the_part_of_a_picture_on_the_frame_is_what_it_draws_there():
     # 2000x1000 at (540, 960), unturned: x -460..1540 of the frame, so its middle 1080 px are on it.
-    picture = framed_scene(0, 1, SceneLayout.MEDIA, 2000, 1000, Framing(Transform(scale=2000 / 1080))).picture
+    picture = framed_scene(0, 1, SceneLayout.MEDIA, 2000, 1000, Framing(Transform(scale=2000 / 1080)), canvas=PORTRAIT).picture
     assert (picture.width, picture.height) == (2000, 1000)
-    shown = on_frame(picture)
+    shown = on_frame(picture, frame=PORTRAIT.size)
     assert (box(shown.crop), shown.width, shown.height, shown.centre) == ((460, 0, 1080, 1000), 1080, 1000, (540, 960))
     # Moved right to x 0..2000 and flipped, its left 1080 px are on the frame: the video's right.
-    moved = on_frame(replace(picture, centre=(1000, 960), flip_h=True))
+    moved = on_frame(replace(picture, centre=(1000, 960), flip_h=True), frame=PORTRAIT.size)
     assert (box(moved.crop), moved.width, moved.centre) == ((920, 0, 1080, 1000), 1080, (540, 960))
     # A picture inside the frame, or turned, is drawn whole.
-    small = framed_scene(0, 1, SceneLayout.MEDIA, 2000, 1000, Framing(Transform(scale=0.5))).picture
-    assert on_frame(small) == small
-    assert on_frame(replace(picture, rotation=10)) == replace(picture, rotation=10)
+    small = framed_scene(0, 1, SceneLayout.MEDIA, 2000, 1000, Framing(Transform(scale=0.5)), canvas=PORTRAIT).picture
+    assert on_frame(small, frame=PORTRAIT.size) == small
+    assert on_frame(replace(picture, rotation=10), frame=PORTRAIT.size) == replace(picture, rotation=10)
 
 
 class Library:
@@ -288,7 +288,7 @@ def test_a_job_saved_with_filled_and_fitted_segments_reads_them_as_framings_that
     planned = preview(client, job, read)["plan"]
     [filled, *_, fitted] = (_PICTURE.validate_python(scene["picture"]) if scene["picture"] else None for scene in planned["scenes"])
     was = _filled(640, 360, 0.0, PORTRAIT)
-    shown = on_frame(filled)
+    shown = on_frame(filled, frame=PORTRAIT.size)
     assert (shown.width, shown.height) == (PORTRAIT.width, PORTRAIT.height)
     assert within_a_pixel(box(shown.crop), (was.path[0].x, was.path[0].y, was.crop_width, was.crop_height))
     assert box(fitted.bounds) == box(_fitted(640, 360, 0.0, PORTRAIT).area)

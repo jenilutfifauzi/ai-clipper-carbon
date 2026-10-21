@@ -44,7 +44,7 @@ def overlay(**fields) -> Overlay:
 
 
 def drawn(transform: Transform, media: str = CLIP, crop: Crop = Crop()):
-    [event] = overlay_events([overlay(media=media, transform=transform, crop=crop)], 10, ITEMS)
+    [event] = overlay_events([overlay(media=media, transform=transform, crop=crop)], 10, ITEMS, canvas=PORTRAIT)
     return event.picture
 
 
@@ -71,16 +71,16 @@ def test_an_overlay_is_drawn_at_its_transform_and_kept_in_the_clip_and_its_video
     assert box(picture.crop) == (0, 0, 640, 360)
     assert (picture.opacity, picture.flip_h, picture.flip_v, picture.rotation) == (0.4, True, False, 0)
     assert box(picture.bounds) == (30, 248, 540, 304)
-    [event] = overlay_events([overlay()], 10, ITEMS)
+    [event] = overlay_events([overlay()], 10, ITEMS, canvas=PORTRAIT)
     assert (event.start, event.end, event.offset, event.image) == (1.0, 3.0, 0.0, False)
     # A new Overlay is half its fitted size at the frame's centre: 540 px wide for a wide item.
     assert box(event.picture.bounds) == (270, 808, 540, 304)
     # Cut where the Clip or its video ends.
-    assert overlay_events([overlay(start=9.0)], 10, ITEMS)[0].end == 10
-    assert overlay_events([overlay(offset=3.0)], 10, ITEMS)[0].end == 2.0
+    assert overlay_events([overlay(start=9.0)], 10, ITEMS, canvas=PORTRAIT)[0].end == 10
+    assert overlay_events([overlay(offset=3.0)], 10, ITEMS, canvas=PORTRAIT)[0].end == 2.0
     # An image lasts as long as it is given; a missing item shows nothing.
-    assert overlay_events([overlay(media=STILL, secs=8.0)], 10, ITEMS)[0].end == 9.0
-    assert overlay_events([overlay(media="00" * 16)], 10, ITEMS) == []
+    assert overlay_events([overlay(media=STILL, secs=8.0)], 10, ITEMS, canvas=PORTRAIT)[0].end == 9.0
+    assert overlay_events([overlay(media="00" * 16)], 10, ITEMS, canvas=PORTRAIT) == []
 
 
 def test_a_turned_picture_is_bounded_by_its_turned_box_about_the_same_centre():
@@ -130,17 +130,17 @@ def test_a_crop_that_would_leave_less_than_a_tenth_is_pulled_back_by_its_second_
 
 def test_corners_are_a_share_of_the_drawn_pictures_shorter_side_and_border_and_shadow_keep_their_pixels():
     # 540x304 at 0.5: a quarter of its shorter side is 76 px.
-    [event] = overlay_events([overlay(radius=0.25)], 10, ITEMS)
+    [event] = overlay_events([overlay(radius=0.25)], 10, ITEMS, canvas=PORTRAIT)
     assert event.picture.radius == 76
     # It scales with the picture: twice as large, twice the radius. A tall 100x200 one at 0.5 is round.
-    [large] = overlay_events([overlay(radius=0.25, transform=Transform(scale=1))], 10, ITEMS)
+    [large] = overlay_events([overlay(radius=0.25, transform=Transform(scale=1))], 10, ITEMS, canvas=PORTRAIT)
     assert large.picture.radius == 152
-    [tall] = overlay_events([overlay(media=TALL, radius=0.5, transform=Transform(scale=100 / 960))], 10, ITEMS)
+    [tall] = overlay_events([overlay(media=TALL, radius=0.5, transform=Transform(scale=100 / 960))], 10, ITEMS, canvas=PORTRAIT)
     assert tall.picture.radius == 50
     # The border and shadow are in output pixels, the same at any scale.
     border, shadow = Border(width=10, colour="#ff0000"), Shadow(blur=30, x=20, y=20, opacity=0.6)
     for scale in (0.2, 2):
-        [decorated] = overlay_events([overlay(border=border, shadow=shadow, transform=Transform(scale=scale))], 10, ITEMS)
+        [decorated] = overlay_events([overlay(border=border, shadow=shadow, transform=Transform(scale=scale))], 10, ITEMS, canvas=PORTRAIT)
         assert (decorated.picture.border, decorated.picture.shadow) == (border, shadow)
     # Undecorated by default.
     assert (event.picture.border, event.picture.shadow, drawn(Transform()).radius) == (None, None, 0)

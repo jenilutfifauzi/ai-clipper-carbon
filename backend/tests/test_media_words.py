@@ -39,7 +39,7 @@ def talking(start: float, end: float, words: list[Word], **given) -> SegmentInpu
 
 
 def cues(*main_track: SegmentInput, style: CaptionStyle = CaptionStyle()) -> list[tuple[str, float, float, float, str | None]]:
-    planned = plan_render(10, 20, SOURCE, main_track=list(main_track), caption_style=style)
+    planned = plan_render(10, 20, SOURCE, main_track=list(main_track), caption_style=style, canvas=PORTRAIT)
     return [(cue.text, cue.start, cue.end, cue.key.at, cue.key.media) for cue in planned.captions]
 
 
@@ -82,10 +82,10 @@ def test_cues_break_at_a_media_segments_joins_and_transitions():
 
 def test_a_media_segments_scenes_are_captioned_at_the_caption_styles_position_auto_in_the_lower_third():
     words = [Word("halo", 0.2, 0.6)]
-    [auto] = plan_render(0, 2, SOURCE, main_track=[talking(0.0, 2.0, words)]).captions
+    [auto] = plan_render(0, 2, SOURCE, main_track=[talking(0.0, 2.0, words)], canvas=PORTRAIT).captions
     assert (auto.area.y, auto.area.height) == (PORTRAIT.lower_captions.y, PORTRAIT.lower_captions.height)
     top = CaptionStyle(position=CaptionPosition.TOP)
-    [placed] = plan_render(0, 2, SOURCE, main_track=[talking(0.0, 2.0, words)], caption_style=top).captions
+    [placed] = plan_render(0, 2, SOURCE, main_track=[talking(0.0, 2.0, words)], caption_style=top, canvas=PORTRAIT).captions
     assert placed.area.y == PORTRAIT.top_captions.y
 
 

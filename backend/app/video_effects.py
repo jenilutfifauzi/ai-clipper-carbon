@@ -31,7 +31,6 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from app.audio_effects import COLOUR, Setting, colour_setting
-from app.canvas import REFERENCE
 
 # The most entries one picture's stack holds (each effect at most once, so the catalogue's size bounds it too).
 VIDEO_EFFECTS_MAX = 20
@@ -486,7 +485,8 @@ def changes_with_time(stack: list[VideoEffect]) -> bool:
 
 def video_effect_chain(
     stack: list[VideoEffect], size: tuple[int, int], enable: str | None = None, label: str = "vfx", clock: Clock = Clock(),
-    frame: tuple[int, int] = REFERENCE,
+    *,
+    frame: tuple[int, int],
 ) -> list[str]:
     """The filters `stack` (checked, its sizes as drawn) is drawn through on a picture of `size`
     (width, height) on the Canvas `frame` (at the plan's size, short side 1080: `canvas.unscaled`):

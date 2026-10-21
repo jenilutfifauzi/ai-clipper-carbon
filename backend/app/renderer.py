@@ -130,7 +130,7 @@ import numpy as np
 
 from app.ass import ass_alpha, ass_filter, ass_text, ass_time, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
 from app.audio_effects import MEASURED_GAIN, NORMALIZE, effect_chain, normalize_gain
-from app.canvas import PORTRAIT, unscaled
+from app.canvas import unscaled
 from app.config import FONTS_DIR, RenderTuning
 from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args, output_size
 from app.fonts import font, registry
@@ -534,7 +534,7 @@ class Renderer:
             frame += f";{joined}fps={_rate(plan)}[timed]"
             joined = "[timed]"
         for i, (event, number, feed) in enumerate(layered):
-            frame += f";{_overlay(event, joined, f'[over{i}]', number, i, feed, _rate_value(plan), unscaled((plan.width, plan.height)))}"
+            frame += f";{_overlay(event, joined, f'[over{i}]', number, i, feed, _rate_value(plan), frame=unscaled((plan.width, plan.height)))}"
             joined = f"[over{i}]"
         for i, event in enumerate(plan.adjustment_layers):
             if adjusted := _adjustment(event, joined, f"[adjusted{i}]", i, (plan.width, plan.height), _rate_value(plan)):
@@ -1213,12 +1213,13 @@ def _overlay_inputs(
 
 def _overlay(
     event: OverlayEvent, below: str, out: str, index: int, number: int, feed: FrameFeed | None = None, fps: float = 30,
-    canvas: tuple[int, int] = PORTRAIT.size,
+    *,
+    frame: tuple[int, int],
 ) -> str:
     """Filters that draw an Overlay (input `index`) as its Picture over the frames `below` while it
     shows, into `out`: a video's frames moved to start when it does and timed by its Speed, an
     image's one picture held (or its looped frames moved to start when it does, `_looped`), graded after it is scaled and flipped and then drawn through its Video
-    Effects (docs/adr/0014), at its drawn size, on `canvas` (the plan's Canvas, at its own size). A keyed one's frames, drawn whole
+    Effects (docs/adr/0014), at its drawn size, on `frame` (the plan's Canvas, at its own size). A keyed one's frames, drawn whole
     (graded and effected) by its frame process `feed`, are laid at 0, 0, each over the frame of its number (the
     frames below being at n / fps exactly). The frames below are `fps` a second."""
     shows = f"enable='between(t\\,{event.start:.3f}\\,{event.end:.3f})'"
@@ -1234,7 +1235,7 @@ def _overlay(
     # Its effects come before its frames are moved onto the Timeline: a video's are its video's, from
     # its offset, before its Speed.
     clock = Clock(rate=1 if event.image else 1 / event.speed)
-    chain = video_effect_chain(event.video_effects, (event.picture.width, event.picture.height), label=f"layer{number}fx", clock=clock, frame=canvas)
+    chain = video_effect_chain(event.video_effects, (event.picture.width, event.picture.height), label=f"layer{number}fx", clock=clock, frame=frame)
     effected = ",".join([*([graded] if graded else []), *chain])
     return _picture(
         event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}", effected, event.blend, shows, spanned
@@ -1335,20 +1336,20 @@ type _Shown = HookEvent | PictureLayer | OverlayEvent
 type _Motion = HookStyle | TextLayer | Shape | OverlayEvent
 
 
-def layer_at(event: PictureLayer, time: float, drawn: float = 1.0, frame: tuple[int, int] = PORTRAIT.size) -> Picture:
+def layer_at(event: PictureLayer, time: float, drawn: float = 1.0, *, frame: tuple[int, int]) -> Picture:
     """A picture layer's picture as drawn at `time` seconds into the Clip, animated by its item's
     animations (`animated_at`), in a plan drawn `drawn` times its size, on a `frame` that large."""
-    return animated_at(event, event.layer, event.picture, time, drawn, frame)
+    return animated_at(event, event.layer, event.picture, time, drawn, frame=frame)
 
 
-def overlay_at(event: OverlayEvent, time: float, drawn: float = 1.0, frame: tuple[int, int] = PORTRAIT.size) -> Picture:
+def overlay_at(event: OverlayEvent, time: float, drawn: float = 1.0, *, frame: tuple[int, int]) -> Picture:
     """An Overlay's picture as drawn at `time` seconds into the Clip, animated as a picture layer is
     (`animated_at`), in a plan drawn `drawn` times its size."""
-    return animated_at(event, event, event.picture, time, drawn, frame)
+    return animated_at(event, event, event.picture, time, drawn, frame=frame)
 
 
 def animated_at(
-    shown: _Shown, style: _Motion, picture: Picture, time: float, drawn: float = 1.0, frame: tuple[int, int] = PORTRAIT.size
+    shown: _Shown, style: _Motion, picture: Picture, time: float, drawn: float = 1.0, *, frame: tuple[int, int]
 ) -> Picture:
     """`picture`, of an item shown from `shown`'s start to its end and animated as `style` says, as
     drawn at `time` seconds into the Clip: as its Keyframes have it then (`picture_at`), and on top
@@ -1468,7 +1469,7 @@ def _keyed_items(
         image = read_image(files[event.media])
         graded = grade_filters(event.grade, alpha="g")
         if (graded or event.video_effects) and ffmpeg is not None:
-            image = graded_image(ffmpeg, image, event.picture, graded, event.video_effects, unscaled((plan.width, plan.height)))
+            image = graded_image(ffmpeg, image, event.picture, graded, event.video_effects, frame=unscaled((plan.width, plan.height)))
         items[("overlay", i)] = image
     for i, (media, _) in _keyed_scenes(plan).items():
         if media is None:
@@ -1525,13 +1526,13 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
             assert scene.picture is not None and isinstance(item, Path)
             picture = _later(scene.picture, -scene.start)
             length = scene.end - scene.start
-            video = VideoDecode(ffmpeg, item, picture, 0.0, length, scenes[i][1], rate)
+            video = VideoDecode(ffmpeg, item, picture, 0.0, length, scenes[i][1], rate, frame=unscaled(frame))
             feeds[(kind, i)] = FrameFeed(PictureFrames(picture, frame=frame), 0.0, length, rate, video)
             continue
         if kind == "layer":
             layer = layers[i]
             assert isinstance(item, np.ndarray)
-            frames = PictureFrames(layer.picture, item, frame, lambda time, layer=layer: layer_at(layer, time, drawn, frame))
+            frames = PictureFrames(layer.picture, item, frame=frame, sampled=lambda time, layer=layer: layer_at(layer, time, drawn, frame=frame))
             feeds[(kind, i)] = FrameFeed(frames, layer.start, layer.end, rate)
             continue
         event = plan.overlays[i]
@@ -1542,10 +1543,10 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
             frames = PictureFrames(event.picture, frame=frame, sampled=sampled)
             video = VideoDecode(
                 ffmpeg, item, event.picture, event.start, event.end, event.time, rate, grade_filters(event.grade, alpha="g"), event.video_effects,
-                looped=event.image, canvas=unscaled(frame),
+                looped=event.image, frame=unscaled(frame),
             )
         else:
-            frames, video = PictureFrames(event.picture, item, frame, sampled), None
+            frames, video = PictureFrames(event.picture, item, frame=frame, sampled=sampled), None
         feeds[(kind, i)] = FrameFeed(frames, event.start, event.end, rate, video)
     return feeds
 
