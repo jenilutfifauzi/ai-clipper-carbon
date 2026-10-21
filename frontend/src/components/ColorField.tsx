@@ -41,6 +41,7 @@ export function ColorField({
         />
         <input
           id={`${id}-code`}
+          aria-label={`${label}: code`}
           value={typed ?? value}
           maxLength={7}
           spellCheck={false}

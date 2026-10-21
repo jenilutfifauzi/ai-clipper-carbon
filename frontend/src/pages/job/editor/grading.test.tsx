@@ -154,8 +154,8 @@ describe("sharpen and vignette in the preview (color-adjust/02)", () => {
     };
     const { markup } = effects([undefined]);
     const at = (label: string) => markup.indexOf(`>${label}<`);
-    expect(at("Effects")).toBeGreaterThan(-1);
-    expect([at("Effects"), at("Sharpen"), at("Fade"), at("Vignette")].every((place, i, all) => i === 0 || place > all[i - 1])).toBe(true);
+    expect(at("Detail")).toBeGreaterThan(-1);
+    expect([at("Detail"), at("Sharpen"), at("Fade"), at("Vignette")].every((place, i, all) => i === 0 || place > all[i - 1])).toBe(true);
     expect(effects([undefined]).reset).toBe("disabled");
     expect(effects([adjusted(undefined, { sharpen: 30 })]).reset).toBe("enabled");
     expect(effects([adjusted(undefined, { vignette: 30 })]).reset).toBe("enabled");

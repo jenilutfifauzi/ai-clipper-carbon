@@ -59,7 +59,8 @@ export function PicturePanel({
   const moving = isKeyed(picture) || look ? playback : undefined;
   const drawn = moving ? drawnAt(picture, moving.shownTime, look) : picture;
   const { opacity, inner, radius, border, shadow, ...place } = pictureStyle(drawn, frame);
-  const visibility = hidden ? "hidden" : "visible";
+  // Hidden, or as its box is: a MediaSegment's box hides it outside its span, which "visible" would undo.
+  const visibility = hidden ? "hidden" : undefined;
   const graded = useGradeFilter(grade);
   const effected = effectsFilter(effects, pictureBox(picture), start);
   const filter = [graded, effected].filter(Boolean).join(" ") || undefined;
