@@ -46,3 +46,9 @@ Not done or deferred:
 - **Browser walkthrough** wasn't run, because no dev server was up.
 - **Slider ranges.** The Caption and Hook Style panels' sliders still use 9:16's Safe Area as their Reference Space limits. On another Canvas the planner then holds the mapped place inside that Canvas's own Safe Area, so a slider's ends can sit a little past where the place stops.
 - **The Watermark's own size and the Logo's** are pixels, as the spec says, so they are the same on every aspect.
+
+**2026-10-22 (code review: slider ranges per aspect):**
+- The custom-place sliders (the hook's top in `HookPosition`, a caption line's centre in `CaptionStylePanel`) used 9:16's Safe Area as their limits in the Reference Space. Now they use their Candidate's Canvas's Safe Area, mapped into the Reference Space: `canvas.ts`'s `referenceSafeArea(canvas)` for the hook, and `captionCentres(canvas)` for captions (half a caption area inside it, as `_custom_caption_area` holds it). So a slider's ends are where the planner actually holds the place. On 16:9 the hook's top runs 96–1824 and a caption's centre 273.78–1646.22.
+- The panels take a `canvas` prop that defaults to `PORTRAIT`. That default is what a style panel without a Candidate keeps. The clip editor passes `canvasOf(preview?.plan, candidate.aspect)`, and the Advanced Edit's Captions inspector passes the `CanvasContext` Canvas. I used a prop rather than a hook inside the panels because their tests call them as functions.
+- `REFERENCE_SAFE_AREA` is gone. Its only users were these two sliders.
+- Tests: `canvas.test.ts` (`referenceSafeArea`, `captionCentres`) and `styleSpacing.test.tsx` (the sliders' ends on 9:16 and on 16:9).

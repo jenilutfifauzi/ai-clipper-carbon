@@ -3,7 +3,7 @@ import { useContext, useState, type ReactNode } from "react";
 import type { AdjustmentLayer, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
-import { canvasOf } from "../editor/canvas";
+import { canvasOf, useCanvas } from "../editor/canvas";
 import { CaptionStylePanel } from "../editor/CaptionStylePanel";
 import { PresetBar } from "../editor/PresetBar";
 import { usePlayback, type Playback } from "../editor/playback";
@@ -418,6 +418,7 @@ function CaptionsFields({
   onEdits: (edits: AdvancedEdits, group?: string) => void;
 }) {
   const [more, setMore] = useState(false);
+  const canvas = useCanvas();
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -426,7 +427,7 @@ function CaptionsFields({
       </div>
       <ResetPlace edits={edits} part="caption" onEdits={onEdits} />
       <PresetBar style={style} error={error} />
-      {style ? <CaptionStylePanel style={style} fonts={fonts} more={more} onMore={setMore} inspector /> : !error && <StyleFieldsSkeleton />}
+      {style ? <CaptionStylePanel style={style} fonts={fonts} more={more} onMore={setMore} inspector canvas={canvas} /> : !error && <StyleFieldsSkeleton />}
     </div>
   );
 }

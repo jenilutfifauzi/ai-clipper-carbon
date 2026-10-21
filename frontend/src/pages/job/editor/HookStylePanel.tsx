@@ -5,7 +5,7 @@ import { Segmented } from "../../../components/Segmented";
 import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
-import { REFERENCE, REFERENCE_SAFE_AREA } from "./canvas";
+import { type Canvas, PORTRAIT, REFERENCE, referenceSafeArea } from "./canvas";
 import { HookShapePicker } from "./HookShapePicker";
 import { FacePicker } from "./FacePicker";
 import { ShadowFields } from "./ShadowFields";
@@ -96,9 +96,13 @@ export function HookLook({ style, fonts }: { style: StyleControls; fonts: FontIn
   );
 }
 
-/** Where on the frame the hook sits. */
-export function HookPosition({ style }: { style: StyleControls }) {
+/**
+ * Where on the frame the hook sits. A custom place's sliders end where the planner holds it on
+ * `canvas`, its Candidate's (9:16's outside a Candidate).
+ */
+export function HookPosition({ style, canvas = PORTRAIT }: { style: StyleControls; canvas?: Canvas }) {
   const { hook, set, marker } = hookFields(style);
+  const safe = referenceSafeArea(canvas);
   return (
     <>
       <Segmented
@@ -116,8 +120,8 @@ export function HookPosition({ style }: { style: StyleControls }) {
           <Slider
             label="Height of the hook's top"
             value={hook.y}
-            min={REFERENCE_SAFE_AREA.y}
-            max={REFERENCE_SAFE_AREA.y + REFERENCE_SAFE_AREA.height}
+            min={safe.y}
+            max={safe.y + safe.height}
             format={(v) => `${Math.round(v)} px`}
             onChange={(v) => set("y", v)}
             marker={marker("y", "hook height")}

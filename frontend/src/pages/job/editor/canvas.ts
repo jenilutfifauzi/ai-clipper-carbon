@@ -20,8 +20,6 @@ export const PORTRAIT: Canvas = { width: 1080, height: 1920, safe_area: { x: 0, 
 // The Reference Space (GLOSSARY.md): the 1080×1920 frame the Caption, Hook and Watermark Styles keep
 // their places in on every Canvas.
 export const REFERENCE = { width: 1080, height: 1920 } as const;
-// Its Safe Area (9:16's), which the Hook Style's height is held to.
-export const REFERENCE_SAFE_AREA = PORTRAIT.safe_area;
 // How tall a caption area is (canvas.py's CAPTION_HEIGHT): a line's middle stays half of it inside a Safe Area.
 export const CAPTION_HEIGHT = 200;
 
@@ -38,6 +36,26 @@ const REFERENCE_DECIMALS = 100;
 export function toReference(canvas: { width: number; height: number }, place: { x: number; y: number }): { x: number; y: number } {
   const kept = (value: number) => Math.round(value * REFERENCE_DECIMALS) / REFERENCE_DECIMALS;
   return { x: kept((place.x * REFERENCE.width) / canvas.width), y: kept((place.y * REFERENCE.height) / canvas.height) };
+}
+
+/**
+ * `canvas`'s Safe Area in the Reference Space: where a Style's place is held to on that Canvas (the
+ * hook's top, a caption line's centre), so that a slider's ends are where the planner holds it. 9:16's
+ * is itself.
+ */
+export function referenceSafeArea(canvas: Canvas): Box {
+  const { x, y } = toReference(canvas, canvas.safe_area);
+  const end = toReference(canvas, { x: canvas.safe_area.x + canvas.safe_area.width, y: canvas.safe_area.y + canvas.safe_area.height });
+  return { x, y, width: end.x - x, height: end.y - y };
+}
+
+/**
+ * The heights a custom caption line's centre may have on `canvas`, in the Reference Space: half a
+ * caption area inside its Safe Area, as the planner holds it (planner.py's `_custom_caption_area`).
+ */
+export function captionCentres(canvas: Canvas): { min: number; max: number } {
+  const { y, height } = canvas.safe_area;
+  return { min: toReference(canvas, { x: 0, y: y + CAPTION_HEIGHT / 2 }).y, max: toReference(canvas, { x: 0, y: y + height - CAPTION_HEIGHT / 2 }).y };
 }
 
 /** A Style's place in the Reference Space on `canvas`, to the pixel, as the planner maps it (canvas.py's x_from_reference, y_from_reference). */

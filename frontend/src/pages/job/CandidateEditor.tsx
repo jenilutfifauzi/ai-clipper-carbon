@@ -458,6 +458,7 @@ export function CandidateEditor({
                     fonts={fonts}
                     more={more.captions}
                     onMore={(open) => setMore((old) => ({ ...old, captions: open }))}
+                    canvas={canvasOf(preview?.plan, candidate.aspect)}
                   />
                 ) : (
                   !style.error && <StyleFieldsSkeleton />
@@ -499,7 +500,7 @@ export function CandidateEditor({
                   <h4 id="hook-when-heading" className="font-semibold">
                     When and where
                   </h4>
-                  {style.controls && <HookPosition style={style.controls} />}
+                  {style.controls && <HookPosition style={style.controls} canvas={canvasOf(preview?.plan, candidate.aspect)} />}
                   <HookTimingFields
                     timing={timing}
                     duration={length}

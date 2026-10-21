@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import shared from "../../../../../backend/tests/fixtures/canvases.json";
 import type { RenderPlan } from "../../../api";
-import { aspectParts, aspectRatio, CANVASES, CAPTION_HEIGHT, canvasOf, fittedStage, fromReference, PORTRAIT, REFERENCE, tallestAspect, toReference } from "./canvas";
+import { aspectParts, aspectRatio, CANVASES, CAPTION_HEIGHT, captionCentres, canvasOf, fittedStage, fromReference, PORTRAIT, REFERENCE, referenceSafeArea, tallestAspect, toReference } from "./canvas";
 import { placedFields, watermarkPlaced } from "./placing";
 
 const LANDSCAPE = { width: 1920, height: 1080, safe_area: { x: 96, y: 54, width: 1728, height: 972 } };
@@ -46,6 +46,21 @@ describe("the Canvas", () => {
     expect(tallestAspect(["16:9", "9:16", "1:1"])).toBe("9:16");
     expect(tallestAspect(["16:9", "16:9"])).toBe("16:9");
     expect(tallestAspect([])).toBe("9:16");
+  });
+});
+
+describe("a Style's place held to a Canvas, in the Reference Space", () => {
+  test("is 9:16's own Safe Area on 9:16", () => {
+    expect(referenceSafeArea(PORTRAIT)).toEqual(PORTRAIT.safe_area);
+    expect(captionCentres(PORTRAIT)).toEqual({ min: 332, max: 1436 });
+  });
+
+  test("is another Canvas's Safe Area mapped in proportion, where the planner holds it there", () => {
+    // 16:9's Safe Area is y 54-1026 of 1080: 96-1824 of 1920.
+    expect(referenceSafeArea(CANVASES["16:9"])).toEqual({ x: 54, y: 96, width: 972, height: 1728 });
+    // A caption line's centre stays 100 px inside it: y 154-926, mapped.
+    expect(captionCentres(CANVASES["16:9"])).toEqual({ min: 273.78, max: 1646.22 });
+    for (const y of [154, 926]) expect(fromReference(CANVASES["16:9"], { x: 0, y: (y * 1920) / 1080 }).y).toBe(y);
   });
 });
 
