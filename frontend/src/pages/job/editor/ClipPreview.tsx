@@ -26,7 +26,7 @@ import { cssFontSize, fontFamily } from "../../../fonts";
 import { useLooks } from "../../../looks";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
-import { allStroke, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
+import { allStroke, FRAME, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewEffected } from "./PreviewEffected";
 import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays } from "./PreviewOverlays";
@@ -237,7 +237,14 @@ export function ClipPreview({
       }}
     >
       {drawn && <GradeFilters grades={[...drawn.segments, ...drawn.overlays, drawn].map((item) => item.grade)} />}
-      {drawn && <EffectFilters items={drawn.overlays.map((event) => ({ effects: event.video_effects, box: pictureBox(event.picture) }))} />}
+      {drawn && (
+        <EffectFilters
+          items={[
+            ...drawn.segments.map((segment) => ({ effects: segment.video_effects, box: FRAME })),
+            ...drawn.overlays.map((event) => ({ effects: event.video_effects, box: pictureBox(event.picture) })),
+          ]}
+        />
+      )}
       {/* The Main Track and the Overlays under the Adjustment Layers showing (ADR 0013). */}
       <PreviewAdjusted plan={drawn} playback={playback}>
         {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is, in the
@@ -246,8 +253,8 @@ export function ClipPreview({
           <DecksGraded grade={drawn?.grade}>
             {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
             <div ref={incoming} className="absolute inset-0">
-              {/* The decks' panels in the shown Segment's Grade (ADR 0013): its whole frame, black included. */}
-              <DecksGraded grade={drawn?.segments[shownSegment]?.grade}>
+              {/* The decks' panels in the shown Segment's Grade and Video Effects (ADR 0013, 0014): its whole frame, black included. */}
+              <DecksGraded grade={drawn?.segments[shownSegment]?.grade} effects={drawn?.segments[shownSegment]?.video_effects}>
                 {decks.map((refs, deck) =>
                   refs.map((ref, slot) => (
                     <PanelView

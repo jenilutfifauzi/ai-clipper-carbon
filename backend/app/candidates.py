@@ -802,7 +802,8 @@ class Segment:
     order, back to back. `id` names it in the editor. It may have `keys` (docs/adr/0008): a video's
     Segment for its Framing and sound, a Segment of the Source for its sound only.
     With `hold`, it is a Freeze frame (docs/adr/0009): the frame at `start` held that long, silent.
-    Its sound is heard through its stack of `audio_effects` (docs/adr/0017)."""
+    Its sound is heard through its stack of `audio_effects` (docs/adr/0017), and its frame drawn
+    through its `video_effects` (docs/adr/0014)."""
 
     id: ItemId
     start: Annotated[FiniteFloat, Field(ge=0)]
@@ -836,6 +837,10 @@ class Segment:
     # Its sound's Audio Effects (docs/adr/0017), in order, after its Speed and Reverse and before its
     # volume, Keyframes and fades; each setting filled in once checked. Empty in one saved before them.
     audio_effects: Annotated[list[AudioEffect], Field(max_length=AUDIO_EFFECTS_MAX)] = field(default_factory=list)
+    # Its whole frame's Video Effects (docs/adr/0014), in order, after its Grade and before the joins,
+    # so that a Transition blends pictures that carry them; sizes at the 1080x1920 frame's. Empty in
+    # one saved before them. A Freeze frame takes them too.
+    video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.media is None and (framed := next((name for name, keys in self.keys.items() if keys and name not in SOUND_KEYS), None)):
@@ -847,6 +852,7 @@ class Segment:
         length = segment_time(self).length
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Segment {self.id}", PICTURE_KEYS + SOUND_KEYS, length))
         object.__setattr__(self, "audio_effects", checked_effects(self.audio_effects, f"Segment {self.id}"))
+        object.__setattr__(self, "video_effects", checked_video_effects(self.video_effects, f"Segment {self.id}"))
 
 
 def _check_held(segment: Segment) -> None:

@@ -1,4 +1,5 @@
-import type { OverlayEvent, Picture, RenderPlan, Transform, VideoEffect, VideoEffectKind } from "../../../api";
+import type { Picture, RenderPlan, Transform, VideoEffect, VideoEffectKind } from "../../../api";
+import { FRAME } from "./picture";
 
 /*
  * The preview's Video Effects (ADR 0014): the planner's size rule, so that a slider drag shows before
@@ -32,20 +33,28 @@ export function scaledEffects(stack: VideoEffect[] | undefined, scale: number, k
 }
 
 /**
- * `plan` with its Overlays' Video Effects as the draft's `overlays` give them now (by id), scaled by
- * each one's scale, so that a slider dragged shows at once, before the Preview Plan of the change
- * comes. `plan` itself when none differs, or while the catalogue (`kinds`) isn't loaded.
+ * `plan` with its Segments' and Overlays' Video Effects as the draft's `segments` and `overlays` give
+ * them now (by id), a Segment's at the frame's size (scale 1) and an Overlay's scaled by its scale, so
+ * that a slider dragged shows at once, before the Preview Plan of the change comes. `plan` itself
+ * when none differs, or while the catalogue (`kinds`) isn't loaded.
  */
 export function draftVideoEffects(
   plan: RenderPlan,
+  segments: { id: string; video_effects?: VideoEffect[] }[],
   overlays: { id: string; transform: Transform; video_effects?: VideoEffect[] }[],
   kinds: VideoEffectKind[] | null,
 ): RenderPlan {
   if (!kinds) return plan;
-  const drafted = new Map(overlays.map((overlay) => [overlay.id, scaledEffects(overlay.video_effects, overlayScale(overlay.transform), kinds)]));
-  const differs = (event: OverlayEvent) => drafted.has(event.id) && JSON.stringify(drafted.get(event.id)) !== JSON.stringify(event.video_effects ?? []);
-  if (!plan.overlays.some(differs)) return plan;
-  return { ...plan, overlays: plan.overlays.map((event) => (differs(event) ? { ...event, video_effects: drafted.get(event.id) } : event)) };
+  const segmentStacks = new Map(segments.map((segment) => [segment.id, scaledEffects(segment.video_effects, 1, kinds)]));
+  const overlayStacks = new Map(overlays.map((overlay) => [overlay.id, scaledEffects(overlay.video_effects, overlayScale(overlay.transform), kinds)]));
+  const redrawn = <T extends { id: string; video_effects?: VideoEffect[] }>(events: T[], stacks: Map<string, VideoEffect[]>): T[] => {
+    const differs = (event: T) => stacks.has(event.id) && JSON.stringify(stacks.get(event.id)) !== JSON.stringify(event.video_effects ?? []);
+    return events.some(differs) ? events.map((event) => (differs(event) ? { ...event, video_effects: stacks.get(event.id) } : event)) : events;
+  };
+  const shownSegments = redrawn(plan.segments, segmentStacks);
+  const shownOverlays = redrawn(plan.overlays, overlayStacks);
+  if (shownSegments === plan.segments && shownOverlays === plan.overlays) return plan;
+  return { ...plan, segments: shownSegments, overlays: shownOverlays };
 }
 
 /** An SVG filter primitive: its element's name and attributes. */
@@ -93,3 +102,6 @@ export function effectsFilter(effects: VideoEffect[] | undefined, box: Box): str
   const id = effectsFilterId(effects, box);
   return id ? `url(#${id})` : undefined;
 }
+
+/** The CSS `filter` that imitates a Segment's `effects` over its whole frame (1080x1920, scale 1), or undefined when they draw nothing. */
+export const frameEffectsFilter = (effects: VideoEffect[] | undefined): string | undefined => effectsFilter(effects, FRAME);

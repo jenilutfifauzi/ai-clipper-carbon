@@ -1501,34 +1501,46 @@ export function setCleanSetting(
   return restacked(scene, sounded, (stack) => stack.map((entry) => (entry.id === id ? { ...entry, params: { ...entry.params, [setting.key]: level } } : entry)));
 }
 
-// A picture with a stack of Video Effects (ADR 0014): an Overlay (Segments and Adjustment Layers come
-// with tickets 02 and 03).
-export type PictureRef = { kind: "overlay"; id: string };
+// A picture with a stack of Video Effects (ADR 0014): a Segment (its whole frame) or an Overlay
+// (Adjustment Layers come with ticket 03).
+export type PictureRef = { kind: "segment" | "overlay"; id: string };
 type Pictured = { id: string; video_effects?: VideoEffect[] };
 
-/** The picked pictures, which the Video Effects section acts on: the Overlays (videos and images). */
+/** The picked pictures, which the Video Effects section acts on: the Segments, then the Overlays (videos and images). */
 export function picturedItems({ edits, pick }: { edits: AdvancedEdits; pick: Pick }): PictureRef[] {
-  return edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)).map((overlay) => ({ kind: "overlay" as const, id: overlay.id }));
+  return [
+    ...edits.segments.filter((segment) => isPicked(pick, "segment", segment.id)).map((segment) => ({ kind: "segment" as const, id: segment.id })),
+    ...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)).map((overlay) => ({ kind: "overlay" as const, id: overlay.id })),
+  ];
 }
 
+// The picture `ref` names in `edits`.
+const pictureOf = (edits: AdvancedEdits, ref: PictureRef): Pictured | undefined =>
+  (ref.kind === "segment" ? edits.segments : edits.overlays).find((item) => item.id === ref.id);
+
 // Every picked picture given `change` of its stack (an emptied one left without the field; one
-// `change` leaves as it was, untouched); null when none is picked or none changes.
+// `change` leaves as it was, untouched, and a list with none changed kept as it was); null when none
+// is picked or none changes.
 function repictured(scene: { edits: AdvancedEdits; pick: Pick }, change: (stack: VideoEffect[]) => VideoEffect[]): Outcome | null {
   const { edits, pick } = scene;
   const refs = picturedItems(scene);
-  let changed = false;
-  const set = <T extends Pictured>(items: T[], kind: PictureRef["kind"]): T[] =>
-    items.map((item) => {
+  const set = <T extends Pictured>(items: T[], kind: PictureRef["kind"]): T[] => {
+    let changed = false;
+    const next = items.map((item) => {
       if (!refs.some((ref) => ref.kind === kind && ref.id === item.id)) return item;
       const { video_effects, ...rest } = item;
       const was = video_effects ?? [];
-      const next = change(was);
-      if (next === was) return item;
+      const stack = change(was);
+      if (stack === was) return item;
       changed = true;
-      return (next.length ? { ...rest, video_effects: next } : rest) as T;
+      return (stack.length ? { ...rest, video_effects: stack } : rest) as T;
     });
+    return changed ? next : items;
+  };
+  const segments = set(edits.segments, "segment");
   const overlays = set(edits.overlays, "overlay");
-  return changed ? { edits: { ...edits, overlays }, pick } : null;
+  if (segments === edits.segments && overlays === edits.overlays) return null;
+  return { edits: { ...edits, segments, overlays }, pick };
 }
 
 /** A catalogue Video Effect's entry at its defaults, switched on. */
@@ -1550,7 +1562,7 @@ export function addVideoEffect(scene: { edits: AdvancedEdits; pick: Pick }, kind
 /** The stack of the picked pictures, when every one's is the same; "mixed" when they differ; null when none is picked. */
 export function sharedVideoStack(scene: { edits: AdvancedEdits; pick: Pick }): VideoEffect[] | "mixed" | null {
   const { edits } = scene;
-  const stacks = picturedItems(scene).map((ref) => edits.overlays.find((item) => item.id === ref.id)?.video_effects ?? []);
+  const stacks = picturedItems(scene).map((ref) => pictureOf(edits, ref)?.video_effects ?? []);
   const [first, ...rest] = stacks;
   if (!first) return null;
   return rest.every((other) => other.length === first.length && other.every((entry, index) => sameEntry(entry, first[index]))) ? first : "mixed";

@@ -977,6 +977,8 @@ export interface SegmentPlan extends Retiming {
   grade?: Grade;
   // Its sound's enabled Audio Effects (ADR 0017), in order.
   audio_effects?: AudioEffect[];
+  // Its frame's enabled Video Effects (ADR 0014), in order, after its Grade; sizes the 1080x1920 frame's.
+  video_effects?: VideoEffect[];
 }
 
 export interface RenderPlan {
@@ -1127,6 +1129,9 @@ export interface ClipSegment extends Retiming {
   // Its sound's Audio Effects (ADR 0017), in order, after its Speed and before its volume and fades.
   // Empty when missing.
   audio_effects?: AudioEffect[];
+  // Its whole frame's Video Effects (ADR 0014), in order, after its Grade and before the joins; sizes
+  // the 1080x1920 frame's. Empty when missing.
+  video_effects?: VideoEffect[];
 }
 
 // An Audio Effect applied to an item's sound (GLOSSARY: Audio Effect; ADR 0017): a catalogue

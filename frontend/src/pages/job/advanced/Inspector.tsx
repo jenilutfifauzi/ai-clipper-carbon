@@ -147,7 +147,7 @@ export function Inspector({
     return controls && <AudioEffectsFields {...controls} />;
   };
 
-  // The picked pictures' (Overlays') Video Effects section, after their Color section: null without any, or on a phone.
+  // The picked pictures' (Segments' and Overlays') Video Effects section, after their Color section: null without any, or on a phone.
   const pictureEffectsOf = () => {
     if (!videoEffectsShown) return null;
     const controls = videoEffectChanges({ edits, pick }, onEdits);
@@ -236,6 +236,7 @@ export function Inspector({
         span={segmentSpan(edits.segments, segment.id, track)}
         captions={segment.media && mediaById.get(segment.media) ? captionsOf?.(segment, mediaById.get(segment.media)!) : undefined}
         color={colorOf()}
+        pictureEffects={pictureEffectsOf()}
         effects={effectsOf()}
         scene={
           <SceneFields

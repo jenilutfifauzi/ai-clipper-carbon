@@ -45,7 +45,7 @@ export function videoEffectChanges(scene: { edits: AdvancedEdits; pick: Pick }, 
     if (outcome) onEdits(outcome.edits, group);
   };
   const ids = picturedItems(scene)
-    .map((item) => item.id)
+    .map((item) => `${item.kind}:${item.id}`)
     .join(",");
   return {
     stack,

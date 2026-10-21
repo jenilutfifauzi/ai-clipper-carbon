@@ -128,6 +128,7 @@ export function SegmentFields({
   scene,
   captions,
   color,
+  pictureEffects,
   effects,
   playback,
   span,
@@ -165,8 +166,10 @@ export function SegmentFields({
   scene?: ReactNode;
   // A video's Segment's captions: its Captions switch, its video's language and its Words status.
   captions?: ReactNode;
-  // Its Grade's Color section (ColorFields), last.
+  // Its Grade's Color section (ColorFields), last but its Video Effects.
   color?: ReactNode;
+  // Its frame's Video Effects section (VideoEffectsFields), after its Color section.
+  pictureEffects?: ReactNode;
   // Its Audio Effects section (AudioEffectsFields), after its volume and fades; none for a Freeze frame or a video without sound.
   effects?: ReactNode;
   playback: Playback;
@@ -294,6 +297,7 @@ export function SegmentFields({
         </>
       )}
       {color}
+      {pictureEffects}
     </div>
   );
 }

@@ -668,6 +668,7 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     plain = all(
         segment.media is None and segment.volume == 1 and segment.speed == 1 and segment.hold is None and not segment.gain
         and not (segment.fade_in or segment.fade_out) and not segment.muted and not segment.audio_effects
+        and not segment.video_effects
         for segment in plan.segments
     )
     if plain and not plan.transitions:
@@ -866,7 +867,8 @@ def _crossed(plan: RenderPlan, transition: TransitionEvent, outgoing: str, incom
 def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | None = None) -> str:
     """The filtergraph that draws a Clip of several Segments into [frame]: each Segment from its own
     input, its Scenes drawn as _scenes draws a Clip's (in seconds into the Segment; a Freeze frame's
-    from its first frame, held), then graded (docs/adr/0013), and the Segments joined back to back.
+    from its first frame, held), then graded (docs/adr/0013) and drawn through its Video Effects
+    (docs/adr/0014), and the Segments joined back to back.
     A keyed Scene's picture is the input `drawn` gives by its place among the plan's Scenes, from
     its frame process."""
     chains, first = [], 0
@@ -883,8 +885,11 @@ def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | N
             # frame landing on one of the Clip's, a thousandth of a frame early against rounding, is that one).
             rate = _rate(plan)
             given += f"settb=AVTB,setpts=(PTS-STARTPTS)/{segment.speed:.6g}-{0.001 / _rate_value(plan):.6g}/TB,fps={rate}:round=up,"
-        # Its Grade over its whole frame, before the joins, so that a Transition blends graded pictures.
-        graded = grade_filters(segment.grade)
+        # Its Grade, then its Video Effects (docs/adr/0014), over its whole frame, before the joins,
+        # so that a Transition blends pictures that carry them.
+        graded = ",".join([
+            *filter(None, [grade_filters(segment.grade)]), *video_effect_chain(segment.video_effects, (plan.width, plan.height)),
+        ])
         drawn_to = f"[g{i}u]" if graded else f"[g{i}]"
         chains.append(_scenes(plan, tuning, scenes, given, drawn_to, f"g{i}s", segment.start, keyed))
         if graded:

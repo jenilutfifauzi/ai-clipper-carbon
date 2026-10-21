@@ -344,6 +344,12 @@ Edits:
   once in a stack; an unknown id or setting, a value out of range or a second entry of an id is
   refused. merge_candidate_items replaces an Overlay's stack as a whole. The dry run lists each
   Overlay's enabled ones, their sizes as drawn (scaled).
+- A Segment's `video_effects` (of the episode or a video, a Freeze frame too) is the same stack over
+  its whole frame (panels, picture and Background): after its Grade and before the joins, so a
+  Transition crossfades pictures that already carry them. Its frame is 1080x1920 at scale 1, so its
+  sizes are as given. A lone Segment of the episode with a stack (even all off) stays a Segment.
+  merge_candidate_items replaces its stack as a whole; the dry run lists its enabled ones under
+  `segments`.
 - Keyframes move an Overlay, a Text Layer, a Shape, a video Segment's framing or a Manual Layout Override's, over its length: its `keys` map a
   property (x, y, scale, rotation, opacity) to a list of {{at, value, ease}}. A Music Clip's, a video
   Overlay's and a Segment's `volume` (0..2) can be keyed too: the fades multiply it, and
@@ -1168,7 +1174,7 @@ def _plan_view(
 ) -> dict:
     """A Preview Plan as an agent reads it: what shows when, in Timeline time (each Segment's span, and
     what of the Source or its video it plays, at what Speed, whether in Reverse and its copy made
-    (`copied`), its fades, its Audio Effects (`_effects_view`), its Grade (`_grade_view`)), the Candidate's Grade, each Scene's Layout and the Framing
+    (`copied`), its fades, its Audio Effects (`_effects_view`), its Grade (`_grade_view`) and Video Effects), the Candidate's Grade, each Scene's Layout and the Framing
     that draws its first frame (a Manual Scene's own), where the picture of a Manual Scene, of a
     video's Scene and of each Overlay is drawn (`_picture_view`), an Overlay's Grade and Video
     Effects (`_effects_view`), each Adjustment
@@ -1206,7 +1212,7 @@ def _plan_view(
                 "fade_in": segment["fade_in"] or None, "fade_out": segment["fade_out"] or None,
                 "audio_effects": _effects_view(segment.get("audio_effects", [])),
                 "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
-                "grade": _grade_view(segment["grade"]),
+                "grade": _grade_view(segment["grade"]), "video_effects": _effects_view(segment.get("video_effects", [])),
                 "words_status": preview["words_status"].get(segment["id"]), "words_error": preview["words_errors"].get(segment["id"]),
             })
             for segment in plan["segments"]

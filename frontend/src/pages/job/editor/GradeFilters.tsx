@@ -1,7 +1,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { Grade, VideoEffect } from "../../../api";
 import { foldGrade, gradeFilter, gradeFilterId, hasGradeFilter, sharpenKernel, vignetteBackground } from "./grading";
-import { effectPrimitives, effectsFilterId, type Box } from "./videoEffects";
+import { effectPrimitives, effectsFilterId, frameEffectsFilter, type Box } from "./videoEffects";
 
 // Whether the player shows the original: every Grade dropped (the before view, while its button is held).
 const Original = createContext(false);
@@ -23,6 +23,16 @@ export const useOriginal = () => useContext(Original);
 export function useGradeFilter(grade: Grade | null | undefined): string | undefined {
   const original = useOriginal();
   return original ? undefined : gradeFilter(grade);
+}
+
+/**
+ * The CSS filter of a Segment's whole frame: its Grade's (`useGradeFilter`), then its Video Effects'
+ * (ADR 0014; EffectFilters defines them), as the render draws them after it.
+ */
+export function useFrameFilter(grade: Grade | null | undefined, effects: VideoEffect[] | undefined): string | undefined {
+  const graded = useGradeFilter(grade);
+  const effected = frameEffectsFilter(effects);
+  return [graded, effected].filter(Boolean).join(" ") || undefined;
 }
 
 /**
@@ -142,13 +152,14 @@ const number = (value: number) => String(Math.round(value * 1e6) / 1e6);
 const values = (table: number[]) => table.map(number).join(" ");
 
 /**
- * The Source's panels (the decks', or a Transition's ghost's) in a Segment's `grade` (ADR 0013), or the
- * whole Main Track (decks, ghost and media Segments) in the Candidate's: drawn over black, as the
- * render pads a panel, so that the Grade colours the whole frame, its vignette over them. As they
- * are without one, or while the original is shown.
+ * The Source's panels (the decks', or a Transition's ghost's) in a Segment's `grade` (ADR 0013) and
+ * its Video Effects (`effects`, ADR 0014, after it), or the whole Main Track (decks, ghost and media
+ * Segments) in the Candidate's Grade: drawn over black, as the render pads a panel, so that they
+ * reach the whole frame, the vignette over them. As they are without either, or (the Grade) while the
+ * original is shown.
  */
-export function DecksGraded({ grade, children }: { grade: Grade | undefined; children: ReactNode }) {
-  const filter = useGradeFilter(grade);
+export function DecksGraded({ grade, effects, children }: { grade: Grade | undefined; effects?: VideoEffect[]; children: ReactNode }) {
+  const filter = useFrameFilter(grade, effects);
   return (
     <>
       <div className="absolute inset-0" style={filter ? { filter, background: "#000" } : undefined}>

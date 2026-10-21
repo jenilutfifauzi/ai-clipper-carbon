@@ -1,8 +1,9 @@
-// .scratch/video-effects/issues/01-gaussian-blur-on-an-overlay.md: an Overlay's stack of Video Effects
-// (ADR 0014), edited from the Inspector on a Pick of one Overlay or several, each change one step of
-// undo; carried by Split, Duplicate, the Clipboard and the Revision merge; and drawn by the preview.
+// .scratch/video-effects/issues/01-gaussian-blur-on-an-overlay.md and 02-effects-on-segments.md: an
+// Overlay's and a Segment's stack of Video Effects (ADR 0014), edited from the Inspector on a Pick of
+// one picture or several, each change one step of undo; carried by Split, Duplicate, the Clipboard and
+// the Revision merge; and drawn by the preview.
 import { describe, expect, test } from "vitest";
-import type { Overlay, OverlayEvent, RenderPlan, VideoEffect, VideoEffectKind } from "../../../api";
+import type { ClipSegment, Overlay, OverlayEvent, RenderPlan, SegmentPlan, VideoEffect, VideoEffectKind } from "../../../api";
 import { videoLibraryOf } from "../../../videoEffects";
 import { NO_CROP } from "../editor/cropGestures";
 import { mergeEdits } from "../editor/merge";
@@ -62,7 +63,7 @@ const overlay = (id: string, changes: Partial<Overlay> = {}): Overlay => ({
   ...changes,
 });
 
-function edits(overlays: Overlay[]): AdvancedEdits {
+function edits(overlays: Overlay[], segments: ClipSegment[] = [{ id: "s1", start: 100, end: 110 }]): AdvancedEdits {
   return {
     hook_start: 0,
     hook_secs: 3,
@@ -79,7 +80,7 @@ function edits(overlays: Overlay[]): AdvancedEdits {
     shapes: [],
     music: [],
     source_volume: 1,
-    segments: [{ id: "s1", start: 100, end: 110 }],
+    segments,
     overlays,
     transitions: [],
   };
@@ -111,7 +112,8 @@ describe("the Inspector's Video Effects actions", () => {
     expect(sharedVideoStack({ edits: twins, pick: both })).toEqual([blur]);
     const differ = edits([overlay("a", { video_effects: [blur] }), overlay("b")]);
     expect(sharedVideoStack({ edits: differ, pick: both })).toBe("mixed");
-    expect(sharedVideoStack({ edits: differ, pick: picked({ kind: "segment", id: "s1" }) })).toBeNull();
+    expect(sharedVideoStack({ edits: differ, pick: picked({ kind: "segment", id: "s1" }) })).toEqual([]);
+    expect(sharedVideoStack({ edits: differ, pick: picked({ kind: "text", id: "t" }) })).toBeNull();
   });
 
   // Two Overlays with the same stack.
@@ -191,12 +193,12 @@ describe("the preview", () => {
   const event = (video_effects?: VideoEffect[]) => ({ id: "a", picture, video_effects }) as OverlayEvent;
 
   test("a stack dragged shows at once: the plan's Overlay takes the draft's, scaled", () => {
-    const plan = { overlays: [event([{ ...blur, params: { radius: 5 } }])] } as RenderPlan;
-    const drawn = draftVideoEffects(plan, [overlay("a", { video_effects: [{ ...blur, params: { radius: 30 } }] })], [blurKind]);
+    const plan = { segments: [] as SegmentPlan[], overlays: [event([{ ...blur, params: { radius: 5 } }])] } as RenderPlan;
+    const drawn = draftVideoEffects(plan, [], [overlay("a", { video_effects: [{ ...blur, params: { radius: 30 } }] })], [blurKind]);
     expect(drawn.overlays[0].video_effects).toEqual([{ ...blur, params: { radius: 15 } }]);
     // As planned already, or while the catalogue loads: the plan itself.
-    expect(draftVideoEffects(drawn, [overlay("a", { video_effects: [{ ...blur, params: { radius: 30 } }] })], [blurKind])).toBe(drawn);
-    expect(draftVideoEffects(plan, [overlay("a")], null)).toBe(plan);
+    expect(draftVideoEffects(drawn, [], [overlay("a", { video_effects: [{ ...blur, params: { radius: 30 } }] })], [blurKind])).toBe(drawn);
+    expect(draftVideoEffects(plan, [], [overlay("a")], null)).toBe(plan);
   });
 
   test("Gaussian blur is an feGaussianBlur of its radius over the element's box, one filter per stack and size", () => {
@@ -208,5 +210,43 @@ describe("the preview", () => {
 
   test("every catalogue effect has an imitation", () => {
     for (const kind of [blurKind]) expect(IMITATIONS[kind.id], kind.id).toBeDefined();
+  });
+});
+
+// .scratch/video-effects/issues/02-effects-on-segments.md
+describe("a Segment's stack", () => {
+  const segment = (id: string, changes: Partial<ClipSegment> = {}): ClipSegment => ({ id, start: 100, end: 110, ...changes });
+  const segmentStacks = (state: AdvancedEdits) => state.segments.map((each) => each.video_effects);
+  const mixed = picked({ kind: "segment", id: "s1" }, { kind: "overlay", id: "a" });
+
+  test("Split gives it to both halves", () => {
+    const state = edits([], [segment("s1", { video_effects: [blur] })]);
+    const halves = split(scene(state, picked({ kind: "segment", id: "s1" })), 4)!.edits;
+    expect(segmentStacks(halves)).toEqual([[blur], [blur]]);
+  });
+
+  test("a mixed Pick of Segments and Overlays takes an action on all of them while their stacks are equal", () => {
+    const state = edits([overlay("a", { video_effects: [blur] }), overlay("b")], [segment("s1", { video_effects: [blur] })]);
+    expect(sharedVideoStack({ edits: state, pick: mixed })).toEqual([blur]);
+    const radius = blurKind.settings[0];
+    const set = setVideoEffectSetting({ edits: state, pick: mixed }, 0, radius, 30)!.edits;
+    expect([...segmentStacks(set), ...stacks(set)]).toEqual([[{ ...blur, params: { radius: 30 } }], [{ ...blur, params: { radius: 30 } }], undefined]);
+    // The Overlays not picked are as they were, the same list when none of them changed.
+    const added = addVideoEffect({ edits: state, pick: picked({ kind: "segment", id: "s1" }) }, grainKind)!.edits;
+    expect(segmentStacks(added)).toEqual([[blur, grain]]);
+    expect(added.overlays).toBe(state.overlays);
+    // Unequal, an entry's actions do nothing; Add effect still adds to both.
+    const differ = edits([overlay("a")], [segment("s1", { video_effects: [blur] })]);
+    expect(sharedVideoStack({ edits: differ, pick: mixed })).toBe("mixed");
+    expect(removeVideoEffect({ edits: differ, pick: mixed }, 0)).toBeNull();
+    const both = addVideoEffect({ edits: differ, pick: mixed }, blurKind)!.edits;
+    expect([...segmentStacks(both), ...stacks(both)]).toEqual([[blur], [blur]]);
+  });
+
+  test("a stack dragged shows at once on its Segment, at the frame's size", () => {
+    const plan = { segments: [{ id: "s1" } as SegmentPlan], overlays: [] as OverlayEvent[] } as RenderPlan;
+    const drawn = draftVideoEffects(plan, [segment("s1", { video_effects: [{ ...blur, params: { radius: 30 } }] })], [], [blurKind]);
+    expect(drawn.segments[0].video_effects).toEqual([{ ...blur, params: { radius: 30 } }]);
+    expect(draftVideoEffects(plan, [segment("s1")], [], [blurKind])).toBe(plan);
   });
 });

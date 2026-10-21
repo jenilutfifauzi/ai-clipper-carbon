@@ -324,6 +324,8 @@ class SegmentInput:
     grade: Grade = Grade()
     # Its sound's Audio Effects (docs/adr/0017), checked, in order; the plan keeps the enabled ones.
     audio_effects: list[AudioEffect] = field(default_factory=list)
+    # Its frame's Video Effects (docs/adr/0014), checked, in order; the plan keeps the enabled ones.
+    video_effects: list[VideoEffect] = field(default_factory=list)
 
     @property
     def time(self) -> SegmentTime:
@@ -633,6 +635,9 @@ class SegmentPlan:
     # Its sound's enabled Audio Effects (docs/adr/0017), in order, heard after its Speed and before
     # its volume, Keyframes and fades.
     audio_effects: list[AudioEffect] = field(default_factory=list)
+    # Its frame's enabled Video Effects (docs/adr/0014), in order, drawn after its Grade and before the
+    # joins; their sizes the 1080x1920 frame's (scale 1).
+    video_effects: list[VideoEffect] = field(default_factory=list)
 
     @property
     def time(self) -> SegmentTime:
@@ -1132,7 +1137,7 @@ def plan_render(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
                     given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, hold, given.pitch,
                     fade_in=fade_in, fade_out=fade_out, muted=given.muted, grade=given.grade,
-                    audio_effects=enabled_effects(given.audio_effects),
+                    audio_effects=enabled_effects(given.audio_effects), video_effects=enabled_video_effects(given.video_effects),
                 )
             )
             at, before = round(at + length, 3), length

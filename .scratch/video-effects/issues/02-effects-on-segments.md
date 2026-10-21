@@ -21,12 +21,32 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Segments accept `video_effects`, and stored Candidates render the same command as before.
-- [ ] Seam B: the stack reaches the Segment's plan with its enabled entries only.
-- [ ] Seam A: Gaussian blur on a Source Segment and on a media Segment blurs the frame, and a blurred Segment between plain ones keeps its timing at a join and under a Transition.
-- [ ] A Segment with effects is not collapsed back into a range or put on the concat fast path.
-- [ ] The preview blurs the Segment on the decks and stops at its edges.
-- [ ] MCP and `dry_run` show Segment stacks, and the instructions mention Segments.
-- [ ] Vitest: split keeps the stack on both halves, and a mixed Pick of Segments and Overlays applies an action to both.
+- [x] Segments accept `video_effects`, and stored Candidates render the same command as before.
+- [x] Seam B: the stack reaches the Segment's plan with its enabled entries only.
+- [x] Seam A: Gaussian blur on a Source Segment and on a media Segment blurs the frame, and a blurred Segment between plain ones keeps its timing at a join and under a Transition.
+- [x] A Segment with effects is not collapsed back into a range or put on the concat fast path.
+- [x] The preview blurs the Segment on the decks and stops at its edges.
+- [x] MCP and `dry_run` show Segment stacks, and the instructions mention Segments.
+- [x] Vitest: split keeps the stack on both halves, and a mixed Pick of Segments and Overlays applies an action to both.
+
+## Comments
+
+Built for Segments of the Source and of a media item, Freeze frames included.
+- **Backend:**
+  - `Segment.video_effects`, checked by `checked_video_effects` as an Overlay's.
+  - `SegmentInput.video_effects` carries it (`rendering.py`), and `SegmentPlan.video_effects` gets the enabled entries at scale 1.
+  - `scaled_plan` scales Segment sizes too, for 720p and 4K.
+  - `_segmented` (renderer) chains the stack after `grade_filters(segment.grade)`, at `(plan.width, plan.height)`, before fps/format and the joins.
+  - A Segment with effects is not plain on the audio concat fast path (`_source_inputs`). It is not collapsed into a range either (`review.py`); a stack of disabled entries still counts, as with Audio Effects.
+  - MCP: the dry run lists `video_effects` under `segments`, and the instructions have a paragraph on Segment stacks. The MCP budget test passes without a bump.
+- **Frontend:**
+  - `PictureRef` is now `"segment" | "overlay"`. `picturedItems` lists the picked Segments first, and `pictureOf` finds an item by ref. `repictured` returns an unchanged list as the same array.
+  - `draftVideoEffects(plan, segments, overlays, kinds)`: Segment stacks are drawn at scale 1.
+  - `frameEffectsFilter` in `editor/videoEffects.ts` and `useFrameFilter(grade, effects)` in `GradeFilters.tsx`.
+  - `DecksGraded` takes `effects`, and the decks, the Transition ghost, `MediaSegment` and `CopiedSourceSegment` use it.
+  - `EffectFilters` defines Segment filters with box `FRAME`.
+  - `SegmentFields` has a `pictureEffects` slot after Color.
+- **For 03:** add `"adjustment"` to `PictureRef` and to `picturedItems`, `pictureOf` and `repictured`.
+- **Not verified in a browser:** the preview's blur on the decks. vitest and tsc cover the code paths only.
