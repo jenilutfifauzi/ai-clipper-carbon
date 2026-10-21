@@ -8,6 +8,7 @@ import {
   type Candidate,
   type CandidateChange,
   type AdjustmentLayer,
+  type Aspect,
   type ClipSegment,
   type Grade,
   type JobDetail,
@@ -100,6 +101,7 @@ import {
 import { effectsPreparing, useEffectedCopies, useEffectedVersion } from "../editor/effectedCopy";
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
+import { AspectPicker, changeAspect } from "./AspectPicker";
 import { AssetPanel } from "./AssetPanel";
 import { audioEffectChanges, AudioEffectsFields } from "./AudioEffectsFields";
 import { AdjustPanel } from "./ColorFields";
@@ -194,8 +196,9 @@ const EDITABLE = new Set(["review", "rendering"]);
 const WIDE = "(min-width: 64rem)";
 // The Timeline's labels' column on a desktop, wide enough for each Track's buttons.
 const TRACK_LABEL_WIDTH = 140;
-// How a newer Revision came: saved elsewhere, carried by the refusal of a save here, or restored here.
-type Taken = "elsewhere" | "refused" | "restored";
+// How a newer Revision came: saved elsewhere, carried by the refusal of a save here, restored here,
+// or made by a change of aspect here.
+type Taken = "elsewhere" | "refused" | "restored" | "reshaped";
 
 // How long items changed in another editor are shown as changed on the Timeline.
 const CHANGED_MS = 1600;
@@ -414,7 +417,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     setEnded(how);
   }
   // A newer Revision: saved elsewhere, the one a save here was refused for (then all the edits here
-  // are unsaved), or a Restore asked for here. The edits here not yet saved are merged onto it.
+  // are unsaved), or a Restore or a change of aspect asked for here. The edits here not yet saved are
+  // merged onto it.
   function incoming(next: Candidate, source: SavedBy, parts: string[], how: Taken) {
     if (next.revision <= revision.current) return;
     if (unanswered.current > 0 && how === "elsewhere") {
@@ -434,7 +438,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     merging.current = unsaved ? theirs : null;
     history.elsewhere(merged, rebase, unsaved);
     setChanged(changedItems(edits, merged));
-    if (how === "restored") return;
+    if (how === "restored" || how === "reshaped") return;
     if (collisions.length) {
       const who = source === "unknown" ? "a change made elsewhere" : `${savedByLabel(source, null, "advanced-edit")}'s change`;
       setNotice({
@@ -460,6 +464,35 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       return null;
     } catch (reason) {
       return staleCandidate(reason) ? "This clip changed meanwhile (another tab or the agent): look again, then restore." : (reason as Error).message;
+    }
+  }
+
+  // The aspect picker's change (docs/adr/0022): the edits waiting here saved first, then the aspect
+  // alone, whose Revision (the Candidate rescaled onto its new Canvas by the backend) is taken as a
+  // Restore's is. Restoring the Revision before it, in the Revision History, undoes it.
+  const [reshaping, setReshaping] = useState(false);
+  async function pickAspect(aspect: Aspect) {
+    if (reshaping || lockedForTake()) return;
+    setReshaping(true);
+    try {
+      const answer = await changeAspect(candidate.aspect, aspect, {
+        flush: async () => {
+          await history.flush();
+          await sending.current;
+        },
+        send: (picked) => api.updateCandidate(job.id, initial.id, { aspect: picked, revision: revision.current }, "advanced-edit"),
+      });
+      if (answer) {
+        setSaveError(null);
+        latest.current.incoming(answer, "advanced-edit", [], "reshaped");
+      }
+    } catch (reason) {
+      const text = staleCandidate(reason)
+        ? "This clip changed meanwhile (another tab or the agent): look again, then change its aspect."
+        : `Couldn't change the aspect: ${(reason as Error).message}`;
+      setNotice({ id: Date.now(), text });
+    } finally {
+      setReshaping(false);
     }
   }
 
@@ -501,9 +534,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   useEffectedCopies(job.id, candidate.id, plannedDraft, preview?.plan ?? null);
   useEffectedVersion();
   useReplanWhilePending(preview?.words_status, setReplan);
-  // The Canvas the Candidate is drawn on (the 9:16 one until its plan comes), which new items are
+  // The Canvas the Candidate is drawn on (its aspect's until its plan comes), which new items are
   // placed on and the inspector's fields hold positions to.
-  const canvas = useCanvasOf(preview?.plan);
+  const canvas = useCanvasOf(preview?.plan, candidate.aspect);
   // What is picked of the edits as they are now: an undo or a change from elsewhere may have taken
   // some of it away (a Cue, once the plan has none of its key), and nothing on a locked Track is picked.
   const pick = prunedCue(unlockedPick(prunedPick(pickState, edits), tracks.locked), preview?.plan ?? null);
@@ -1576,6 +1609,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     </>
   );
   const notes = previewError && <p className="text-center text-sm text-danger">Couldn't preview: {previewError}</p>;
+  // Above the player, but not over it full screen.
+  const aspectPicker = !fullscreen.way && (
+    <AspectPicker value={candidate.aspect} onPick={(aspect) => void pickAspect(aspect)} busy={reshaping} className="shrink-0 self-center" />
+  );
 
   if (ended) {
     return (
@@ -1644,6 +1681,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               />
             )}
             <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
+              {aspectPicker}
               {room}
               {notes}
             </section>
@@ -1736,6 +1774,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       <div className="flex h-dvh flex-col overflow-hidden bg-bg">
         {bar}
         <section aria-label="Player" className="flex min-h-0 flex-1 flex-col gap-1 px-3 pt-1 pb-2">
+          {aspectPicker}
           {room}
           {notes}
         </section>

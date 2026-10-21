@@ -1,10 +1,11 @@
 import { createContext, useContext, useRef } from "react";
-import type { Box, RenderPlan } from "../../../api";
+import type { Aspect, Box, RenderPlan } from "../../../api";
 
 /**
  * The Canvas (GLOSSARY.md, docs/adr/0022): the Candidate's frame in output pixels, set by its Canvas
  * Aspect, and its Safe Area. The Preview Plan carries both (backend/app/canvas.py), so the editor
- * keeps no per-aspect sizes of its own (ADR 0001); before a plan is loaded, it draws the 9:16 one.
+ * keeps no per-aspect sizes of its own (ADR 0001); before a plan is loaded, it draws its Candidate's
+ * aspect's (`CANVASES`, canvas.py's), or the 9:16 one.
  */
 export interface Canvas {
   width: number;
@@ -23,17 +24,26 @@ export const REFERENCE_SAFE_AREA = PORTRAIT.safe_area;
 // How tall a caption area is (canvas.py's CAPTION_HEIGHT): a line's middle stays half of it inside a Safe Area.
 export const CAPTION_HEIGHT = 200;
 
-/** The Canvas `plan` is drawn on; the 9:16 one while there is no plan. */
-export function canvasOf(plan: RenderPlan | null | undefined): Canvas {
-  if (!plan) return PORTRAIT;
+// Each aspect's Canvas, as backend/app/canvas.py makes it (the others keep a twentieth clear at each
+// edge): only for drawing a Candidate before its first plan comes.
+export const CANVASES: Record<Aspect, Canvas> = {
+  "9:16": PORTRAIT,
+  "4:5": { width: 1080, height: 1350, safe_area: { x: 54, y: 68, width: 972, height: 1214 } },
+  "1:1": { width: 1080, height: 1080, safe_area: { x: 54, y: 54, width: 972, height: 972 } },
+  "16:9": { width: 1920, height: 1080, safe_area: { x: 96, y: 54, width: 1728, height: 972 } },
+};
+
+/** The Canvas `plan` is drawn on; while there is no plan, `aspect`'s (9:16's when not given). */
+export function canvasOf(plan: RenderPlan | null | undefined, aspect?: Aspect): Canvas {
+  if (!plan) return aspect ? CANVASES[aspect] : PORTRAIT;
   return { width: plan.width, height: plan.height, safe_area: plan.safe_area };
 }
 
 const sameBox = (a: Box, b: Box) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 
-/** `canvasOf(plan)`, the same object while each new plan has the same Canvas, as a hook's or a context's dependency. */
-export function useCanvasOf(plan: RenderPlan | null | undefined): Canvas {
-  const next = canvasOf(plan);
+/** `canvasOf(plan, aspect)`, the same object while each new plan has the same Canvas, as a hook's or a context's dependency. */
+export function useCanvasOf(plan: RenderPlan | null | undefined, aspect?: Aspect): Canvas {
+  const next = canvasOf(plan, aspect);
   const kept = useRef(next);
   const was = kept.current;
   if (was.width !== next.width || was.height !== next.height || !sameBox(was.safe_area, next.safe_area)) kept.current = next;
