@@ -160,8 +160,10 @@ Canvas:
   proportion, x*width/1080 and y*height/1920 (a caption y of 1440 is 810 on 16:9). Sizes (fonts,
   the Watermark's size, outlines, padding) aren't mapped. Top, Middle, Bottom and the Watermark's
   nine places are in the Canvas's Safe Area; captions and the hook are at most 820 px wide on every
-  aspect, centred. Changing `aspect` keeps positions where they are, in pixels. A Clip renders at
-  the Canvas's shape, its short side the Export Preset's resolution.
+  aspect, centred. Changing `aspect` rescales the Candidate's own positions: centres keep their
+  fraction of the Canvas, Framings their scale relative to covering it, Overlays, Text Layers and
+  Shapes their size in pixels; those sent in the same edit are taken as on the new Canvas. A Clip
+  renders at the Canvas's shape, its short side the Export Preset's resolution.
 
 Edits:
 - Candidates can be changed only while the Job is in review or rendering.

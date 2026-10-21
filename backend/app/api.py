@@ -874,6 +874,9 @@ def update_candidate(
     change = body.change
 
     def update(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], Candidate]:
+        if change.aspect is not None:
+            # A change of aspect rescales the Overlays and media Segments by their pictures' sizes.
+            episode = replace(episode, sizes=library.sizes())
         candidates, candidate = review.update(candidates, candidate_id, change, episode, presets.join_transition)
         try:
             presets.styles(candidate.preset_id, candidate.style_overrides)
@@ -1122,7 +1125,9 @@ def _drafted(
     if body is not None:
         _check_media_of(library, body)
         _check_looks_of(body)
-    episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection, job.options.aspect)
+    episode = _episode(job, transcript, settings)
+    if body is not None and body.aspect is not None:
+        episode = replace(episode, sizes=library.sizes())
     change = body.change if body else CandidateChange()
     try:
         # Nothing is saved, so the draft's Revision is no reason to refuse it.
@@ -1279,6 +1284,15 @@ def _entry(store: JobStore, job: Job, candidate_id: str, revision: int) -> Histo
     return entry
 
 
+def _episode(job: Job, transcript: Transcript, settings: Settings) -> Episode:
+    """What a Job's edits are checked against (`review.Episode`), but the Media Library's sizes."""
+    assert job.source is not None  # a Job with a Transcript has its Source
+    metadata = job.source.metadata
+    return Episode(
+        transcript, metadata.duration, job.options.max_secs, settings.selection, job.options.aspect, (metadata.width, metadata.height)
+    )
+
+
 def _review(
     store: JobStore,
     settings: Settings,
@@ -1294,8 +1308,7 @@ def _review(
     def changed(job: Job, candidates: list[Candidate]) -> tuple[list[Candidate], Candidate]:
         transcript = store.load_transcript(job.id)
         assert job.source is not None and transcript is not None  # a Job in review has both
-        episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection, job.options.aspect)
-        return change(candidates, episode)
+        return change(candidates, _episode(job, transcript, settings))
 
     try:
         saved = store.change_candidates(job_id, changed, expect=EDITABLE, edit=edit)

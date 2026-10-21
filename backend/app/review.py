@@ -3,7 +3,7 @@ work when Selection runs again."""
 
 from bisect import bisect_left
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from uuid import uuid4
 
 from app.candidates import (
@@ -33,6 +33,7 @@ from app.candidates import (
 from app.canvas import Aspect, canvas_for
 from app.config import SelectionTuning
 from app.keyframes import rewindow
+from app.rescale import Sizes, rescaled
 from app.segment_time import SegmentTime, overlay_time, segment_time
 from app.selection import snap
 from app.styles import JoinTransition, StyleOverrides
@@ -70,7 +71,8 @@ class CandidateChange:
     end: float | None = None
     hook_text: str | None = None
     layout: Layout | None = None
-    # Its Canvas Aspect (docs/adr/0022); its positions are kept where they are, in pixels.
+    # Its Canvas Aspect (docs/adr/0022): changing it rescales the positions it owns onto the new
+    # Canvas (app/rescale.py), but those this change sends, taken as on it already.
     aspect: Aspect | None = None
     selected: bool | None = None
     preset_id: str | None = None
@@ -106,14 +108,17 @@ class CandidateChange:
 
 @dataclass(frozen=True)
 class Episode:
-    """What edits are checked against: the Job's Transcript, Source duration and longest clip; and
-    the Canvas Aspect a Candidate added by hand takes, the Job's."""
+    """What edits are checked against: the Job's Transcript, Source duration and longest clip; the
+    Canvas Aspect a Candidate added by hand takes, the Job's; and the sizes of the Source and the
+    Media Library's pictures, which a change of aspect rescales by."""
 
     transcript: Transcript
     duration: float
     max_secs: float
     tuning: SelectionTuning
     aspect: Aspect = Aspect.PORTRAIT
+    source: tuple[int, int] | None = None
+    sizes: Sizes = field(default_factory=dict)
 
     def bounds(self, start: float, end: float, keep_start: bool = False, keep_end: bool = False) -> tuple[float, float]:
         """`start`..`end` snapped to Words (see selection.snap), but for the ends kept where they are;
@@ -200,7 +205,10 @@ def update(
     old = candidates[i]
     if change.revision is not None and change.revision != old.revision:
         raise StaleRevision(old)
-    start, end, segments = old.start, old.end, old.segments
+    aspect = _pick(change.aspect, old.aspect)
+    # What the change doesn't send is kept as it looks: rescaled onto the new Canvas (docs/adr/0022).
+    kept = old if aspect == old.aspect else rescaled(old, aspect, episode.sizes, episode.source)
+    start, end, segments = old.start, old.end, kept.segments
     transitions = _pick(change.transitions, old.transitions)
     if change.start is not None or change.end is not None:
         if old.segments and change.segments is None:
@@ -248,14 +256,13 @@ def update(
     layout = _pick(change.layout, old.layout)
     if change.framing is not None:
         _check_framing(f"A {layout} clip", layout, change.framing)
-    aspect = _pick(change.aspect, old.aspect)
     if change.cue_edits is not None:
         try:
             check_cue_edits(change.cue_edits, canvas_for(aspect))
         except ValueError as exc:
             raise InvalidEdit(str(exc)) from None
     # Kept while the clip is Manual; dropped with its Layout.
-    framing = _pick(change.framing, old.framing) if layout is Layout.MANUAL else None
+    framing = _pick(change.framing, kept.framing) if layout is Layout.MANUAL else None
     _check_framing(f"A {layout} clip", layout, framing)
     new = replace(
         old,
@@ -269,19 +276,19 @@ def update(
         preset_id=_pick(change.preset_id, old.preset_id),
         style_overrides=_pick(change.style_overrides, old.style_overrides),
         word_edits=old.word_edits if change.word_edits is None else _merged(change.word_edits),
-        cue_edits=old.cue_edits if change.cue_edits is None else _keyed(change.cue_edits),
+        cue_edits=kept.cue_edits if change.cue_edits is None else _keyed(change.cue_edits),
         hook_start=_pick(change.hook_start, old.hook_start),
         hook_secs=_pick(change.hook_secs, old.hook_secs),
-        layout_overrides=_pick(change.layout_overrides, old.layout_overrides),
+        layout_overrides=_pick(change.layout_overrides, kept.layout_overrides),
         hook_kicker=old.hook_kicker if change.hook_kicker is None else " ".join(change.hook_kicker.split()),
-        text_layers=_pick(change.text_layers, old.text_layers),
-        shapes=_pick(change.shapes, old.shapes),
+        text_layers=_pick(change.text_layers, kept.text_layers),
+        shapes=_pick(change.shapes, kept.shapes),
         music=music,
         source_volume=_pick(change.source_volume, old.source_volume),
         grade=_pick(change.grade, old.grade),
         adjustment_layers=_pick(change.adjustment_layers, old.adjustment_layers),
         segments=segments,
-        overlays=_pick(change.overlays, old.overlays),
+        overlays=_pick(change.overlays, kept.overlays),
         transitions=_joined(transitions, segments),
     )
     # What it owns stays on its Canvas (docs/adr/0022).

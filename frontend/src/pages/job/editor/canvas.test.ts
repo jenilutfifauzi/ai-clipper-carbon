@@ -2,7 +2,7 @@
 // aspect in a player, as worked examples.
 import { describe, expect, test } from "vitest";
 import type { RenderPlan } from "../../../api";
-import { canvasOf, fittedStage, fromReference, PORTRAIT, toReference } from "./canvas";
+import { CANVASES, canvasOf, fittedStage, fromReference, PORTRAIT, toReference } from "./canvas";
 import { placedFields, watermarkPlaced } from "./placing";
 
 const LANDSCAPE = { width: 1920, height: 1080, safe_area: { x: 96, y: 54, width: 1728, height: 972 } };
@@ -16,6 +16,14 @@ describe("the Canvas", () => {
   test("is the 9:16 one before a plan comes", () => {
     expect(canvasOf(null)).toBe(PORTRAIT);
     expect(PORTRAIT).toEqual({ width: 1080, height: 1920, safe_area: { x: 0, y: 232, width: 950, height: 1304 } });
+  });
+
+  test("is the Candidate's aspect's before a plan comes, and the plan's once it does", () => {
+    expect(canvasOf(null, "16:9")).toEqual(LANDSCAPE);
+    expect(canvasOf(undefined, "4:5")).toEqual({ width: 1080, height: 1350, safe_area: { x: 54, y: 68, width: 972, height: 1214 } });
+    expect(canvasOf(null, "9:16")).toBe(PORTRAIT);
+    const plan = { ...CANVASES["1:1"], scenes: [] } as unknown as RenderPlan;
+    expect(canvasOf(plan, "16:9")).toEqual(CANVASES["1:1"]);
   });
 });
 
