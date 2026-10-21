@@ -26,6 +26,8 @@ interface PictureFields {
   // The Crop set, with the Transform too when it is given (Reset): one change.
   onCrop: (crop: Crop, field: string, transform?: Transform) => void;
   onCropMode?: () => void;
+  // An Overlay's Blend Mode menu, shown next to its opacity (BlendModeField).
+  blend?: ReactNode;
 }
 
 type TransformFieldsProps = {
@@ -119,6 +121,7 @@ export function TransformFields(props: TransformFieldsProps) {
         after={cluster("opacity", "Opacity")}
         disabled={off("opacity")}
       />
+      {"crop" in props && props.blend}
       {"crop" in props ? (
         <CropAndFit picture={props} transform={transform} fitOff={fitOff} onChange={onChange} />
       ) : (

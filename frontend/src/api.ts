@@ -793,7 +793,16 @@ export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   grade?: Grade;
   // A video's sound's Audio Effects (ADR 0017), as a Music Clip's; an image has none. Empty when missing.
   audio_effects?: AudioEffect[];
+  // Its picture's Video Effects (ADR 0014), in order, after its Grade and before its corners, border,
+  // rotation, shadow and opacity; sizes at its fitted size. Empty when missing.
+  video_effects?: VideoEffect[];
+  // How it is laid over what is under it (ADR 0014). Normal when missing.
+  blend?: BlendMode;
 }
+
+// How an Overlay is laid over what is under it (GLOSSARY.md, Blend Mode; ADR 0014): covering it by its
+// alpha (Normal), or its colour mixed with what is under it by the mode, then laid by its alpha.
+export type BlendMode = "normal" | "multiply" | "screen" | "add" | "lighten" | "darken";
 
 // A span of the Adjust Track (GLOSSARY.md, Adjustment Layer; ADR 0013): its Grade laid over the Main
 // Track and the Overlays from `start` for `secs` (Timeline time), mixed over the picture as it was by
@@ -807,6 +816,9 @@ export interface AdjustmentLayer {
   strength: number;
   fade_in: number;
   fade_out: number;
+  // Its Video Effects (ADR 0014), in order, after its Grade and mixed with it; sizes the 1080x1920
+  // frame's. Empty when missing.
+  video_effects?: VideoEffect[];
 }
 
 // An Adjustment Layer as the plan draws it: from `start` to `end` seconds into the Clip (cut at its
@@ -819,6 +831,8 @@ export interface AdjustmentEvent {
   strength: number;
   fade_in: number;
   fade_out: number;
+  // Its enabled Video Effects (ADR 0014), in order, after its Grade; sizes the 1080x1920 frame's.
+  video_effects?: VideoEffect[];
 }
 
 // How an Overlay comes on and goes off, as a Text Layer does (its picture only, never its sound).
@@ -867,6 +881,10 @@ export interface OverlayEvent extends Omit<Retiming, "hold">, OverlayAnimation {
   image: boolean;
   // Its Overlay's Grade as given (ADR 0013): the preview folds it (editor/grading.ts), as the render does.
   grade?: Grade;
+  // Its Overlay's enabled Video Effects (ADR 0014), in order, their sizes times its scale (as drawn).
+  video_effects?: VideoEffect[];
+  // Its Overlay's Blend Mode (ADR 0014). Normal when missing.
+  blend?: BlendMode;
 }
 
 // How one Segment gives way to the next: its stored id, with a recipe in backend/app/transitions.py and a look in pages/job/editor/transitions.ts.
@@ -972,6 +990,8 @@ export interface SegmentPlan extends Retiming {
   grade?: Grade;
   // Its sound's enabled Audio Effects (ADR 0017), in order.
   audio_effects?: AudioEffect[];
+  // Its frame's enabled Video Effects (ADR 0014), in order, after its Grade; sizes the 1080x1920 frame's.
+  video_effects?: VideoEffect[];
 }
 
 export interface RenderPlan {
@@ -1122,6 +1142,9 @@ export interface ClipSegment extends Retiming {
   // Its sound's Audio Effects (ADR 0017), in order, after its Speed and before its volume and fades.
   // Empty when missing.
   audio_effects?: AudioEffect[];
+  // Its whole frame's Video Effects (ADR 0014), in order, after its Grade and before the joins; sizes
+  // the 1080x1920 frame's. Empty when missing.
+  video_effects?: VideoEffect[];
 }
 
 // An Audio Effect applied to an item's sound (GLOSSARY: Audio Effect; ADR 0017): a catalogue
@@ -1144,7 +1167,24 @@ export interface AudioEffectSetting {
   step: number;
   unit: string;
   intensity: boolean;
+  // Absent: a number. (A Video Effect's may be a colour, ColourSetting.)
+  type?: "number";
 }
+
+// A Video Effect's colour setting (a key's colour, ADR 0014): `#RRGGBB`, `default` when left out.
+export interface ColourSetting {
+  key: string;
+  label: string;
+  type: "color";
+  default: string;
+  intensity: false;
+}
+
+// One of a Video Effect's settings: a number, as an Audio Effect's, or a colour.
+export type VideoEffectSetting = AudioEffectSetting | ColourSetting;
+
+/** Whether a Video Effect's `setting` is a colour (`#RRGGBB`) rather than a number. */
+export const isColourSetting = (setting: VideoEffectSetting): setting is ColourSetting => setting.type === "color";
 
 // An entry of the Audio Effects catalogue (backend/app/audio_effects.py), on its group's shelf at `order`.
 export interface AudioEffectKind {
@@ -1154,6 +1194,29 @@ export interface AudioEffectKind {
   order: number;
   description: string;
   settings: AudioEffectSetting[];
+}
+
+// A Video Effect applied to a picture (GLOSSARY: Video Effect; ADR 0014): a catalogue effect's `id`,
+// its settings by key (the server fills in each one left out with its default), and whether it is
+// drawn; off, it stays in the stack. An id is at most once in a stack. A colour setting's value is
+// `#RRGGBB` (the server keeps it in capitals).
+export interface VideoEffect {
+  id: string;
+  params: Record<string, number | string>;
+  enabled: boolean;
+}
+
+// An entry of the Video Effects catalogue (backend/app/video_effects.py, the effects registry's video
+// kind), on its category's shelf at `order`. A setting in "px" is output pixels at the picture's
+// fitted size, times its scale when drawn. A Cutout effect (a key) is an Overlay's only.
+export interface VideoEffectKind {
+  id: string;
+  kind: "video";
+  name: string;
+  category: "Blur" | "Distort" | "Light" | "Stylize" | "Cutout";
+  order: number;
+  description: string;
+  settings: VideoEffectSetting[];
 }
 
 // The dials of a Grade (GLOSSARY: Adjust), in Concat's ranges, each neutral by default: temperature
@@ -1673,6 +1736,10 @@ export const api = {
   listTextPresets: () => request<TextPreset[]>("/text-presets"),
   // Every Audio Effect an item's stack can name, by group and order.
   listAudioEffects: () => request<AudioEffectKind[]>("/audio-effects"),
+  listVideoEffects: () => request<VideoEffectKind[]>("/video-effects"),
+  // The starred Video and Audio Effects' ids, one list for every Job; a PUT replaces it.
+  listStarredEffects: () => request<string[]>("/starred-effects"),
+  setStarredEffects: (ids: string[]) => request<string[]>("/starred-effects", { method: "PUT", body: JSON.stringify(ids) }),
   // Every Look, by its order.
   listLooks: () => request<Look[]>("/looks"),
   // A .cube file (a 3D table, 2 to 65 a side) as a new Imported Look; rejects naming its bad line.

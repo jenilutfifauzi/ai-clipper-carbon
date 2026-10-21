@@ -17,6 +17,7 @@ from app.pipeline import Pipeline
 from app.ports import Ports, real_ports
 from app.profile import PROFILE_FILE, ProfileStore
 from app.rendering import Renders
+from app.starred_effects import STARRED_FILE, StarredStore
 from app.styles import PRESETS_FILE, PresetStore
 from app.text_presets import TEXT_PRESETS_FILE, TextPresetStore
 from app.uploads import UPLOADS_DIR
@@ -53,6 +54,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.presets = PresetStore(settings.data_dir / PRESETS_FILE)
     app.state.text_presets = TextPresetStore(settings.data_dir / TEXT_PRESETS_FILE)
     app.state.export_presets = renders.export_presets
+    app.state.starred = StarredStore(settings.data_dir / STARRED_FILE)
     app.state.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin)
     app.state.media = media
     app.state.media_words = media_words

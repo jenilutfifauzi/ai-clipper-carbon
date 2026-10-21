@@ -11,6 +11,7 @@ from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, String
 from app.audio_effects import AUDIO_EFFECTS_MAX, AudioEffect, checked_effects
 from app.fonts import DEFAULT_FONT
 from app.segment_time import segment_time, track_length
+from app.video_effects import VIDEO_EFFECTS_MAX, VideoEffect, checked_video_effects
 # Defined apart, so that a Style Preset's Join Transition (app/styles.py) has them too.
 from app.transition_kinds import TRANSITION_DEFAULT_SECS, TRANSITION_SECS, TransitionKind, TransitionSound
 from app.styles import DEFAULT_PRESET, JoinTransition, Animation, Colour, DropShadow, FontId, Height, HookShape, Padding, StyleOverrides, Tracking, Width
@@ -665,6 +666,18 @@ class Grade:
         return self.adjust == Adjust() and self.look is None
 
 
+class BlendMode(StrEnum):
+    """How an Overlay is laid over what is under it (docs/adr/0014): covering it by its alpha
+    (Normal), or its colour mixed with what is under it by its mode, then laid by its alpha."""
+
+    NORMAL = "normal"
+    MULTIPLY = "multiply"
+    SCREEN = "screen"
+    ADD = "add"
+    LIGHTEN = "lighten"
+    DARKEN = "darken"
+
+
 @dataclass(frozen=True)
 class Overlay:
     """A video or image from the Media Library laid over the Clip (picture in picture): from `start`
@@ -707,10 +720,17 @@ class Overlay:
     # A video's sound's Audio Effects (docs/adr/0017), as a Music Clip's; an image has none (refused
     # with the Media Library at hand, app/api.py). Empty in one saved before them.
     audio_effects: Annotated[list[AudioEffect], Field(max_length=AUDIO_EFFECTS_MAX)] = field(default_factory=list)
+    # Its picture's Video Effects (docs/adr/0014), in order: after its Grade, before its corners,
+    # border, rotation, shadow and opacity; sizes at its fitted size. Empty in one saved before them.
+    video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
+    # How it is laid over what is under it, after its opacity (docs/adr/0014). Normal in one saved
+    # before Blend Modes.
+    blend: BlendMode = BlendMode.NORMAL
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))
         object.__setattr__(self, "audio_effects", checked_effects(self.audio_effects, f"Overlay {self.id}"))
+        object.__setattr__(self, "video_effects", checked_video_effects(self.video_effects, f"Overlay {self.id}", keyed=True))
 
 
 @dataclass(frozen=True)
@@ -719,7 +739,8 @@ class AdjustmentLayer:
     over the Main Track and the Overlays from `start` for `secs` in Timeline time, mixed over the
     picture as it was by `strength` percent times its fade ramp, which comes up over `fade_in`
     seconds from its start and goes down over `fade_out` to its end, each at most half its length.
-    It never touches the Watermark, captions, Shapes, Text Layers or hook."""
+    Its `video_effects` (docs/adr/0014) are drawn after its Grade and mixed with it. It never touches
+    the Watermark, captions, Shapes, Text Layers or hook."""
 
     id: ItemId
     start: TimelineStart
@@ -728,8 +749,12 @@ class AdjustmentLayer:
     strength: Annotated[FiniteFloat, Field(ge=0, le=100)] = 100.0
     fade_in: Fade = 0.0
     fade_out: Fade = 0.0
+    # Its Video Effects (docs/adr/0014), in order, after its Grade over the 1080x1920 frame (scale 1),
+    # mixed back with it by its strength and fades. Empty in one saved before them.
+    video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "video_effects", checked_video_effects(self.video_effects, f"Adjustment Layer {self.id}"))
         half = self.secs / 2
         for name in ("fade_in", "fade_out"):
             if getattr(self, name) > half + 1e-9:
@@ -797,7 +822,8 @@ class Segment:
     order, back to back. `id` names it in the editor. It may have `keys` (docs/adr/0008): a video's
     Segment for its Framing and sound, a Segment of the Source for its sound only.
     With `hold`, it is a Freeze frame (docs/adr/0009): the frame at `start` held that long, silent.
-    Its sound is heard through its stack of `audio_effects` (docs/adr/0017)."""
+    Its sound is heard through its stack of `audio_effects` (docs/adr/0017), and its frame drawn
+    through its `video_effects` (docs/adr/0014)."""
 
     id: ItemId
     start: Annotated[FiniteFloat, Field(ge=0)]
@@ -831,6 +857,10 @@ class Segment:
     # Its sound's Audio Effects (docs/adr/0017), in order, after its Speed and Reverse and before its
     # volume, Keyframes and fades; each setting filled in once checked. Empty in one saved before them.
     audio_effects: Annotated[list[AudioEffect], Field(max_length=AUDIO_EFFECTS_MAX)] = field(default_factory=list)
+    # Its whole frame's Video Effects (docs/adr/0014), in order, after its Grade and before the joins,
+    # so that a Transition blends pictures that carry them; sizes at the 1080x1920 frame's. Empty in
+    # one saved before them. A Freeze frame takes them too.
+    video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.media is None and (framed := next((name for name, keys in self.keys.items() if keys and name not in SOUND_KEYS), None)):
@@ -842,6 +872,7 @@ class Segment:
         length = segment_time(self).length
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Segment {self.id}", PICTURE_KEYS + SOUND_KEYS, length))
         object.__setattr__(self, "audio_effects", checked_effects(self.audio_effects, f"Segment {self.id}"))
+        object.__setattr__(self, "video_effects", checked_video_effects(self.video_effects, f"Segment {self.id}"))
 
 
 def _check_held(segment: Segment) -> None:

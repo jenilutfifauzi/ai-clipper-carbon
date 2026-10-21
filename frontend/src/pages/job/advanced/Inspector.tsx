@@ -11,8 +11,9 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { StyleFieldsSkeleton } from "../editor/StyleFields";
 import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, reshape, restyle, setAdjustment, setDuck, setFade, setSpeech, setVolume, type Detacher, type ItemActions, type Outcome, type SpeedRef, type StackRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setAdjustment, setBlend, setDuck, setFade, setSpeech, setVolume, sharedBlend, type Detacher, type ItemActions, type Outcome, type SpeedRef, type StackRef } from "./actions";
 import { audioEffectChanges, AudioEffectsFields } from "./AudioEffectsFields";
+import { videoEffectChanges, VideoEffectsFields } from "./VideoEffectsFields";
 import { AdjustmentLayerFields } from "./AdjustmentLayers";
 import { colorChanges, ColorFields } from "./ColorFields";
 import type { AdvancedEdits } from "./edits";
@@ -21,7 +22,7 @@ import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from ".
 import { SegmentFields } from "./MainTrack";
 import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
-import { OverlayFields } from "./Overlays";
+import { BlendModeField, OverlayFields } from "./Overlays";
 import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
 import { CueFields } from "./CueFields";
 import type { TrackKind } from "./trackState";
@@ -64,6 +65,7 @@ export function Inspector({
   detaching,
   effectsPreparing,
   effectsElsewhere = false,
+  videoEffectsShown = true,
 }: {
   pick: Pick;
   edits: AdvancedEdits;
@@ -109,6 +111,8 @@ export function Inspector({
   effectsPreparing?: (items: StackRef[]) => boolean;
   // On a phone, the Audio Effects section is the toolbar's Audio effects sheet, not here.
   effectsElsewhere?: boolean;
+  // Whether the Video Effects section is shown: on a desktop only (a phone plays them, not edits them).
+  videoEffectsShown?: boolean;
 }) {
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const only = onlyItem(pick);
@@ -143,6 +147,13 @@ export function Inspector({
     return controls && <AudioEffectsFields {...controls} />;
   };
 
+  // The picked pictures' (Segments', Overlays' and Adjustment Layers') Video Effects section, after their Color section: null without any, or on a phone.
+  const pictureEffectsOf = () => {
+    if (!videoEffectsShown) return null;
+    const controls = videoEffectChanges({ edits, pick }, onEdits);
+    return controls && <VideoEffectsFields {...controls} />;
+  };
+
 
   const items = itemsOf(pick);
   if (items.length > 1 && actions) {
@@ -171,15 +182,28 @@ export function Inspector({
       );
     }
     const summary = <PickSummary pick={pick} edits={edits} plan={preview?.plan ?? null} actions={actions} />;
+    // The picked Overlays' Blend Mode, set on them all.
+    const blend = sharedBlend({ edits, pick });
+    const blendField = blend && (
+      <BlendModeField
+        value={blend}
+        onChange={(mode) => {
+          const outcome = setBlend({ edits, pick }, mode);
+          if (outcome) onEdits(outcome.edits, "overlays:blend");
+        }}
+      />
+    );
     // Several Segments, Overlays and Adjustment Layers: their Grades edited together.
     const graded = items.every((item) => item.kind === "segment" || item.kind === "overlay" || item.kind === "adjustment");
     // Those with sound: their Audio Effects edited together.
     const effects = effectsOf();
-    if (!graded && !effects) return summary;
+    if (!graded && !effects && !blendField) return summary;
     return (
       <div className="flex flex-col gap-4">
         {summary}
+        {blendField}
         {graded && colorOf()}
+        {graded && pictureEffectsOf()}
         {effects}
       </div>
     );
@@ -224,6 +248,7 @@ export function Inspector({
         span={segmentSpan(edits.segments, segment.id, track)}
         captions={segment.media && mediaById.get(segment.media) ? captionsOf?.(segment, mediaById.get(segment.media)!) : undefined}
         color={colorOf()}
+        pictureEffects={pictureEffectsOf()}
         effects={effectsOf()}
         scene={
           <SceneFields
@@ -266,6 +291,7 @@ export function Inspector({
         layer={adjustment}
         duration={duration}
         color={colorOf()}
+        pictureEffects={pictureEffectsOf()}
         onChange={onAdjustment}
         onMix={(change, group) => {
           const outcome = setAdjustment({ edits, pick }, adjustment.id, change);
@@ -327,6 +353,7 @@ export function Inspector({
         onDelete={actions.remove}
         onCropMode={cropMode?.("overlay", overlay.id)}
         color={colorOf()}
+        pictureEffects={pictureEffectsOf()}
         effects={effectsOf()}
       />
     );

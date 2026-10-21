@@ -273,7 +273,7 @@ describe("the Adjust sheet", () => {
     // Only Temperature is away from neutral in WARM.
     expect(resets.filter(([tag]) => !tag.includes('disabled=""'))).toHaveLength(1);
     expect(resets[0][0]).not.toContain('disabled=""');
-    for (const title of ["Color", "Lightness", "Effects"]) expect(markup).toContain(`>${title}<`);
+    for (const title of ["Color", "Lightness", "Detail"]) expect(markup).toContain(`>${title}<`);
     for (const [tag] of markup.matchAll(/<(button|input)\b[^>]*>/g)) expect(tag).toMatch(/min-h-11|in-data-sheet:h-11|size-11/);
   });
 

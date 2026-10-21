@@ -66,7 +66,7 @@ from app.effected import EFFECTED_DIR, NoCopy, copies_used as effected_used, eff
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
-from app import audio_effects
+from app import audio_effects, video_effects
 from app.looks import MAX_UPLOAD_BYTES as MAX_LOOK_BYTES, BadCube, ImportedLooks, Look, LookNotFound, all_looks, builtin_looks, get_look
 from app.logos import MAX_UPLOAD_BYTES, BadLogo, Logo, LogoNotFound, LogoStore
 from app.media import MEDIA_TYPES, BadMedia, MediaItem, MediaKind, MediaNotFound, MediaStore
@@ -82,6 +82,7 @@ from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.revisions import Edit, HistoryEntry
+from app.starred_effects import Starred, StarredStore
 from app.storage import DiskUsage, disk_usage
 from app.styles import (
     BuiltinPreset,
@@ -149,6 +150,10 @@ def _profiles(request: Request) -> ProfileStore:
     return request.app.state.profiles
 
 
+def _starred(request: Request) -> StarredStore:
+    return request.app.state.starred
+
+
 def _presets(request: Request) -> PresetStore:
     return request.app.state.presets
 
@@ -209,6 +214,7 @@ AppSettings = Annotated[Settings, Depends(_settings)]
 Store = Annotated[JobStore, Depends(_store)]
 JobWorker = Annotated[Worker, Depends(_worker)]
 Profiles = Annotated[ProfileStore, Depends(_profiles)]
+StarredEffects = Annotated[StarredStore, Depends(_starred)]
 Presets = Annotated[PresetStore, Depends(_presets)]
 TextPresets = Annotated[TextPresetStore, Depends(_text_presets)]
 ExportPresets = Annotated[ExportPresetStore, Depends(_export_presets)]
@@ -1443,6 +1449,28 @@ def list_audio_effects() -> list[dict]:
     name, group, order, description and settings (key, label, min, max, default, step, unit, and
     whether it is the intensity its stack row shows)."""
     return audio_effects.catalogue()
+
+
+@router.get("/video-effects")
+def list_video_effects() -> list[dict]:
+    """Every Video Effect a picture's stack can name (app/video_effects.py, the registry's video kind),
+    by category and order: its id, kind, name, category, order, description and settings (key, label,
+    min, max, default, step, unit, and whether it is the intensity its stack row shows)."""
+    return video_effects.catalogue()
+
+
+@router.get("/starred-effects")
+def get_starred_effects(starred: StarredEffects) -> list[str]:
+    """The ids of the starred Video and Audio Effects, for every Job (app/starred_effects.py). An id
+    the catalogues no longer have is kept here; the libraries don't show it."""
+    return starred.load()
+
+
+@router.put("/starred-effects")
+def put_starred_effects(ids: Starred, starred: StarredEffects) -> list[str]:
+    """Replace the starred list: catalogue ids, each at most once."""
+    starred.save(ids)
+    return ids
 
 
 @router.get("/looks")

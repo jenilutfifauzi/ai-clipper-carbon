@@ -14,9 +14,11 @@ import { copyProgress, eventCopy, eventPlay, useRetimedCopy } from "./retimedCop
  * the Advanced Edit, whose stage picks, moves and transforms them: StageEdit.tsx) show faintly
  * outside their time too. A keyed one moves with the playback (PicturePanel), and so does one coming
  * on or going off as a picture layer does (its picture only: a video's sound is left to its volume).
- * Each is in its Grade (ADR 0013), its border and shadow not.
+ * Each is in its Grade (ADR 0013) and its Video Effects (ADR 0014), its border and shadow not, and
+ * laid by its Blend Mode (ADR 0014) over what is under it.
  * A selected one is shown whole while paused in its time, as a picked Text Layer is, so that it can
- * be seen while it is edited on a frame its animation hasn't reached.
+ * be seen while it is edited on a frame its animation hasn't reached. Its media element names its
+ * Overlay (`data-overlay-media`), for Chroma key's eyedropper to read (EyedropperLayer).
  */
 export function PreviewOverlays({ plan, playback, selected }: { plan: RenderPlan | null; playback: Playback; selected: string[] }) {
   if (!plan || !plan.overlays.length) return null;
@@ -87,11 +89,14 @@ function OverlayView({
         faded={shown ? undefined : 0.25}
         look={look}
         grade={event.grade}
+        effects={event.video_effects}
+        blend={event.blend}
+        start={start}
         media={
           image ? (
-            <img src={mediaItemUrl(media)} alt="" draggable={false} className="size-full object-fill" />
+            <img src={mediaItemUrl(media)} alt="" draggable={false} className="size-full object-fill" data-overlay-media={event.id} />
           ) : (
-            <video ref={video} src={src} muted playsInline preload="auto" className="size-full object-fill" />
+            <video ref={video} src={src} muted playsInline preload="auto" className="size-full object-fill" data-overlay-media={event.id} />
           )
         }
       />

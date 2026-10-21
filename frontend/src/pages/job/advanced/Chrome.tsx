@@ -33,6 +33,7 @@ import {
   Undo2,
   Volume2,
   VolumeX,
+  WandSparkles,
   X,
 } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
@@ -54,7 +55,7 @@ import type { EditHistory } from "./useEditHistory";
 // phone's toolbar, frame buttons, Playback sheet and bottom sheet, the timeline's buttons for the
 // picked item, and the shortcuts sheet.
 
-export type AssetTab = "text" | "stickers" | "audio" | "media" | "transitions" | "filters";
+export type AssetTab = "text" | "stickers" | "audio" | "media" | "transitions" | "filters" | "effects";
 
 export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[] = [
   { value: "text", label: "Text", icon: Type },
@@ -63,11 +64,17 @@ export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[]
   { value: "media", label: "Media", icon: Film },
   { value: "transitions", label: "Transitions", icon: Shuffle },
   { value: "filters", label: "Filters", icon: SwatchBook },
+  { value: "effects", label: "Effects", icon: WandSparkles },
 ];
 
+// The phone's: Video Effects are a desktop's to edit (ADR 0014), so it has no Effects tab.
+const PHONE_ASSET_TABS = ASSET_TABS.filter((tab) => tab.value !== "effects");
+
+// The Asset Panel's tabs. Their names go (kept for a screen reader and in a tooltip) when the panel
+// is too narrow for all seven, as at its default width, rather than cut off the last tabs.
 export function AssetTabs({ value, onChange }: { value: AssetTab; onChange: (tab: AssetTab) => void }) {
   return (
-    <div role="tablist" aria-label="Assets" className="flex gap-1 border-b border-border p-2">
+    <div role="tablist" aria-label="Assets" className="@container flex gap-1 border-b border-border p-2">
       {ASSET_TABS.map((tab) => (
         <button
           key={tab.value}
@@ -75,14 +82,15 @@ export function AssetTabs({ value, onChange }: { value: AssetTab; onChange: (tab
           role="tab"
           aria-selected={value === tab.value}
           onClick={() => onChange(tab.value)}
+          title={tab.label}
           className={cx(
-            "flex min-h-14 flex-1 flex-col items-center justify-center gap-1 rounded-[10px] text-[11px] font-medium",
+            "flex min-h-11 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-[10px] text-[11px] font-medium @[18rem]:min-h-14",
             "focus-visible:outline-2 focus-visible:outline-focus",
             value === tab.value ? "raised text-text" : "text-muted hover:bg-fill hover:text-text",
           )}
         >
           <tab.icon aria-hidden size={18} />
-          {tab.label}
+          <span className="sr-only @[18rem]:not-sr-only">{tab.label}</span>
         </button>
       ))}
     </div>
@@ -283,7 +291,7 @@ export function Toolbar({
         </>
       ) : (
         <>
-          {ASSET_TABS.map((tab) => (
+          {PHONE_ASSET_TABS.map((tab) => (
             <ToolButton key={tab.value} icon={tab.icon} label={tab.label} onClick={() => onAsset(tab.value)} />
           ))}
           {onAdjust && <ToolButton icon={SunMedium} label="Adjust" onClick={onAdjust} />}

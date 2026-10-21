@@ -135,6 +135,7 @@ from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args, output
 from app.fonts import font, registry
 from app.frames import FrameFeed, PictureFrames, VideoDecode, graded_image, read_image, shadow_room
 from app.grading import grade_filters
+from app.video_effects import Clock, changes_with_time, video_effect_chain
 from app.ducking import duck_steps
 from app.keyframes import linear_steps
 from app.segment_time import SegmentTime
@@ -161,13 +162,19 @@ from app.planner import (
     own_volume,
     picture_at,
 )
-from app.candidates import Keyframe, Shadow, Shape, TextLayer
+from app.candidates import BlendMode, Keyframe, Shadow, Shape, TextLayer
 from app.scaled_plan import drawn_scale, scaled_plan
 from app.transition_kinds import TransitionSound
 from app.transitions import RECIPES, Side
 from app.styles import Animation, CaptionStyle, DropShadow, Highlight, HookStyle, WatermarkKind, WatermarkStyle
 
 logger = logging.getLogger(__name__)
+
+# The `blend` filter's mode of each Blend Mode but Normal (docs/adr/0014).
+BLEND_MODES = {
+    BlendMode.MULTIPLY: "multiply", BlendMode.SCREEN: "screen", BlendMode.ADD: "addition",
+    BlendMode.LIGHTEN: "lighten", BlendMode.DARKEN: "darken",
+}
 
 # The highlight box's padding around its Word, in sizes of the line's font, and its corners' radius,
 # unless its Caption Style gives its own.
@@ -279,8 +286,10 @@ class Renderer:
     ) -> None:
         """Write the frame of the Clip `render` would make that shows at `at` seconds into it
         (`shown_frame`) to `still` (PNG): the same graph at `export`'s size, without the sound. The
-        other arguments are `render`'s. It is written under a temporary name and then renamed."""
+        other arguments are `render`'s. It is written under a temporary name and then renamed. The
+        items that don't show on it are left out (`_at_frame`)."""
         _check(plan)
+        plan = _at_frame(plan, at)
         files = files or {}
         pictures = pictures or {}
         # Between the frame before it and it, which a frame's time rounded either way still selects.
@@ -524,10 +533,10 @@ class Renderer:
             frame += f";{joined}fps={_rate(plan)}[timed]"
             joined = "[timed]"
         for i, (event, number, feed) in enumerate(layered):
-            frame += f";{_overlay(event, joined, f'[over{i}]', number, i, feed)}"
+            frame += f";{_overlay(event, joined, f'[over{i}]', number, i, feed, _rate_value(plan))}"
             joined = f"[over{i}]"
         for i, event in enumerate(plan.adjustment_layers):
-            if adjusted := _adjustment(event, joined, f"[adjusted{i}]", i):
+            if adjusted := _adjustment(event, joined, f"[adjusted{i}]", i, (plan.width, plan.height), _rate_value(plan)):
                 frame += f";{adjusted}"
                 joined = f"[adjusted{i}]"
         if logo is not None and plan.watermark is not None:
@@ -613,6 +622,17 @@ def shown_frame(at: float, fps: float, duration: float) -> int:
     return max(0, min(math.floor(at * fps + 1e-6), math.ceil(duration * fps - 1e-6) - 1))
 
 
+def _at_frame(plan: RenderPlan, at: float) -> RenderPlan:
+    """`plan` without the Overlays and Adjustment Layers that don't show on the frame shown at `at`
+    (`shown_frame`), give or take a frame: drawing one frame draws every frame before it, so an item
+    over an earlier span would cost its whole span's effects and Blend Mode for nothing (docs/adr/0014)."""
+    fps = plan.fps if plan.fps > 0 else 30
+    time, near = shown_frame(at, fps, plan.duration) / fps, 1 / fps
+    overlays = [event for event in plan.overlays if event.start - near <= time <= event.end + near]
+    layers = [event for event in plan.adjustment_layers if event.start - near <= time <= event.end + near]
+    return replace(plan, overlays=overlays, adjustment_layers=layers)
+
+
 def picture_layouts(plan: RenderPlan, export: ExportSettings) -> list[PictureLayout]:
     """The layouts of the pictures a render of `plan` as `export` says draws, rasterised at its size
     (docs/adr/0010, 0021): what to make (app/layer_pictures.py) before the render, which takes them
@@ -667,6 +687,7 @@ def _source_inputs(plan: RenderPlan, source: Path, files: dict[str, Path], rate:
     plain = all(
         segment.media is None and segment.volume == 1 and segment.speed == 1 and segment.hold is None and not segment.gain
         and not (segment.fade_in or segment.fade_out) and not segment.muted and not segment.audio_effects
+        and not segment.video_effects
         for segment in plan.segments
     )
     if plain and not plan.transitions:
@@ -865,7 +886,8 @@ def _crossed(plan: RenderPlan, transition: TransitionEvent, outgoing: str, incom
 def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | None = None) -> str:
     """The filtergraph that draws a Clip of several Segments into [frame]: each Segment from its own
     input, its Scenes drawn as _scenes draws a Clip's (in seconds into the Segment; a Freeze frame's
-    from its first frame, held), then graded (docs/adr/0013), and the Segments joined back to back.
+    from its first frame, held), then graded (docs/adr/0013) and drawn through its Video Effects
+    (docs/adr/0014), and the Segments joined back to back.
     A keyed Scene's picture is the input `drawn` gives by its place among the plan's Scenes, from
     its frame process."""
     chains, first = [], 0
@@ -882,8 +904,11 @@ def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | N
             # frame landing on one of the Clip's, a thousandth of a frame early against rounding, is that one).
             rate = _rate(plan)
             given += f"settb=AVTB,setpts=(PTS-STARTPTS)/{segment.speed:.6g}-{0.001 / _rate_value(plan):.6g}/TB,fps={rate}:round=up,"
-        # Its Grade over its whole frame, before the joins, so that a Transition blends graded pictures.
-        graded = grade_filters(segment.grade)
+        # Its Grade, then its Video Effects (docs/adr/0014), over its whole frame, before the joins,
+        # so that a Transition blends pictures that carry them.
+        graded = ",".join([
+            *filter(None, [grade_filters(segment.grade)]), *video_effect_chain(segment.video_effects, (plan.width, plan.height), label=f"g{i}fx"),
+        ])
         drawn_to = f"[g{i}u]" if graded else f"[g{i}]"
         chains.append(_scenes(plan, tuning, scenes, given, drawn_to, f"g{i}s", segment.start, keyed))
         if graded:
@@ -1161,7 +1186,8 @@ def _overlay_inputs(
     plan: RenderPlan, files: dict[str, Path], first: int, feeds: "Feeds"
 ) -> tuple[list[str], list[tuple[OverlayEvent, int, FrameFeed | None]]]:
     """The input options of the plan's Overlays, one each, numbered from `first` (a video read from its
-    offset for as long as it shows times its Speed; an image's one picture; a keyed one's frames,
+    offset for as long as it shows times its Speed; an image's one picture, or for as long as it shows
+    at the Clip's frame rate when an effect of it changes with time (`_looped`); a keyed one's frames,
     from the pipe of its frame process in `feeds`, by its place among them), and each Overlay drawn
     with its input's number and its frame process. One whose file isn't in `files` isn't drawn."""
     inputs: list[str] = []
@@ -1175,37 +1201,58 @@ def _overlay_inputs(
         else:
             if not event.image:
                 inputs += ["-ss", f"{event.offset:.3f}", "-t", f"{event.time.span:.3f}"]
+            elif _looped(event):
+                inputs += ["-loop", "1", "-framerate", _rate(plan), "-t", f"{event.end - event.start:.3f}"]
             inputs += ["-i", str(files[event.media])]
         drawn.append((event, first + len(drawn), feed))
     return inputs, drawn
 
 
-def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int, feed: FrameFeed | None = None) -> str:
+def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int, feed: FrameFeed | None = None, fps: float = 30) -> str:
     """Filters that draw an Overlay (input `index`) as its Picture over the frames `below` while it
     shows, into `out`: a video's frames moved to start when it does and timed by its Speed, an
-    image's one picture held, graded after it is scaled and flipped. A keyed one's frames, drawn whole
-    (and graded) by its frame process `feed`, are laid at 0, 0, each over the frame of its number (the
-    frames below being at n / fps exactly)."""
+    image's one picture held (or its looped frames moved to start when it does, `_looped`), graded after it is scaled and flipped and then drawn through its Video
+    Effects (docs/adr/0014), at its drawn size. A keyed one's frames, drawn whole
+    (graded and effected) by its frame process `feed`, are laid at 0, 0, each over the frame of its number (the
+    frames below being at n / fps exactly). The frames below are `fps` a second."""
     shows = f"enable='between(t\\,{event.start:.3f}\\,{event.end:.3f})'"
+    spanned = (event.start, event.end, fps)
     if feed is not None:
-        name = f"[layer{number}]"
-        return f"[{index}:v]setpts=PTS-STARTPTS+{feed.first}{name};{below}{name}overlay=0:0:{shows}:eof_action=pass{out}"
-    played = "PTS-STARTPTS" if event.speed == 1 else f"(PTS-STARTPTS)/{event.speed:.6g}"
-    timed = "" if event.image else f",setpts={played}+{event.start:.3f}/TB"
-    ends = "repeat" if event.image else "pass"
+        name = f"layer{number}"
+        return f"[{index}:v]setpts=PTS-STARTPTS+{feed.first}[{name}];" + _laid(below, name, "0:0", f"{shows}:eof_action=pass", out, event.blend, shows, spanned)
+    held = event.image and not _looped(event)
+    played = "PTS-STARTPTS" if event.speed == 1 or event.image else f"(PTS-STARTPTS)/{event.speed:.6g}"
+    timed = "" if held else f",setpts={played}+{event.start:.3f}/TB"
+    ends = "repeat" if held else "pass"
     graded = grade_filters(event.grade, alpha=f"layer{number}g")
-    return _picture(event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}", graded)
+    # Its effects come before its frames are moved onto the Timeline: a video's are its video's, from
+    # its offset, before its Speed.
+    clock = Clock(rate=1 if event.image else 1 / event.speed)
+    chain = video_effect_chain(event.video_effects, (event.picture.width, event.picture.height), label=f"layer{number}fx", clock=clock)
+    effected = ",".join([*([graded] if graded else []), *chain])
+    return _picture(
+        event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}", effected, event.blend, shows, spanned
+    )
 
 
-def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int) -> str:
-    """Filters that lay an Adjustment Layer over the frames `below` (the Main Track and the Overlays)
-    into `out` (docs/adr/0013): the stream split, its frames graded, given an alpha of its strength
-    times its fade ramp (`fade` on the alpha alone, its times those of the Clip) and laid back over the
-    ungraded frames, only within its span. Both branches keep every frame at its time, so neither
-    waits on the other and no frame is held back; outside its span the grade and the alpha pass the
-    frames through untouched (`enable`). "" when it changes nothing (a neutral Grade, or strength 0)."""
+def _looped(event: OverlayEvent) -> bool:
+    """Whether an image Overlay is read as a stream of its frames over its span rather than once: an
+    effect of it changes with time (docs/adr/0014), so that its grain moves."""
+    return event.image and changes_with_time(event.video_effects)
+
+
+def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int, size: tuple[int, int], fps: float = 30) -> str:
+    """Filters that lay an Adjustment Layer over the frames `below` (the Main Track and the Overlays,
+    `size` large, `fps` frames a second) into `out` (docs/adr/0013): the stream split, its frames
+    graded and drawn through its Video Effects (docs/adr/0014), given an alpha of its strength times
+    its fade ramp (`fade` on the alpha alone, its times those of the Clip) and laid back over the
+    frames as they were, only within its span. Outside its span the grade and the alpha pass the
+    frames through untouched (`enable`). Its effects, whose filters can't all take `enable`, get its
+    span's frames alone (`_spanned`). "" when it changes nothing (a neutral Grade and no enabled
+    effects, or strength 0)."""
     span = f"between(t\\,{event.start:.3f}\\,{event.end:.3f})"
-    graded = grade_filters(event.grade, enable=span)
+    effects = video_effect_chain(event.video_effects, size, enable=span, label=f"adjust{index}fx", clock=Clock(event.start))
+    graded = ",".join([*filter(None, [grade_filters(event.grade, enable=span)]), *effects])
     if not graded or event.strength <= 0:
         return ""
     name = f"adjust{index}"
@@ -1217,11 +1264,29 @@ def _adjustment(event: AdjustmentEvent, below: str, out: str, index: int) -> str
         ramp.append(f"fade=t=in:st={event.start:.3f}:d={event.fade_in:.3f}:alpha=1:enable='{span}'")
     if event.fade_out:
         ramp.append(f"fade=t=out:st={event.end - event.fade_out:.3f}:d={event.fade_out:.3f}:alpha=1:enable='{span}'")
+    cut, padded = _spanned(event.start, event.end, span, fps) if effects else ([], [])
     return (
         f"{below}split[{name}a][{name}b];"
-        f"[{name}b]{graded},{','.join(ramp)}[{name}g];"
+        f"[{name}b]{','.join([*cut, graded, *ramp, *padded])}[{name}g];"
         f"[{name}a][{name}g]overlay=0:0:enable='{span}':eof_action=pass{out}"
     )
+
+
+def _spanned(start: float, end: float, span: str, fps: float) -> tuple[list[str], list[str]]:
+    """The filters before and after the work of an item from `start` to `end` seconds (an Adjustment
+    Layer's effects, an Overlay's Blend Mode) that keep it to its `span`'s frames (docs/adr/0014), each
+    at its own time, so that a chain with labels runs there alone. The
+    frames before it are dropped (`select`, as `enable` picks them) and those after it end the branch
+    (`trim`, then the overlay passes the rest). The overlay waits for the branch's next frame, so the
+    dropped ones are stood in for by transparent frames from the Clip's start (`tpad`), set back
+    before the span's (their `setpts` undoes the shift `tpad` gives the rest): a branch that sent
+    nothing until its span would hold back every frame before it."""
+    cut = [f"trim=end={end + 0.5 / fps:.6f}", f"select='{span}'"]
+    pads = max(0, math.floor(start * fps) - 2)
+    if not pads:
+        return cut, []
+    shifted = f"setpts='if(lt(N\\,{pads})\\,PTS\\,PTS-{pads}/(FRAME_RATE*TB))'"
+    return cut, [f"tpad=start={pads}:color=black@0", shifted]
 
 
 def _layer_inputs(
@@ -1381,19 +1446,21 @@ def _keyed_items(
     plan: RenderPlan, files: dict[str, Path], source: Path, pictures: dict[str, Path] | None = None, ffmpeg: Path | None = None
 ) -> dict[Keyed, np.ndarray | Path]:
     """The items of the plan's keyed pictures that are in `files`, which their frame processes draw:
-    a keyed or animated Overlay's image's pixels (graded once by `ffmpeg` by its Grade), or a
-    video's file (such an Overlay's or a keyed Segment's), or the `source` for a Manual Scene; and a
+    a keyed or animated Overlay's image's pixels (graded once by `ffmpeg` by its Grade and drawn
+    through its Video Effects), or a video's file (such an Overlay's or a keyed Segment's, or an
+    Overlay's image whose effect changes with time, `_looped`), or the `source` for a Manual Scene; and a
     keyed or animated picture layer's picture's pixels, from `pictures`."""
     items: dict[Keyed, np.ndarray | Path] = {}
     for i, event in enumerate(plan.overlays):
         if not (_comes_animated(event) or event.picture.motion) or event.media not in files:
             continue
-        if not event.image:
+        if not event.image or _looped(event):
             items[("overlay", i)] = files[event.media]
             continue
         image = read_image(files[event.media])
-        if (graded := grade_filters(event.grade, alpha="g")) and ffmpeg is not None:
-            image = graded_image(ffmpeg, image, event.picture, graded)
+        graded = grade_filters(event.grade, alpha="g")
+        if (graded or event.video_effects) and ffmpeg is not None:
+            image = graded_image(ffmpeg, image, event.picture, graded, event.video_effects)
         items[("overlay", i)] = image
     for i, (media, _) in _keyed_scenes(plan).items():
         if media is None:
@@ -1436,7 +1503,8 @@ def _keyed_scenes(plan: RenderPlan) -> dict[int, tuple[str | None, SegmentTime]]
 def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path) -> Feeds:
     """A frame process for each keyed picture whose item is in `items`, over its span, drawing frames
     of the Clip's size: an image's pixels drawn, a video's frames decoded by `ffmpeg` (`VideoDecode`,
-    an Overlay's graded by its Grade; a Segment's is graded with its whole frame, `_segmented`) and drawn. A Scene's are drawn in seconds into the Scene, its frame n at n / fps from its start,
+    an Overlay's graded by its Grade and drawn through its Video Effects; a Segment's is graded and
+    effected with its whole frame, `_segmented`) and drawn. A Scene's are drawn in seconds into the Scene, its frame n at n / fps from its start,
     as the Scene's own frames are once brought to the Clip's frame rate (`_keyed_scene`)."""
     rate = _rate_value(plan)
     frame, drawn = (plan.width, plan.height), drawn_scale(plan)
@@ -1461,9 +1529,13 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
         event = plan.overlays[i]
         sampled = partial(overlay_at, event, drawn=drawn)
         if isinstance(item, Path):
-            # An Overlay's video plays forwards from its offset at its Speed for as long as it shows.
+            # An Overlay's video plays forwards from its offset at its Speed for as long as it shows; a
+            # looped image's one picture is read over its span.
             frames = PictureFrames(event.picture, frame=frame, sampled=sampled)
-            video = VideoDecode(ffmpeg, item, event.picture, event.start, event.end, event.time, rate, grade_filters(event.grade, alpha="g"))
+            video = VideoDecode(
+                ffmpeg, item, event.picture, event.start, event.end, event.time, rate, grade_filters(event.grade, alpha="g"), event.video_effects,
+                looped=event.image,
+            )
         else:
             frames, video = PictureFrames(event.picture, item, frame, sampled), None
         feeds[(kind, i)] = FrameFeed(frames, event.start, event.end, rate, video)
@@ -1476,13 +1548,16 @@ def _later(picture: Picture, by: float) -> Picture:
 
 
 def _picture(
-    picture: Picture, source: str, below: str, out: str, name: str, after: str = "", laid: str = "", graded: str = ""
+    picture: Picture, source: str, below: str, out: str, name: str, after: str = "", laid: str = "", graded: str = "",
+    blend: BlendMode = BlendMode.NORMAL, shows: str = "", spanned: tuple[float, float, float] | None = None,
 ) -> str:
     """Filters that draw `picture` of the frames `source` over the frames `below`, into `out`, in the
-    order of docs/adr/0007: crop, scale, flip, the filters `graded` (an Overlay's Grade, docs/adr/0013),
+    order of docs/adr/0007: crop, scale, flip, the filters `graded` (an Overlay's Grade, docs/adr/0013,
+    then its Video Effects, docs/adr/0014),
     corners and border (`_corners`), rotate with a transparent fill, shadow (`_shadow`), opacity, then
     laid over at its centre. Steps that change nothing are left out. `after` is more filters of the
-    picture's own frames, `laid` more options of the overlay; its own frames are labelled `name`."""
+    picture's own frames, `laid` more options of the overlay; its own frames are labelled `name`.
+    An Overlay's `blend` other than Normal lays it by its Blend Mode while it `shows`, `spanned` (`_laid`)."""
     crop = picture.crop
     steps = [] if (crop.width, crop.height) == picture.item_size else [f"crop={crop.width}:{crop.height}:{crop.x}:{crop.y}:exact=1"]
     steps.append(f"scale={picture.width}:{picture.height}:flags=lanczos")
@@ -1504,7 +1579,38 @@ def _picture(
         steps.append(f"colorchannelmixer=aa={picture.opacity:g}")
     x, y = picture.centre
     at = f"x={x:g}-overlay_w/2:y={y:g}-overlay_h/2"
-    return f"{source}{','.join(steps)}{after}[{name}];{below}[{name}]overlay={at}{':' if laid else ''}{laid}{out}"
+    return f"{source}{','.join(steps)}{after}[{name}];" + _laid(below, name, at, laid, out, blend, shows, spanned)
+
+
+def _laid(
+    below: str, name: str, at: str, laid: str, out: str, blend: BlendMode = BlendMode.NORMAL, shows: str = "",
+    spanned: tuple[float, float, float] | None = None,
+) -> str:
+    """Filters that lay the frames `name` over the frames `below` at `at`, with more options `laid` of
+    the overlay, into `out`. Normal covers what is under them by their alpha. Another Blend Mode
+    (docs/adr/0014): they are padded to the frame with transparency (laid over a transparent copy of
+    `below`: over a main of alpha 0, `overlay` takes their own colour wherever they have any alpha,
+    so `below`'s colour isn't in it and is counted once), their colour is blended over `below` by the mode in planar RGB while they `shows`, and
+    that is masked by their alpha and laid over `below`, so that the frame outside their alpha and
+    span stays as it was. A `scale` before each change of format keeps `below`'s own format: `split`
+    gives every branch the same one. With `spanned` (the start and end of their span in seconds, and
+    `below`'s frames a second), all that works on the span's frames of `below` alone (`_spanned`),
+    so that outside it the frame costs a pass through."""
+    if blend is BlendMode.NORMAL:
+        return f"{below}[{name}]overlay={at}{':' if laid else ''}{laid}{out}"
+    if spanned is None:
+        cut, padded = [], []
+    else:
+        start, end, fps = spanned
+        cut, padded = _spanned(start, end, f"between(t\\,{start:.3f}\\,{end:.3f})", fps)
+    return (
+        f"{below}split[{name}under][{name}worked];[{name}worked]{','.join([*cut, 'split'])}[{name}base][{name}clear]"
+        f";[{name}clear]scale,format=rgba,colorchannelmixer=aa=0[{name}canvas]"
+        f";[{name}canvas][{name}]overlay={at}:format=rgb{':' if laid else ''}{laid},format=gbrap,split[{name}top][{name}cut]"
+        f";[{name}base]scale,format=gbrap[{name}bottom];[{name}bottom][{name}top]blend=all_mode={BLEND_MODES[blend]}:{shows}[{name}mixed]"
+        f";[{name}cut]alphaextract[{name}mask];[{name}mixed][{name}mask]{','.join(['alphamerge', *padded])}[{name}blended]"
+        f";[{name}under][{name}blended]overlay=0:0:{shows}{out}"
+    )
 
 
 def _corners(picture: Picture, name: str) -> str:

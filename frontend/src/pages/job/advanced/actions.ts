@@ -1,4 +1,4 @@
-import type { Adjust, AdjustmentLayer, AudioEffect, AudioEffectKind, AudioEffectSetting, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind } from "../../../api";
+import type { Adjust, AdjustmentLayer, AudioEffect, AudioEffectKind, AudioEffectSetting, BlendMode, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind, VideoEffect, VideoEffectKind } from "../../../api";
 import { CLEAN_SWITCHES, isCleanSwitch, type CleanSwitchId } from "../../../audioEffects";
 import { adjusted, NEUTRAL_GRADE, relooked } from "../editor/grading";
 import { withJoinTransition } from "../editor/joinTransition";
@@ -533,7 +533,7 @@ export const canFreezeAt = (scene: PickContext, time: number) => freezable(scene
  * tail, the Freeze frame picked. The cut is at that frame, a Source Segment's too (not between Words
  * as Split's), so nothing is played twice or skipped. Keyframes are re-anchored on head and tail; a
  * video's Freeze frame takes its Framing as shown there, its Keyframes sampled into constants, and
- * every part keeps the Segment's Grade. A Transition after the Segment stays after the tail. The Main Track gets FREEZE_SECS longer at the
+ * every part keeps the Segment's Grade and Video Effects. A Transition after the Segment stays after the tail. The Main Track gets FREEZE_SECS longer at the
  * playhead, and on the Magnetic timeline the layers after it play later. Refused, with a notice, past the `longest` clip; null where none can be made.
  */
 export function freezeFrame(scene: PickContext, at: number, limits: { longest?: number } = {}): Outcome | null {
@@ -563,8 +563,9 @@ export function freezeFrame(scene: PickContext, at: number, limits: { longest?: 
     rekeyed<ClipSegment>({ ...segment, ...tailRange, id: idOf(scene) }, into, length),
   );
   const held: ClipSegment = { id: idOf(scene), start: cut, end: cut, hold: FREEZE_SECS };
-  // The held frame in its Segment's colour.
+  // The held frame in its Segment's colour and Video Effects.
   if (segment.grade) held.grade = segment.grade;
+  if (segment.video_effects) held.video_effects = segment.video_effects;
   if (segment.media) {
     held.media = segment.media;
     held.volume = segment.volume;
@@ -1271,11 +1272,26 @@ export function itemActions(
  * while the Adjust Track is locked, or in a Clip too short for one there.
  */
 export function addAdjustmentLayer(scene: PickContext, look: string, at: number): Outcome | null {
+  return newAdjustmentLayer(scene, at, { grade: relooked(NEUTRAL_GRADE, { look }) });
+}
+
+/**
+ * A new Adjustment Layer (ADR 0014) with a neutral Grade and Video Effect `kind` at its defaults at
+ * `at` (where an Effects card was dropped on the Timeline), as addAdjustmentLayer makes one for a
+ * Look. Null for a key (isKey: an Overlay's only), and as addAdjustmentLayer's.
+ */
+export function addEffectLayer(scene: PickContext, kind: VideoEffectKind, at: number): Outcome | null {
+  if (isKey(kind)) return null;
+  return newAdjustmentLayer(scene, at, { grade: NEUTRAL_GRADE, video_effects: [videoEffectOf(kind)] });
+}
+
+// A new Adjustment Layer of `made` (its Grade, and its Video Effects) at `at`: addAdjustmentLayer's.
+function newAdjustmentLayer(scene: PickContext, at: number, made: { grade: Grade; video_effects?: VideoEffect[] }): Outcome | null {
   if (scene.locked?.includes("adjust")) return null;
   const start = round(Math.max(0, Math.min(at, scene.duration - ITEM_MIN_SECS)));
   const secs = round(Math.min(NEW_LAYER_SECS, scene.duration - start));
   if (secs < ITEM_MIN_SECS) return null;
-  const layer: AdjustmentLayer = { id: idOf(scene), start, secs, grade: relooked(NEUTRAL_GRADE, { look }), strength: 100, fade_in: 0, fade_out: 0 };
+  const layer: AdjustmentLayer = { id: idOf(scene), start, secs, ...made, strength: 100, fade_in: 0, fade_out: 0 };
   const { edits } = scene;
   return { edits: { ...edits, adjustment_layers: [...listOf(edits, "adjustment"), layer] }, pick: picked({ kind: "adjustment", id: layer.id }) };
 }
@@ -1358,7 +1374,7 @@ export function addAudioEffect(scene: { edits: AdvancedEdits; pick: Pick }, soun
 }
 
 // Whether two entries are the same effect, switched the same way, at the same settings.
-const sameEntry = (a: AudioEffect, b: AudioEffect) =>
+const sameEntry = (a: AudioEffect | VideoEffect, b: AudioEffect | VideoEffect) =>
   a.id === b.id &&
   a.enabled === b.enabled &&
   Object.keys(a.params).length === Object.keys(b.params).length &&
@@ -1443,6 +1459,23 @@ function steppedSetting({ min, max, step }: AudioEffectSetting, value: number): 
   return Number(Math.min(Math.max(stepped, min), max).toFixed(6));
 }
 
+/**
+ * The eyedropper's pick: colour setting `key` of effect `effect` (a key) set to `colour` on the
+ * Overlays `overlays` (by id), in `edits` as they are when it is picked, not when it was armed: each
+ * Overlay's entry of that effect, wherever it is in its stack now. Null when none has it or none changes.
+ */
+export function setKeyColour(edits: AdvancedEdits, overlays: string[], effect: string, key: string, colour: string): AdvancedEdits | null {
+  if (!/^#[0-9a-f]{6}$/i.test(colour)) return null;
+  const value = colour.toUpperCase();
+  let changed = false;
+  const next = edits.overlays.map((overlay) => {
+    if (!overlays.includes(overlay.id) || !overlay.video_effects?.some((entry) => entry.id === effect && entry.params[key] !== value)) return overlay;
+    changed = true;
+    return { ...overlay, video_effects: overlay.video_effects.map((entry) => (entry.id === effect ? { ...entry, params: { ...entry.params, [key]: value } } : entry)) };
+  });
+  return changed ? { ...edits, overlays: next } : null;
+}
+
 /** Remove all effects: every picked stack emptied, whether they are the same or Mixed. Null when none with sound is picked. */
 export function removeAllAudioEffects(scene: { edits: AdvancedEdits; pick: Pick }, sounded: (media: string) => boolean): Outcome | null {
   return restacked(scene, sounded, () => []);
@@ -1499,4 +1532,159 @@ export function setCleanSetting(
 ): Outcome | null {
   const level = steppedSetting(setting, value);
   return restacked(scene, sounded, (stack) => stack.map((entry) => (entry.id === id ? { ...entry, params: { ...entry.params, [setting.key]: level } } : entry)));
+}
+
+// A picture with a stack of Video Effects (ADR 0014): a Segment (its whole frame), an Overlay or an
+// Adjustment Layer (what is under it).
+export type PictureRef = { kind: "segment" | "overlay" | "adjustment"; id: string };
+type Pictured = { id: string; video_effects?: VideoEffect[] };
+
+/** The picked pictures, which the Video Effects section acts on: the Segments, then the Overlays (videos and images), then the Adjustment Layers. */
+export function picturedItems({ edits, pick }: { edits: AdvancedEdits; pick: Pick }): PictureRef[] {
+  return [
+    ...edits.segments.filter((segment) => isPicked(pick, "segment", segment.id)).map((segment) => ({ kind: "segment" as const, id: segment.id })),
+    ...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)).map((overlay) => ({ kind: "overlay" as const, id: overlay.id })),
+    ...listOf(edits, "adjustment")
+      .filter((layer) => isPicked(pick, "adjustment", layer.id))
+      .map((layer) => ({ kind: "adjustment" as const, id: layer.id })),
+  ];
+}
+
+// The picture `ref` names in `edits`.
+const pictureOf = (edits: AdvancedEdits, ref: PictureRef): Pictured | undefined =>
+  (ref.kind === "segment" ? edits.segments : ref.kind === "overlay" ? edits.overlays : listOf(edits, "adjustment")).find((item) => item.id === ref.id);
+
+// Every picked picture given `change` of its stack (told what kind of picture it is; an emptied one
+// left without the field; one `change` leaves as it was, untouched, and a list with none changed kept
+// as it was); null when none is picked or none changes.
+function repictured(scene: { edits: AdvancedEdits; pick: Pick }, change: (stack: VideoEffect[], kind: PictureRef["kind"]) => VideoEffect[]): Outcome | null {
+  const { edits, pick } = scene;
+  const refs = picturedItems(scene);
+  const set = <T extends Pictured>(items: T[], kind: PictureRef["kind"]): T[] => {
+    let changed = false;
+    const next = items.map((item) => {
+      if (!refs.some((ref) => ref.kind === kind && ref.id === item.id)) return item;
+      const { video_effects, ...rest } = item;
+      const was = video_effects ?? [];
+      const stack = change(was, kind);
+      if (stack === was) return item;
+      changed = true;
+      return (stack.length ? { ...rest, video_effects: stack } : rest) as T;
+    });
+    return changed ? next : items;
+  };
+  const segments = set(edits.segments, "segment");
+  const overlays = set(edits.overlays, "overlay");
+  const layers = listOf(edits, "adjustment");
+  const adjustments = set(layers, "adjustment");
+  if (segments === edits.segments && overlays === edits.overlays && adjustments === layers) return null;
+  return { edits: { ...edits, segments, overlays, ...(adjustments !== layers && { adjustment_layers: adjustments }) }, pick };
+}
+
+/** A catalogue Video Effect's entry at its defaults, switched on. */
+export const videoEffectOf = (kind: VideoEffectKind): VideoEffect => ({
+  id: kind.id,
+  params: Object.fromEntries(kind.settings.map((setting) => [setting.key, setting.default])),
+  enabled: true,
+});
+
+/** Whether a catalogue Video Effect is a key (Cutout), which only an Overlay takes (ADR 0014). */
+export const isKey = (kind: { category: VideoEffectKind["category"] }): boolean => kind.category === "Cutout";
+
+/** Whether a key (isKey) can be added to the Pick: some picked picture is an Overlay. */
+export const keysPicked = (scene: { edits: AdvancedEdits; pick: Pick }): boolean => picturedItems(scene).some((ref) => ref.kind === "overlay");
+
+/**
+ * Add effect: `kind` at its defaults, switched on, at the bottom of every picked picture's stack, as
+ * one change; one that has it already is skipped (an effect is once in a stack), and so is a Segment
+ * or an Adjustment Layer for a key (isKey: an Overlay's only). Null when none is picked, or none takes it.
+ */
+export function addVideoEffect(scene: { edits: AdvancedEdits; pick: Pick }, kind: VideoEffectKind): Outcome | null {
+  return repictured(scene, (stack, picture) =>
+    stack.some((entry) => entry.id === kind.id) || (isKey(kind) && picture !== "overlay") ? stack : [...stack, videoEffectOf(kind)],
+  );
+}
+
+/** The stack of the picked pictures, when every one's is the same; "mixed" when they differ; null when none is picked. */
+export function sharedVideoStack(scene: { edits: AdvancedEdits; pick: Pick }): VideoEffect[] | "mixed" | null {
+  const { edits } = scene;
+  const stacks = picturedItems(scene).map((ref) => pictureOf(edits, ref)?.video_effects ?? []);
+  const [first, ...rest] = stacks;
+  if (!first) return null;
+  return rest.every((other) => other.length === first.length && other.every((entry, index) => sameEntry(entry, first[index]))) ? first : "mixed";
+}
+
+// Entry `index` of the picked stacks given `change` (its stack made anew), on every picked picture:
+// only while their stacks are the same (sharedVideoStack) and the entry is there; else null.
+function videoEntryChanged(scene: { edits: AdvancedEdits; pick: Pick }, index: number, change: (stack: VideoEffect[]) => VideoEffect[] | null): Outcome | null {
+  const shown = sharedVideoStack(scene);
+  if (shown === null || shown === "mixed" || !shown[index] || !change(shown)) return null;
+  return repictured(scene, (stack) => change(stack)!);
+}
+
+/** Entry `index` swapped with the one above (`delta` −1) or below (+1) in every picked stack. Null past the first or last. */
+export function moveVideoEffect(scene: { edits: AdvancedEdits; pick: Pick }, index: number, delta: -1 | 1): Outcome | null {
+  return videoEntryChanged(scene, index, (stack) => {
+    const to = index + delta;
+    if (to < 0 || to >= stack.length) return null;
+    const moved = [...stack];
+    [moved[index], moved[to]] = [moved[to], moved[index]];
+    return moved;
+  });
+}
+
+/** Entry `index` switched on or off in every picked stack, staying in its place. */
+export function setVideoEffectEnabled(scene: { edits: AdvancedEdits; pick: Pick }, index: number, enabled: boolean): Outcome | null {
+  return videoEntryChanged(scene, index, (stack) => stack.map((entry, at) => (at === index ? { ...entry, enabled } : entry)));
+}
+
+/** Entry `index` taken out of every picked stack. */
+export function removeVideoEffect(scene: { edits: AdvancedEdits; pick: Pick }, index: number): Outcome | null {
+  return videoEntryChanged(scene, index, (stack) => stack.filter((_, at) => at !== index));
+}
+
+/**
+ * Entry `index`'s `setting` set to `value` in every picked stack, on the setting's steps and within
+ * its range (its other settings as they were). A slider's drag is one change of its group.
+ */
+export function setVideoEffectSetting(scene: { edits: AdvancedEdits; pick: Pick }, index: number, setting: AudioEffectSetting, value: number): Outcome | null {
+  const level = steppedSetting(setting, value);
+  return videoEntryChanged(scene, index, (stack) => stack.map((entry, at) => (at === index ? { ...entry, params: { ...entry.params, [setting.key]: level } } : entry)));
+}
+
+/** Entry `index`'s colour setting `key` (a key's colour) set to `colour` (`#RRGGBB`, kept in capitals) in every picked stack. */
+export function setVideoEffectColour(scene: { edits: AdvancedEdits; pick: Pick }, index: number, key: string, colour: string): Outcome | null {
+  if (!/^#[0-9a-f]{6}$/i.test(colour)) return null;
+  const value = colour.toUpperCase();
+  return videoEntryChanged(scene, index, (stack) =>
+    stack[index].params[key] === value ? null : stack.map((entry, at) => (at === index ? { ...entry, params: { ...entry.params, [key]: value } } : entry)),
+  );
+}
+
+/** Remove all effects: every picked stack emptied, whether they are the same or Mixed. Null when none is picked or all are empty. */
+export function removeAllVideoEffects(scene: { edits: AdvancedEdits; pick: Pick }): Outcome | null {
+  return repictured(scene, (stack) => (stack.length ? [] : stack));
+}
+
+// The picked Overlays, which a Blend Mode is set on (ADR 0014).
+const blendedOverlays = ({ edits, pick }: { edits: AdvancedEdits; pick: Pick }) => edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id));
+
+/** The picked Overlays' Blend Mode, when every one's is the same (Normal when missing); "mixed" when they differ; null when no Overlay is picked. */
+export function sharedBlend(scene: { edits: AdvancedEdits; pick: Pick }): BlendMode | "mixed" | null {
+  const [first, ...rest] = blendedOverlays(scene).map((overlay) => overlay.blend ?? "normal");
+  if (!first) return null;
+  return rest.every((blend) => blend === first) ? first : "mixed";
+}
+
+/** Every picked Overlay laid by `blend`, as one change (Normal leaves one without the field); null when no Overlay is picked or none changes. */
+export function setBlend(scene: { edits: AdvancedEdits; pick: Pick }, blend: BlendMode): Outcome | null {
+  const { edits, pick } = scene;
+  const picked = blendedOverlays(scene);
+  if (picked.every((overlay) => (overlay.blend ?? "normal") === blend)) return null;
+  const overlays = edits.overlays.map((overlay) => {
+    if (!picked.includes(overlay) || (overlay.blend ?? "normal") === blend) return overlay;
+    const { blend: _was, ...rest } = overlay;
+    return blend === "normal" ? rest : { ...rest, blend };
+  });
+  return { edits: { ...edits, overlays }, pick };
 }

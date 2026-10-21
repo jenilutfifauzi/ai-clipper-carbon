@@ -156,8 +156,8 @@ function Ghost({
         ) : own ? (
           <CopiedSourceSegment plan={plan} index={index} end={segment.end} playback={playback} src={src} jobId={jobId} fade={transition} />
         ) : (
-          // In its Segment's Grade, as the decks draw it (MediaSegment and CopiedSourceSegment grade themselves).
-          <DecksGraded grade={segment.grade}>
+          // In its Segment's Grade and Video Effects, as the decks draw it (MediaSegment and CopiedSourceSegment draw their own).
+          <DecksGraded grade={segment.grade} effects={segment.video_effects} start={segment.start}>
             {[master, follower].map((ref, slot) => (
               <PanelView key={slot} videoRef={ref} src={src} plan={plan} {...slotView(scene, slot)} playback={ghost} muted={slot > 0} />
             ))}

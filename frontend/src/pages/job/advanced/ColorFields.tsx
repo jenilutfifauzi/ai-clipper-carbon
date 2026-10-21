@@ -46,7 +46,7 @@ const GROUPS: { title: string; dials: DialSpec[] }[] = [
       percent("blacks", "Blacks"),
     ],
   },
-  { title: "Effects", dials: [percent("sharpen", "Sharpen", 0), percent("fade", "Fade", 0), percent("vignette", "Vignette", 0)] },
+  { title: "Detail", dials: [percent("sharpen", "Sharpen", 0), percent("fade", "Fade", 0), percent("vignette", "Vignette", 0)] },
 ];
 
 // The value of the Look picker's "no Look".

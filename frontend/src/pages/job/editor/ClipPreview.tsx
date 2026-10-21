@@ -26,7 +26,7 @@ import { cssFontSize, fontFamily } from "../../../fonts";
 import { useLooks } from "../../../looks";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
-import { allStroke, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
+import { allStroke, FRAME, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewEffected } from "./PreviewEffected";
 import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays } from "./PreviewOverlays";
@@ -37,7 +37,9 @@ import { placedLayer, useLayerPicture, wantedPicture, type PlacedLayer } from ".
 import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./layerStage";
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
-import { DecksGraded, GradeFilters } from "./GradeFilters";
+import { DecksGraded, EffectFilters, EffectsClock, GradeFilters } from "./GradeFilters";
+import { EyedropperLayer } from "./EyedropperLayer";
+import { pictureBox } from "./videoEffects";
 import { PreviewAdjusted } from "./PreviewAdjustments";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
 import { framePoint, type Size } from "./pictureGestures";
@@ -208,7 +210,7 @@ export function ClipPreview({
   const takes = (data: DataTransfer) => !!controls?.drop && controls.drop.types.some((type) => data.types.includes(type));
   const scene = drawn?.scenes[sceneIndex];
 
-  const frame = (
+  const stageFrame = (
     <div
       ref={stage}
       className={cx(
@@ -236,6 +238,14 @@ export function ClipPreview({
       }}
     >
       {drawn && <GradeFilters grades={[...drawn.segments, ...drawn.overlays, drawn].map((item) => item.grade)} />}
+      {drawn && (
+        <EffectFilters
+          items={[
+            ...drawn.segments.map((segment) => ({ effects: segment.video_effects, box: FRAME, start: segment.start })),
+            ...drawn.overlays.map((event) => ({ effects: event.video_effects, box: pictureBox(event.picture), start: event.start })),
+          ]}
+        />
+      )}
       {/* The Main Track and the Overlays under the Adjustment Layers showing (ADR 0013). */}
       <PreviewAdjusted plan={drawn} playback={playback}>
         {/* The pictures of the Segments, hidden (still playing their sound) while the Video Track is, in the
@@ -244,8 +254,12 @@ export function ClipPreview({
           <DecksGraded grade={drawn?.grade}>
             {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
             <div ref={incoming} className="absolute inset-0">
-              {/* The decks' panels in the shown Segment's Grade (ADR 0013): its whole frame, black included. */}
-              <DecksGraded grade={drawn?.segments[shownSegment]?.grade}>
+              {/* The decks' panels in the shown Segment's Grade and Video Effects (ADR 0013, 0014): its whole frame, black included. */}
+              <DecksGraded
+                grade={drawn?.segments[shownSegment]?.grade}
+                effects={drawn?.segments[shownSegment]?.video_effects}
+                start={drawn?.segments[shownSegment]?.start}
+              >
                 {decks.map((refs, deck) =>
                   refs.map((ref, slot) => (
                     <PanelView
@@ -317,6 +331,8 @@ export function ClipPreview({
         />
       )}
       {plan && controls && <StageHandles plan={plan} playback={playback} edit={edit} scale={scale} />}
+      {/* Chroma key's eyedropper, while the Inspector has it armed, takes the next click. */}
+      {plan && controls && <EyedropperLayer plan={drawn} playback={playback} stage={stage} />}
       {dropOver && <div aria-hidden className="pointer-events-none absolute inset-0 bg-accent/10" />}
       {preview && editing && retype && (
         <InlineText
@@ -333,6 +349,8 @@ export function ClipPreview({
       <PreviewEffected plan={plan} playback={playback} />
     </div>
   );
+  // Its Video Effects that change with time follow the playback.
+  const frame = <EffectsClock playback={playback}>{stageFrame}</EffectsClock>;
   if (fit) {
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-2">

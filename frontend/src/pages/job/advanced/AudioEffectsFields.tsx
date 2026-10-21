@@ -1,12 +1,13 @@
 import { ChevronDown, ChevronUp, Loader2, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
-import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
-import type { AudioEffect, AudioEffectKind, AudioEffectSetting } from "../../../api";
+import { Fragment, useId, useState, type KeyboardEvent, type ReactNode } from "react";
+import { isColourSetting, type AudioEffect, type AudioEffectKind, type AudioEffectSetting, type ColourSetting, type VideoEffectSetting } from "../../../api";
 import { CLEAN_SWITCHES, isCleanSwitch, libraryOf, useAudioEffects, type CleanSwitchId } from "../../../audioEffects";
 import { Button, buttonClass } from "../../../components/Button";
 import { useMenu } from "../../../components/Menu";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { cx } from "../../../format";
+import { starredOnly, useStarredEffects } from "../../../starredEffects";
 import { Mixed } from "../editor/StyleFields";
 import {
   addAudioEffect,
@@ -26,6 +27,7 @@ import {
 } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import type { Pick } from "./pick";
+import { NO_STARRED, StarButton, StarredChip } from "./Stars";
 
 /** What the Audio Effects section shows and does (AudioEffectsFields' props but the catalogue). */
 export interface AudioEffectControls {
@@ -84,7 +86,7 @@ export function audioEffectChanges(
 }
 
 // A setting's value as its slider shows it: to its step's decimals, with its unit.
-function formatSetting({ step, unit }: AudioEffectSetting) {
+export function formatSetting({ step, unit }: AudioEffectSetting) {
   const decimals = Math.min(3, (String(step).split(".")[1] ?? "").length);
   return (value: number) => `${value.toFixed(decimals)}${unit ? (unit === "%" ? "%" : ` ${unit}`) : ""}`;
 }
@@ -205,9 +207,13 @@ function EffectRows({ stack, kinds, controls }: { stack: AudioEffect[]; kinds: A
   );
 }
 
+// What an effect stack's row does (an Audio Effect's, or a Video Effect's: VideoEffectsFields).
+export type RowControls = { [K in "onMove" | "onEnabled" | "onRemove" | "onSetting"]: AudioEffectControls[K] };
+
 // One entry of the stack: its name, on/off, up, down, remove; its intensity slider; and its other
-// settings in a "More" popover.
-function EffectRow({
+// settings in a "More" popover. Also a Video Effect's row (VideoEffectsFields), whose colour setting
+// (a key's colour) is drawn by `colourField`.
+export function EffectRow({
   entry,
   kind,
   index,
@@ -217,16 +223,29 @@ function EffectRow({
   onEnabled,
   onRemove,
   onSetting,
-}: AudioEffectControls & { entry: AudioEffect; kind: AudioEffectKind | undefined; index: number; first: boolean; last: boolean }) {
+  colourField,
+}: RowControls & {
+  entry: AudioEffect | { id: string; params: Record<string, number | string>; enabled: boolean };
+  kind: { name: string; description: string; settings: VideoEffectSetting[] } | undefined;
+  index: number;
+  first: boolean;
+  last: boolean;
+  colourField?: (setting: ColourSetting, value: string) => ReactNode;
+}) {
   const name = kind?.name ?? entry.id;
   const nameId = useId();
-  const intensity = kind?.settings.find((setting) => setting.intensity);
+  const intensity = kind?.settings.find((setting): setting is AudioEffectSetting => setting.intensity && !isColourSetting(setting));
   const others = kind?.settings.filter((setting) => setting !== intensity) ?? [];
+  const field = (setting: VideoEffectSetting) => {
+    if (!isColourSetting(setting)) return slider(setting);
+    const value = entry.params[setting.key];
+    return <Fragment key={setting.key}>{colourField?.(setting, typeof value === "string" ? value : setting.default)}</Fragment>;
+  };
   const slider = (setting: AudioEffectSetting) => (
     <Slider
       key={setting.key}
       label={setting.label}
-      value={entry.params[setting.key] ?? setting.default}
+      value={Number(entry.params[setting.key] ?? setting.default)}
       min={setting.min}
       max={setting.max}
       step={setting.step}
@@ -244,7 +263,7 @@ function EffectRow({
           </span>
         </Switch>
         <div className="ml-auto flex shrink-0">
-          {others.length > 0 && <MoreSettings name={name} settings={others} slider={slider} />}
+          {others.length > 0 && <MoreSettings name={name} settings={others} field={field} />}
           <Button variant="ghost" size="xs" className={ROW_BUTTON} onClick={() => onMove(index, -1)} disabled={first} aria-label={`Move ${name} up`}>
             <ChevronUp aria-hidden size={16} />
           </Button>
@@ -262,16 +281,16 @@ function EffectRow({
 }
 
 // A row's icon buttons (More, up, down, remove), a finger's size in the phone's sheet.
-const ROW_BUTTON = "in-data-sheet:min-h-11 in-data-sheet:min-w-11";
+export const ROW_BUTTON = "in-data-sheet:min-h-11 in-data-sheet:min-w-11";
 
 // Escape in a popover closes it (the browser's light dismiss), and goes no further: not to the
 // editor's "Pick nothing", which would take the Inspector away with it.
-const keepEscape = (event: KeyboardEvent) => {
+export const keepEscape = (event: KeyboardEvent) => {
   if (event.key === "Escape") event.stopPropagation();
 };
 
 // An effect's settings other than its intensity, in a popover from its "More" button.
-function MoreSettings({ name, settings, slider }: { name: string; settings: AudioEffectSetting[]; slider: (setting: AudioEffectSetting) => ReactNode }) {
+function MoreSettings({ name, settings, field }: { name: string; settings: VideoEffectSetting[]; field: (setting: VideoEffectSetting) => ReactNode }) {
   const { buttonRef, menuRef, open, toggle } = useMenu();
   const id = useId();
   return (
@@ -297,19 +316,22 @@ function MoreSettings({ name, settings, slider }: { name: string; settings: Audi
         className="glass fixed inset-auto m-0 w-72 max-w-[calc(100vw-1rem)] flex-col gap-3 rounded-[10px] bg-bg/90! p-3 text-text [&:popover-open]:flex"
       >
         <p className="text-sm font-semibold">{name}</p>
-        {settings.map(slider)}
+        {settings.map(field)}
       </div>
     </>
   );
 }
 
 // Add effect: a popover of the library (libraryOf), searched as it is typed; a click on an effect
-// adds it at the bottom of the stack and closes the popover.
+// adds it at the bottom of the stack and closes the popover. Each has a star, and the Starred chip
+// keeps the library to the starred ones.
 function AddEffect({ kinds, onAdd }: { kinds: AudioEffectKind[] | null; onAdd: (kind: AudioEffectKind) => void }) {
   const { buttonRef, menuRef, open, hide, toggle } = useMenu();
   const [query, setQuery] = useState("");
+  const stars = useStarredEffects();
+  const [starredShown, setStarredShown] = useState(false);
   const id = useId();
-  const groups = kinds ? libraryOf(kinds, query) : [];
+  const groups = kinds ? libraryOf(starredOnly(kinds, stars, starredShown), query) : [];
   return (
     <>
       <button ref={buttonRef} type="button" className={cx(buttonClass("ghost", "sm"), "in-data-sheet:min-h-11")} onClick={toggle} aria-expanded={open} aria-controls={id} aria-haspopup="dialog">
@@ -325,6 +347,7 @@ function AddEffect({ kinds, onAdd }: { kinds: AudioEffectKind[] | null; onAdd: (
         onKeyDown={keepEscape}
         className="glass fixed inset-auto m-0 max-h-[min(28rem,calc(100vh-1rem))] w-72 max-w-[calc(100vw-1rem)] flex-col gap-2 overflow-y-auto rounded-[10px] bg-bg/90! p-2 text-text [&:popover-open]:flex"
       >
+        <StarredChip on={starredShown} onChange={setStarredShown} />
         <label className="flex min-h-10 items-center gap-2 rounded-[10px] border border-border bg-fill px-2 in-data-sheet:min-h-11">
           <Search aria-hidden size={15} className="shrink-0 text-muted" />
           <input
@@ -340,24 +363,26 @@ function AddEffect({ kinds, onAdd }: { kinds: AudioEffectKind[] | null; onAdd: (
         {kinds === null ? (
           <p className="px-2 py-1 text-sm text-muted">Loading the effects…</p>
         ) : groups.length === 0 ? (
-          <p className="px-2 py-1 text-sm text-muted">No effect matches “{query.trim()}”.</p>
+          <p className="px-2 py-1 text-sm text-muted">{starredShown && !query.trim() ? NO_STARRED : `No effect matches “${query.trim()}”.`}</p>
         ) : (
           groups.map(({ group, effects }) => (
             <div key={group} role="group" aria-label={group} className="flex flex-col">
               <p className="px-2 pt-1 pb-0.5 text-xs font-semibold text-muted">{group}</p>
               {effects.map((kind) => (
-                <button
-                  key={kind.id}
-                  type="button"
-                  onClick={() => {
-                    onAdd(kind);
-                    hide();
-                  }}
-                  className="flex min-h-9 flex-col items-start rounded-md px-2 py-1 text-left in-data-sheet:min-h-11 in-data-sheet:justify-center hover:bg-fill focus-visible:outline-2 focus-visible:outline-focus"
-                >
-                  <span className="text-sm">{kind.name}</span>
-                  {kind.description && <span className="text-xs text-pretty text-muted">{kind.description}</span>}
-                </button>
+                <div key={kind.id} className="flex items-start gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onAdd(kind);
+                      hide();
+                    }}
+                    className="flex min-h-9 flex-1 flex-col items-start rounded-md px-2 py-1 text-left in-data-sheet:min-h-11 in-data-sheet:justify-center hover:bg-fill focus-visible:outline-2 focus-visible:outline-focus"
+                  >
+                    <span className="text-sm">{kind.name}</span>
+                    {kind.description && <span className="text-xs text-pretty text-muted">{kind.description}</span>}
+                  </button>
+                  <StarButton id={kind.id} name={kind.name} starred={!!stars?.includes(kind.id)} />
+                </div>
               ))}
             </div>
           ))

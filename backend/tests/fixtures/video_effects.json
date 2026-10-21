@@ -1,0 +1,289 @@
+[
+  {
+    "id": "gaussian-blur",
+    "kind": "video",
+    "name": "Gaussian blur",
+    "category": "Blur",
+    "order": 10,
+    "description": "A soft, even blur.",
+    "settings": [
+      {
+        "key": "radius",
+        "label": "Radius",
+        "min": 1,
+        "max": 50,
+        "default": 10,
+        "step": 1,
+        "unit": "px",
+        "intensity": true
+      }
+    ]
+  },
+  {
+    "id": "motion-blur",
+    "kind": "video",
+    "name": "Motion blur",
+    "category": "Blur",
+    "order": 20,
+    "description": "A streak along a line, as if the camera panned.",
+    "settings": [
+      {
+        "key": "length",
+        "label": "Length",
+        "min": 2,
+        "max": 60,
+        "default": 18,
+        "step": 1,
+        "unit": "px",
+        "intensity": true
+      },
+      {
+        "key": "angle",
+        "label": "Angle",
+        "min": -90,
+        "max": 90,
+        "default": 0,
+        "step": 1,
+        "unit": "°",
+        "intensity": false
+      }
+    ]
+  },
+  {
+    "id": "pixelate",
+    "kind": "video",
+    "name": "Pixelate",
+    "category": "Distort",
+    "order": 10,
+    "description": "Big square pixels.",
+    "settings": [
+      {
+        "key": "size",
+        "label": "Size",
+        "min": 2,
+        "max": 64,
+        "default": 16,
+        "step": 1,
+        "unit": "px",
+        "intensity": true
+      }
+    ]
+  },
+  {
+    "id": "chromatic-aberration",
+    "kind": "video",
+    "name": "Chromatic aberration",
+    "category": "Distort",
+    "order": 20,
+    "description": "Red and blue pulled apart towards the edges, the colour fringing of a cheap lens.",
+    "settings": [
+      {
+        "key": "shift",
+        "label": "Shift",
+        "min": 1,
+        "max": 24,
+        "default": 4,
+        "step": 1,
+        "unit": "px",
+        "intensity": true
+      }
+    ]
+  },
+  {
+    "id": "fisheye",
+    "kind": "video",
+    "name": "Fisheye",
+    "category": "Distort",
+    "order": 30,
+    "description": "The bulge of a very wide lens.",
+    "settings": [
+      {
+        "key": "strength",
+        "label": "Strength",
+        "min": 5,
+        "max": 100,
+        "default": 50,
+        "step": 1,
+        "unit": "%",
+        "intensity": true
+      }
+    ]
+  },
+  {
+    "id": "glow",
+    "kind": "video",
+    "name": "Glow",
+    "category": "Light",
+    "order": 10,
+    "description": "A soft bloom around the bright parts of the picture.",
+    "settings": [
+      {
+        "key": "amount",
+        "label": "Amount",
+        "min": 10,
+        "max": 100,
+        "default": 45,
+        "step": 1,
+        "unit": "%",
+        "intensity": true
+      }
+    ]
+  },
+  {
+    "id": "bloom-pulse",
+    "kind": "video",
+    "name": "Bloom pulse",
+    "category": "Light",
+    "order": 20,
+    "description": "A soft bloom over the highlights that breathes in and out.",
+    "settings": [
+      {
+        "key": "amount",
+        "label": "Amount",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "step": 1,
+        "unit": "%",
+        "intensity": true
+      },
+      {
+        "key": "speed",
+        "label": "Speed",
+        "min": 0.5,
+        "max": 5,
+        "default": 2,
+        "step": 0.1,
+        "unit": "",
+        "intensity": false
+      }
+    ]
+  },
+  {
+    "id": "posterize",
+    "kind": "video",
+    "name": "Posterize",
+    "category": "Stylize",
+    "order": 10,
+    "description": "Flat bands of colour, like a screen print.",
+    "settings": [
+      {
+        "key": "levels",
+        "label": "Levels",
+        "min": 2,
+        "max": 8,
+        "default": 4,
+        "step": 1,
+        "unit": "",
+        "intensity": true
+      }
+    ]
+  },
+  {
+    "id": "film-grain",
+    "kind": "video",
+    "name": "Film grain",
+    "category": "Stylize",
+    "order": 20,
+    "description": "Dancing grain, the texture of film stock.",
+    "settings": [
+      {
+        "key": "amount",
+        "label": "Amount",
+        "min": 2,
+        "max": 40,
+        "default": 12,
+        "step": 1,
+        "unit": "",
+        "intensity": true
+      }
+    ]
+  },
+  {
+    "id": "chroma-key",
+    "kind": "video",
+    "name": "Chroma key",
+    "category": "Cutout",
+    "order": 10,
+    "description": "Takes out a screen's colour, green by default, so what is under the picture shows.",
+    "settings": [
+      {
+        "key": "color",
+        "label": "Key colour",
+        "type": "color",
+        "default": "#00B140",
+        "intensity": false
+      },
+      {
+        "key": "similarity",
+        "label": "Similarity",
+        "min": 1,
+        "max": 60,
+        "default": 30,
+        "step": 1,
+        "unit": "%",
+        "intensity": true
+      },
+      {
+        "key": "softness",
+        "label": "Softness",
+        "min": 0,
+        "max": 50,
+        "default": 10,
+        "step": 1,
+        "unit": "%",
+        "intensity": false
+      },
+      {
+        "key": "spill",
+        "label": "Spill",
+        "min": 0,
+        "max": 100,
+        "default": 50,
+        "step": 1,
+        "unit": "%",
+        "intensity": false
+      }
+    ]
+  },
+  {
+    "id": "luma-key",
+    "kind": "video",
+    "name": "Luma key",
+    "category": "Cutout",
+    "order": 20,
+    "description": "Takes out the dark of the picture, a logo's black, or inverted, the light.",
+    "settings": [
+      {
+        "key": "threshold",
+        "label": "Threshold",
+        "min": 0,
+        "max": 100,
+        "default": 10,
+        "step": 1,
+        "unit": "%",
+        "intensity": true
+      },
+      {
+        "key": "softness",
+        "label": "Softness",
+        "min": 0,
+        "max": 50,
+        "default": 10,
+        "step": 1,
+        "unit": "%",
+        "intensity": false
+      },
+      {
+        "key": "invert",
+        "label": "Invert",
+        "min": 0,
+        "max": 1,
+        "default": 0,
+        "step": 1,
+        "unit": "",
+        "intensity": false
+      }
+    ]
+  }
+]

@@ -120,6 +120,7 @@ from app.candidates import (
     PICTURE_KEYS,
     Background,
     BackgroundKind,
+    BlendMode,
     Border,
     Crop,
     CueEdit,
@@ -145,6 +146,7 @@ from app.candidates import (
     WordEdit,
 )
 from app.audio_effects import AudioEffect, enabled_effects
+from app.video_effects import VideoEffect, enabled_video_effects, scaled_effects
 from app.config import CameraTuning, DuckTuning
 from app.ducking import Span, duck_at, ducked_stretches, heard_words, speech_spans, touching
 from app.emoji import IMAGE_SET, clusters, image_of, is_emoji
@@ -323,6 +325,8 @@ class SegmentInput:
     grade: Grade = Grade()
     # Its sound's Audio Effects (docs/adr/0017), checked, in order; the plan keeps the enabled ones.
     audio_effects: list[AudioEffect] = field(default_factory=list)
+    # Its frame's Video Effects (docs/adr/0014), checked, in order; the plan keeps the enabled ones.
+    video_effects: list[VideoEffect] = field(default_factory=list)
 
     @property
     def time(self) -> SegmentTime:
@@ -632,6 +636,9 @@ class SegmentPlan:
     # Its sound's enabled Audio Effects (docs/adr/0017), in order, heard after its Speed and before
     # its volume, Keyframes and fades.
     audio_effects: list[AudioEffect] = field(default_factory=list)
+    # Its frame's enabled Video Effects (docs/adr/0014), in order, drawn after its Grade and before the
+    # joins; their sizes the 1080x1920 frame's (scale 1).
+    video_effects: list[VideoEffect] = field(default_factory=list)
 
     @property
     def time(self) -> SegmentTime:
@@ -706,7 +713,8 @@ class AdjustmentEvent:
     """An Adjustment Layer as drawn (docs/adr/0013): its `grade` (as given, folded by the renderer and
     the preview) laid over the Main Track and the Overlays from `start` to `end` seconds into the
     Clip, mixed over the picture as it was by `strength` percent times its ramp, up over `fade_in`
-    from its start and down over `fade_out` to its end. `id` is the layer's."""
+    from its start and down over `fade_out` to its end. Its `video_effects` (docs/adr/0014) are drawn
+    after its Grade and mixed with it. `id` is the layer's."""
 
     id: str
     start: float
@@ -715,6 +723,8 @@ class AdjustmentEvent:
     strength: float = 100.0
     fade_in: float = 0.0
     fade_out: float = 0.0
+    # Its enabled Video Effects, in order, after its Grade; their sizes the 1080x1920 frame's (scale 1).
+    video_effects: list[VideoEffect] = field(default_factory=list)
 
 
 def adjustment_event(layer: AdjustmentLayer, duration: float) -> AdjustmentEvent | None:
@@ -726,7 +736,8 @@ def adjustment_event(layer: AdjustmentLayer, duration: float) -> AdjustmentEvent
     end = round(min(layer.start + layer.secs, duration), 3)
     half = (end - start) / 2
     return AdjustmentEvent(
-        layer.id, start, end, layer.grade, layer.strength, round(min(layer.fade_in, half), 3), round(min(layer.fade_out, half), 3)
+        layer.id, start, end, layer.grade, layer.strength, round(min(layer.fade_in, half), 3), round(min(layer.fade_out, half), 3),
+        enabled_video_effects(layer.video_effects),
     )
 
 
@@ -736,7 +747,9 @@ class OverlayEvent:
     into it, (end − start) × `speed` of it, its sound's pitch following the Speed with `pitch`; that
     range played backwards when `reverse`) drawn as `picture` says, from `start` to `end` seconds into
     the Clip, coming on and going off by its Overlay's animations, its picture graded by `grade`
-    (docs/adr/0013; as given, folded by the renderer and the preview). `id` is the Overlay's."""
+    (docs/adr/0013; as given, folded by the renderer and the preview), then drawn through its
+    `video_effects` (docs/adr/0014), and laid over what is under it by its `blend`. `id` is the
+    Overlay's."""
 
     media: str
     picture: Picture
@@ -752,6 +765,10 @@ class OverlayEvent:
     animation_out: Animation = Animation.NONE
     animation_ms: int = 300
     grade: Grade = Grade()
+    # Its enabled Video Effects, in order, after its Grade; their sizes already times its scale
+    # (`overlay_scale`), as drawn.
+    video_effects: list[VideoEffect] = field(default_factory=list)
+    blend: BlendMode = BlendMode.NORMAL
 
     @property
     def time(self) -> SegmentTime:
@@ -1127,7 +1144,7 @@ def plan_render(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
                     given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, hold, given.pitch,
                     fade_in=fade_in, fade_out=fade_out, muted=given.muted, grade=given.grade,
-                    audio_effects=enabled_effects(given.audio_effects),
+                    audio_effects=enabled_effects(given.audio_effects), video_effects=enabled_video_effects(given.video_effects),
                 )
             )
             at, before = round(at + length, 3), length
@@ -1753,7 +1770,14 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     return OverlayEvent(
         overlay.media, picture, start, end, offset, item.duration is None, overlay.id, overlay.speed, overlay.pitch, overlay.reverse,
         overlay.animation_in, overlay.animation_out, overlay.animation_ms, overlay.grade,
+        scaled_effects(enabled_video_effects(overlay.video_effects), overlay_scale(overlay.transform)), overlay.blend,
     )
+
+
+def overlay_scale(transform: Transform) -> float:
+    """How many times its fitted size an Overlay is drawn, for its Video Effects' sizes (docs/adr/0014):
+    the larger of its scale times its stretch on each axis."""
+    return transform.scale * max(transform.stretch_x, transform.stretch_y)
 
 
 def with_motion(

@@ -4,19 +4,21 @@ import { cx } from "../format";
 const HEX = /^#[0-9a-f]{6}$/i;
 
 // A colour: the system picker in a swatch, and its #RRGGBB code, editable. A code is taken once it
-// is a whole colour.
+// is a whole colour. `after` goes beside the code (a key colour's eyedropper).
 export function ColorField({
   label,
   value,
   onChange,
   marker,
   className,
+  after,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   marker?: ReactNode;
   className?: string;
+  after?: ReactNode;
 }) {
   const id = useId();
   const [typed, setTyped] = useState<string | null>(null);
@@ -39,6 +41,7 @@ export function ColorField({
         />
         <input
           id={`${id}-code`}
+          aria-label={`${label}: code`}
           value={typed ?? value}
           maxLength={7}
           spellCheck={false}
@@ -54,6 +57,7 @@ export function ColorField({
             typed !== null && !HEX.test(typed) ? "border-accent" : "border-border",
           )}
         />
+        {after}
       </div>
     </div>
   );
