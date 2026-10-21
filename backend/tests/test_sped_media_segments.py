@@ -11,7 +11,8 @@ import pytest
 
 from app.candidates import Framing, KeyProperty
 from app.pictures import cover_scale
-from app.planner import FRAME, SegmentInput, plan_render
+from app.canvas import PORTRAIT
+from app.planner import SegmentInput, plan_render
 from app.renderer import tempo_stages
 from test_keyed_volume import tone_level
 from test_keyframes import clip_of
@@ -25,7 +26,7 @@ from test_review import candidate_url, patch
 VIDEO = "ab" * 16
 # The counter video at 30 fps (the Media Library's rate), its luma STEP more each frame, and its tone.
 FPS, STEP, TONE = 30, 3, 1000
-COVER = {"transform": {"scale": cover_scale(640, 360, FRAME)}}
+COVER = {"transform": {"scale": cover_scale(640, 360, PORTRAIT.size)}}
 
 
 @pytest.fixture(scope="session")

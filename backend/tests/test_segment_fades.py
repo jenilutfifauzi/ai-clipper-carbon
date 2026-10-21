@@ -11,7 +11,8 @@ import pytest
 
 from app.candidates import Framing, MusicClip, TransitionKind
 from app.config import FONTS_DIR, RenderTuning
-from app.planner import FRAME, Join, MediaInfo, SegmentInput, gain_at, plan_render
+from app.canvas import PORTRAIT
+from app.planner import Join, MediaInfo, SegmentInput, gain_at, plan_render
 from app.pictures import cover_scale
 from app.renderer import Renderer
 from test_keyed_volume import tone_level
@@ -30,7 +31,7 @@ VIDEO = "ab" * 16
 SONG = "ef" * 16
 # The video's tone, apart from the Source's 440 Hz.
 TONE = 1000
-COVER = {"transform": {"scale": cover_scale(640, 360, FRAME)}}
+COVER = {"transform": {"scale": cover_scale(640, 360, PORTRAIT.size)}}
 
 
 def video(start: float, end: float, **fields) -> SegmentInput:

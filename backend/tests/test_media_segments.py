@@ -17,8 +17,9 @@ from app.config import CameraTuning
 from app.media import MediaItem, MediaKind
 from app.migration import migrated_candidate, migrated_clip, migrated_segment
 from app.pictures import cover_scale
+from app.canvas import PORTRAIT
 from app.planner import (
-    FRAME, OUTPUT_HEIGHT, OUTPUT_WIDTH, Picture, SceneLayout, SegmentInput, _filled, _fitted, framed_scene, on_frame, plan_render,
+    Picture, SceneLayout, SegmentInput, _filled, _fitted, framed_scene, on_frame, plan_render,
 )
 from app.rendering import candidate_plan
 from app.styles import PresetStore
@@ -56,9 +57,9 @@ def test_a_media_segment_is_its_picture_over_its_background_and_has_no_captions(
     # At scale 1 (the default) a 9:16 video fills the frame, over its Background: a 9:16 crop of
     # it, blurred, filling the frame.
     assert intro.layout is SceneLayout.MEDIA
-    assert (intro.picture.width, intro.picture.height, intro.picture.centre) == (OUTPUT_WIDTH, OUTPUT_HEIGHT, (540, 960))
+    assert (intro.picture.width, intro.picture.height, intro.picture.centre) == (PORTRAIT.width, PORTRAIT.height, (540, 960))
     [background] = intro.panels
-    assert background.blur and (background.area.width, background.area.height) == (OUTPUT_WIDTH, OUTPUT_HEIGHT)
+    assert background.blur and (background.area.width, background.area.height) == (PORTRAIT.width, PORTRAIT.height)
     assert background.crop_width / background.crop_height == pytest.approx(9 / 16, abs=0.01)
     # At half its fitted size over a colour: in the middle of the frame, with no panel under it.
     assert (outro.panels, outro.colour) == ([], "#123456")
@@ -84,7 +85,7 @@ def test_an_old_filled_or_fitted_segment_becomes_a_framing_that_shows_the_same_b
     for size in ((1280, 720), (640, 360), (720, 1280), (1000, 1000)):
         filled = migrated_segment(old | {"fit": "fill"}, {INTRO: size})
         fitted = migrated_segment(old | {"fit": "blur"}, {INTRO: size})
-        assert filled == old | {"framing": {"transform": {"scale": cover_scale(*size, FRAME)}, "background": {"kind": "blur"}}}
+        assert filled == old | {"framing": {"transform": {"scale": cover_scale(*size, PORTRAIT.size)}, "background": {"kind": "blur"}}}
         assert fitted == old | {"framing": {"transform": {"scale": 1.0}, "background": {"kind": "blur"}}}
         assert migrated_segment(filled, {}) == filled
         [filled_scene, fitted_scene] = (
@@ -92,19 +93,19 @@ def test_an_old_filled_or_fitted_segment_becomes_a_framing_that_shows_the_same_b
         )
         # Filled, it was the largest 9:16 crop from the middle of the video, filling the frame: so
         # is the part of its picture on the frame now.
-        was = _filled(*size, 0.0)
+        was = _filled(*size, 0.0, PORTRAIT)
         shown = on_frame(filled_scene.picture)
-        assert (shown.width, shown.height) == (OUTPUT_WIDTH, OUTPUT_HEIGHT), size
+        assert (shown.width, shown.height) == (PORTRAIT.width, PORTRAIT.height), size
         assert within_a_pixel(box(shown.crop), (was.path[0].x, was.path[0].y, was.crop_width, was.crop_height)), size
         # Fitted, it was the whole video as large as fits in the middle of the frame, over a blur of
         # that crop: so it is now.
-        assert within_a_pixel(box(fitted_scene.picture.bounds), box(_fitted(*size, 0.0).area)), size
+        assert within_a_pixel(box(fitted_scene.picture.bounds), box(_fitted(*size, 0.0, PORTRAIT).area)), size
         assert fitted_scene.panels == [replace(was, blur=True)]
     # A Segment of the Source just loses its fit; a missing video is taken as 16:9.
     assert migrated_segment({"id": "e", "start": 10.0, "end": 12.0, "media": None, "fit": "blur", "volume": 1.0}, {}) == {
         "id": "e", "start": 10.0, "end": 12.0, "media": None, "volume": 1.0,
     }
-    assert migrated_segment(old | {"fit": "fill"}, {})["framing"]["transform"]["scale"] == cover_scale(1920, 1080, FRAME)
+    assert migrated_segment(old | {"fit": "fill"}, {})["framing"]["transform"]["scale"] == cover_scale(1920, 1080, PORTRAIT.size)
     candidate = {"id": "c1", "segments": [old | {"fit": "fill"}]}
     new = {"id": "c1", "segments": [migrated_segment(old | {"fit": "fill"}, {INTRO: (720, 1280)})]}
     assert migrated_candidate(candidate, {INTRO: (720, 1280)}) == new
@@ -198,7 +199,7 @@ def test_an_intro_and_an_outro_render_around_the_episode(client, settings, video
     candidate = add(client, job, "halo", "semua")
     words = {word["text"]: word for word in job["transcript"]["words"]}
     candidate = patch(client, job, candidate, segments=[
-        {"id": "i", "start": 0.5, "end": 1.5, "media": red["id"], "framing": {"transform": {"scale": cover_scale(640, 360, FRAME)}}},
+        {"id": "i", "start": 0.5, "end": 1.5, "media": red["id"], "framing": {"transform": {"scale": cover_scale(640, 360, PORTRAIT.size)}}},
         {"id": "e", "start": words["halo"]["start"], "end": words["semua"]["end"]},
         {"id": "o", "start": 0, "end": 1, "media": silent["id"], "framing": {}},
     ])
@@ -241,7 +242,7 @@ def test_a_media_segment_scaled_down_over_a_colour_shows_it_and_gives_way_throug
         segments=[
             {"id": "small", "start": 0, "end": 1.5, "media": red["id"],
              "framing": {"transform": {"scale": 0.5}, "background": {"kind": "colour", "colour": "#0000FF"}}},
-            {"id": "full", "start": 0, "end": 1.5, "media": red["id"], "framing": {"transform": {"scale": cover_scale(640, 360, FRAME)}}},
+            {"id": "full", "start": 0, "end": 1.5, "media": red["id"], "framing": {"transform": {"scale": cover_scale(640, 360, PORTRAIT.size)}}},
             {"id": "e", "start": words["halo"]["start"], "end": words["semua"]["end"]},
         ],
         transitions=[{"after": "small", "kind": "fade", "secs": 0.6}],
@@ -281,22 +282,22 @@ def test_a_job_saved_with_filled_and_fitted_segments_reads_them_as_framings_that
 
     [read] = [c for c in client.get(f"/api/jobs/{job['id']}").json()["candidates"] if c["id"] == candidate["id"]]
     assert [segment["framing"] and segment["framing"]["transform"]["scale"] for segment in read["segments"]] == [
-        cover_scale(640, 360, FRAME), None, 1.0,
+        cover_scale(640, 360, PORTRAIT.size), None, 1.0,
     ]
     assert all("fit" not in segment for segment in read["segments"]) and read["revision"] == candidate["revision"]
     planned = preview(client, job, read)["plan"]
     [filled, *_, fitted] = (_PICTURE.validate_python(scene["picture"]) if scene["picture"] else None for scene in planned["scenes"])
-    was = _filled(640, 360, 0.0)
+    was = _filled(640, 360, 0.0, PORTRAIT)
     shown = on_frame(filled)
-    assert (shown.width, shown.height) == (OUTPUT_WIDTH, OUTPUT_HEIGHT)
+    assert (shown.width, shown.height) == (PORTRAIT.width, PORTRAIT.height)
     assert within_a_pixel(box(shown.crop), (was.path[0].x, was.path[0].y, was.crop_width, was.crop_height))
-    assert box(fitted.bounds) == box(_fitted(640, 360, 0.0).area)
+    assert box(fitted.bounds) == box(_fitted(640, 360, 0.0, PORTRAIT).area)
     assert planned["scenes"][-1]["panels"][0]["blur"]
 
     # Written back in the new shape on the next save.
     patch(client, job, read, hook_text="Baru")
     [saved] = [c for c in json.loads(path.read_text()) if c["id"] == candidate["id"]]
-    assert saved["segments"][0]["framing"]["transform"]["scale"] == cover_scale(640, 360, FRAME) and "fit" not in saved["segments"][0]
+    assert saved["segments"][0]["framing"]["transform"]["scale"] == cover_scale(640, 360, PORTRAIT.size) and "fit" not in saved["segments"][0]
 
 
 _PICTURE = TypeAdapter(Picture)

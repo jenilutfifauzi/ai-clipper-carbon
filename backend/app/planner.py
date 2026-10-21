@@ -1,5 +1,5 @@
-"""The Render Planner: how a Clip is cut from its Source and framed in the 1080×1920 output, as a
-Render Plan that the Renderer executes. Pure, so it is tested on synthetic input (Seam B): the Clip's
+"""The Render Planner: how a Clip is cut from its Source and framed on its Candidate's Canvas
+(app/canvas.py, docs/adr/0022; 1080×1920 for 9:16, as below), as a Render Plan that the Renderer executes. Pure, so it is tested on synthetic input (Seam B): the Clip's
 Scenes and face detections are found before planning (app/analysis.py) and passed in.
 
 Each Scene of a landscape Source gets its own Layout, from its number of faces in LAYOUT_SAMPLES of
@@ -37,17 +37,17 @@ otherwise, and moves when the Layout changes under it; the other positions put e
 place.
 
 The hook (the Candidate's hook text, as last edited) is shown for the Clip's first HOOK_SECS in a
-box, at the top of SAFE_AREA unless its Hook Style places it elsewhere: on one line if it fits,
+box, at the top of the Canvas's Safe Area unless its Hook Style places it elsewhere: on one line if it fits,
 else on two, set smaller when even two lines at the style's size would be too wide (`fit_hook`,
 which Review also asks, to warn). With the default positions it stays above the captions in every
 Layout: they never go above the seam's band, y 860.
 
-Like the hook, captions stay inside SAFE_AREA, clear of the platforms' buttons and text. Both are
+Like the hook, captions stay inside the Safe Area, clear of the platforms' buttons and text. Both are
 measured with their bundled font's own widths (`font_metrics`), the font libass sets them in. The
 styles (app/styles.py) are kept in the plan, for the Renderer to draw it in them.
 
 The Watermark (text, or one of the Logos) shows for the whole Clip. At one of its nine positions it
-sits WATERMARK_MARGIN inside SAFE_AREA's corners, edges or middle; at the Custom position it is
+sits WATERMARK_MARGIN inside the Safe Area's corners, edges or middle; at the Custom position it is
 centred where the owner dragged it, kept inside the frame.
 
 Text Layers (the Advanced Edit's free text) are centred where the owner put them, as Overlays are
@@ -146,6 +146,7 @@ from app.candidates import (
     WordEdit,
 )
 from app.audio_effects import AudioEffect, enabled_effects
+from app.canvas import PORTRAIT, Box, Canvas
 from app.video_effects import VideoEffect, enabled_video_effects, scaled_effects
 from app.config import CameraTuning, DuckTuning
 from app.ducking import Span, duck_at, ducked_stretches, heard_words, speech_spans, touching
@@ -171,11 +172,6 @@ from app.transcript import Word
 from app.transition_kinds import TransitionKind, TransitionSound
 from app.video_source import SourceMetadata
 
-OUTPUT_WIDTH = 1080
-OUTPUT_HEIGHT = 1920
-FRAME = (OUTPUT_WIDTH, OUTPUT_HEIGHT)
-# Split's panels are as wide as the output and half as tall.
-SPLIT_HEIGHT = OUTPUT_HEIGHT // 2
 # A Scene's Layout follows its number of faces in this many of its sampled frames, spread through it.
 LAYOUT_SAMPLES = 5
 # A Scene shorter than this is merged into a neighbour before Layouts are chosen.
@@ -357,33 +353,18 @@ class SceneLayout(StrEnum):
     MANUAL = "manual"
 
 
-@dataclass(frozen=True)
-class Box:
-    """A rectangle in pixels, from its top-left corner."""
-
-    x: int
-    y: int
-    width: int
-    height: int
+def hook_width(canvas: Canvas) -> int:
+    """The widest a hook line can be on `canvas`: its box, padding included, is as wide as the
+    captions' area (its caption places are the Canvas's, app/canvas.py)."""
+    return kicker_widest(canvas) - 2 * HOOK_PAD_X
 
 
-# The platforms' buttons and text cover the top 12%, the bottom 20% and the right 12% of the frame:
-# captions and the hook stay inside the rest, y 232–1536 and x 0–950.
-SAFE_AREA = Box(0, 232, 950, 1304)
-# Where a caption line is centred: as far from the left edge as the safe area's right edge is from
-# the right, so that lines are centred in the frame. On the seam between Split's panels (y 860–1060,
-# clear of the faces, which sit at 40% of each panel), or in the lower third (y 1296–1496: below
-# Blur's shot, which ends at 1264, and above the bottom safe zone).
-_CAPTION_X = OUTPUT_WIDTH - (SAFE_AREA.x + SAFE_AREA.width)
-SEAM_CAPTIONS = Box(_CAPTION_X, SPLIT_HEIGHT - 100, OUTPUT_WIDTH - 2 * _CAPTION_X, 200)
-LOWER_CAPTIONS = Box(_CAPTION_X, 1296, OUTPUT_WIDTH - 2 * _CAPTION_X, 200)
-# The Top position's: just below where a two-line hook at the top ends (y 410 at most).
-TOP_CAPTIONS = Box(_CAPTION_X, 430, OUTPUT_WIDTH - 2 * _CAPTION_X, 200)
-# The widest a hook line can be: its box, padding included, is as wide as the captions' area.
-HOOK_WIDTH = OUTPUT_WIDTH - 2 * _CAPTION_X - 2 * HOOK_PAD_X
-# The widest a Kicker's pill can be: as wide as the captions' area.
-KICKER_WIDEST = OUTPUT_WIDTH - 2 * _CAPTION_X
-# How far inside SAFE_AREA's edges the Watermark sits, at its nine positions.
+def kicker_widest(canvas: Canvas) -> int:
+    """The widest a Kicker's pill can be on `canvas`: as wide as the captions' area."""
+    return canvas.caption_width
+
+
+# How far inside the Safe Area's edges the Watermark sits, at its nine positions.
 WATERMARK_MARGIN = 32
 # Punctuation is left out of the captions at either end of a Word ("HALO" for "halo,"), except for
 # the question and exclamation marks that end one ("KENAPA?") and signs that belong to it ("50%",
@@ -974,8 +955,10 @@ class RenderPlan:
     # What the captions and the hook look like.
     caption_style: CaptionStyle = CaptionStyle()
     hook_style: HookStyle = HookStyle()
-    width: int = OUTPUT_WIDTH
-    height: int = OUTPUT_HEIGHT
+    # The Candidate's Canvas (docs/adr/0022), in whose pixels the plan is, and its Safe Area.
+    width: int = PORTRAIT.width
+    height: int = PORTRAIT.height
+    safe_area: Box = PORTRAIT.safe_area
     watermark: WatermarkEvent | None = None
     watermark_style: WatermarkStyle = WatermarkStyle()
     # The Text Layers that show, in drawing order.
@@ -1055,6 +1038,7 @@ def plan_render(
     ducking: DuckTuning = DuckTuning(),
     grade: Grade = Grade(),
     adjustment_layers: list[AdjustmentLayer] | None = None,
+    canvas: Canvas = PORTRAIT,
 ) -> RenderPlan:
     """The Render Plan for the Clip from `start` to `end` seconds of `source`, whose shots are `scenes`
     and whose sampled frames have `faces` (both in seconds into the Clip), framed in `layout` (Auto:
@@ -1093,7 +1077,9 @@ def plan_render(
     The Clip is planned at `fps` frames a second, the export's frame rate (docs/adr/0021), or at the
     Source's own without one: the rate it is encoded at, and the frames its keyed pictures are drawn
     at and checked on. At another rate than the Source's, its Freeze frames and Transitions last whole
-    frames of it. The Preview Plan is always made at the Source's."""
+    frames of it. The Preview Plan is always made at the Source's.
+
+    Everything is placed on `canvas`, the Candidate's (docs/adr/0022), in its pixels."""
     if not 0 <= start < end:
         raise ValueError(f"A Clip runs forwards from 0 s or later, not {start:g}–{end:g} s")
     segments: list[SegmentPlan] = []
@@ -1123,20 +1109,20 @@ def plan_render(
             elif i:
                 cuts.append(at)
             if given.media is not None:
-                framed = [framed_scene(0.0, length, SceneLayout.MEDIA, given.width, given.height, given.framing)]
+                framed = [framed_scene(0.0, length, SceneLayout.MEDIA, given.width, given.height, given.framing, canvas)]
             elif given.hold is not None:
-                still, held = _still(given, length, source, layout, camera, framing, len(plans))
+                still, held = _still(given, length, source, layout, camera, framing, len(plans), canvas)
                 framed = [still]
                 stills += [(showing, given.start) for showing in held]
             else:
                 # Framed over its range as at 1×, then put on the Timeline at its Speed (in Reverse, mirrored).
                 reach = round(given.time.span, 3)
-                framed = _framed(reach, source, given.scenes, given.faces, layout, camera, given.layout_overrides, framing)
+                framed = _framed(reach, source, given.scenes, given.faces, layout, camera, given.layout_overrides, canvas, framing)
                 showings += _manual_showings(framed, given.layout_overrides, reach, given.time, len(plans))
-                framed = _retimed(framed, given.time, length, source)
+                framed = _retimed(framed, given.time, length, source, canvas)
             moved = [_moved(scene, at) for scene in framed]
             if given.media is not None:
-                moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate) for scene in moved]
+                moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate, canvas) for scene in moved]
             plans.extend(moved)
             fade_in, fade_out = fades_within(given.fade_in, given.fade_out, length)
             segments.append(
@@ -1154,19 +1140,19 @@ def plan_render(
         # Speech is the Source's, not a Muted Segment's (docs/adr/0016).
         unheard = [given if given.media is None and not given.muted else replace(given, words=None) for given in main_track]
         heard = _segment_words(unheard, segments, cuts, duration)[0] or []
-        plans = _keyed_manual(_frozen(plans, stills, showings, source), showings, rate)
+        plans = _keyed_manual(_frozen(plans, stills, showings, source, canvas), showings, rate, canvas)
     else:
         duration = round(SegmentTime(start, end).length, 3)
         keys = [CueKey(round(start + (word.start + word.end) / 2, 3)) for word in words or []]
         retimes = [(i, replace(edit, at=round(edit.at - start, 3))) for i, edit in enumerate(cue_edits or []) if edit.media is None]
-        plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides, framing)
-        plans = _keyed_manual(plans, _manual_showings(plans, layout_overrides or [], duration, SegmentTime(start, end), 0), rate)
+        plans = _framed(duration, source, scenes, faces, layout, camera, layout_overrides, canvas, framing)
+        plans = _keyed_manual(plans, _manual_showings(plans, layout_overrides or [], duration, SegmentTime(start, end), 0), rate, canvas)
         heard = heard_words(words or [], 0.0, duration)
-    audio = audio_events(music or [], duration, media_info or {}, source.duration) + overlay_sound(overlays or [], duration, media_info or {})
+    audio = audio_events(music or [], duration, media_info or {}, source.duration) + overlay_sound(overlays or [], duration, media_info or {}, canvas)
     # Not captioned, the Words are heard only (they still duck the music above).
     captions, used = _captions(
         (words or []) if captioned else [], plans, duration, caption_style, word_edits or [], cuts,
-        keys if captioned else [], retimes, [segment.speed for segment in segments], [edit.at for edit in cue_edits or []],
+        keys if captioned else [], retimes, [segment.speed for segment in segments], [edit.at for edit in cue_edits or []], canvas,
     )
     return RenderPlan(
         start=start,
@@ -1177,16 +1163,19 @@ def plan_render(
         source_fps=source.fps,
         scenes=plans,
         captions=captions,
-        hook=_hook(hook, duration, hook_style, hook_start, hook_secs, hook_kicker),
+        hook=_hook(hook, duration, hook_style, canvas, hook_start, hook_secs, hook_kicker),
         caption_style=caption_style,
         hook_style=hook_style,
-        watermark=watermark(watermark_style, logo_size),
+        width=canvas.width,
+        height=canvas.height,
+        safe_area=canvas.safe_area,
+        watermark=watermark(watermark_style, logo_size, canvas),
         watermark_style=watermark_style,
-        texts=[event for layer in text_layers or [] if (event := text_event(layer, duration)) is not None],
+        texts=[event for layer in text_layers or [] if (event := text_event(layer, duration, canvas)) is not None],
         audio=_ducked(audio, heard, music_words or {}, ducking),
         source_volume=source_volume,
         segments=segments,
-        overlays=overlay_events(overlays or [], duration, media_info or {}),
+        overlays=overlay_events(overlays or [], duration, media_info or {}, canvas),
         transitions=transitions,
         shapes=[event for shape in shapes or [] if (event := shape_event(shape, duration)) is not None],
         unused_cue_edits=[edit for i, edit in enumerate(cue_edits or []) if i not in used],
@@ -1282,15 +1271,16 @@ def _framed(
     layout: Layout,
     camera: CameraTuning,
     layout_overrides: list[LayoutOverride] | None,
+    canvas: Canvas,
     framing: Framing | None = None,
 ) -> list[ScenePlan]:
     """The Scenes of a range of `source` lasting `duration`, whose shots are `scenes` and whose
-    sampled frames have `faces`, framed as plan_render says (a Manual one by its override's Framing,
-    or else by `framing`); in seconds into the range. A portrait Source is passed through, but in a
+    sampled frames have `faces`, framed on `canvas` as plan_render says (a Manual one by its
+    override's Framing, or else by `framing`); in seconds into the range. A portrait Source is passed through, but in a
     Manual Scene: as one Scene, unless one is Manual."""
     held_here = [o for o in layout_overrides or [] if 0 <= o.at <= duration]
     if not reframes(source) and layout is not Layout.MANUAL and all(o.layout is not Layout.MANUAL for o in held_here):
-        return [_passed_through(0.0, duration, source)]
+        return [_passed_through(0.0, duration, source, canvas)]
     cuts = sorted({round(scene.start, 3) for scene in scenes or []} - {0.0})
     edges = [0.0, *(cut for cut in cuts if cut < duration), duration]
     plans = []
@@ -1300,26 +1290,27 @@ def _framed(
         if wanted is Layout.MANUAL:
             # Still: neither its faces nor a new run of the analysis move it.
             by_hand = (override.framing if override else framing) or Framing()
-            plans.append(framed_scene(a, b, SceneLayout.MANUAL, source.width, source.height, by_hand))
+            plans.append(framed_scene(a, b, SceneLayout.MANUAL, source.width, source.height, by_hand, canvas))
             continue
         if not reframes(source):
-            plans.append(_passed_through(a, b, source))
+            plans.append(_passed_through(a, b, source, canvas))
             continue
         seen = None if faces is None else [frame for frame in faces if a <= frame.at < b]
         count = None if seen is None else _face_count(seen)
         chosen = _choose(wanted, count)
         if chosen is SceneLayout.TRACK:
-            panels = [_track(a, b, seen, source, camera)]
+            panels = [_track(a, b, seen, source, camera, canvas)]
         elif chosen is SceneLayout.SPLIT:
-            panels = _split(a, b, seen if count and count >= 2 else None, source, camera)
+            panels = _split(a, b, seen if count and count >= 2 else None, source, camera, canvas)
         else:
-            panels = _blur(a, source)
-        plans.append(ScenePlan(a, b, chosen, panels, framing=_first_framing(chosen, panels, source)))
+            panels = _blur(a, source, canvas)
+        plans.append(ScenePlan(a, b, chosen, panels, framing=_first_framing(chosen, panels, source, canvas)))
     return plans
 
 
 def _still(
-    given: SegmentInput, length: float, source: SourceMetadata, layout: Layout, camera: CameraTuning, framing: Framing | None, first: int
+    given: SegmentInput, length: float, source: SourceMetadata, layout: Layout, camera: CameraTuning, framing: Framing | None, first: int,
+    canvas: Canvas,
 ) -> tuple[ScenePlan, list["_ManualShowing"]]:
     """The one Scene of a held Segment of the Source (a Freeze frame), `length` long: of the Scenes of
     its analysed range, framed as `_framed` frames them, the one holding its frame, as it is at that
@@ -1329,7 +1320,7 @@ def _still(
     low, high = given.analysed or (given.start, given.start + length)
     at = round(given.start - low, 3)
     reach = round(high - low, 3)
-    framed = _framed(reach, source, given.scenes, given.faces, layout, camera, given.layout_overrides, framing)
+    framed = _framed(reach, source, given.scenes, given.faces, layout, camera, given.layout_overrides, canvas, framing)
     scene = next((scene for scene in framed if scene.start <= at < scene.end), framed[-1])
 
     def held(panel: Panel) -> Panel:
@@ -1337,13 +1328,14 @@ def _still(
         return replace(panel, path=[replace(point, at=0.0)])
 
     panels = [held(panel) for panel in scene.panels]
-    shown = _first_framing(scene.layout, panels, source) if scene.layout is SceneLayout.TRACK else scene.framing
+    shown = _first_framing(scene.layout, panels, source, canvas) if scene.layout is SceneLayout.TRACK else scene.framing
     showings = _manual_showings([scene], given.layout_overrides, reach, SegmentTime(low, high), first)
     return ScenePlan(0.0, length, scene.layout, panels, scene.picture, scene.colour, shown), showings
 
 
 def _frozen(
-    plans: list[ScenePlan], stills: list[tuple["_ManualShowing", float]], showings: list["_ManualShowing"], source: SourceMetadata
+    plans: list[ScenePlan], stills: list[tuple["_ManualShowing", float]], showings: list["_ManualShowing"], source: SourceMetadata,
+    canvas: Canvas,
 ) -> list[ScenePlan]:
     """`plans` with each Freeze frame of a keyed Manual Scene in `stills` (its showing, and its frame
     on the Source's timeline) framed as the Scene is at that frame: its override's Keyframes sampled
@@ -1366,7 +1358,7 @@ def _frozen(
                 sampled[prop.value] = math.fmod(value, 360) if prop is KeyProperty.ROTATION else min(max(value, low), high)
         scene = plans[still.index]
         held = replace(given, transform=replace(given.transform, **sampled))
-        plans[still.index] = framed_scene(scene.start, scene.end, scene.layout, source.width, source.height, held)
+        plans[still.index] = framed_scene(scene.start, scene.end, scene.layout, source.width, source.height, held, canvas)
     return plans
 
 
@@ -1420,7 +1412,7 @@ def _manual_showings(
     return found
 
 
-def _keyed_manual(plans: list[ScenePlan], showings: list[_ManualShowing], fps: float) -> list[ScenePlan]:
+def _keyed_manual(plans: list[ScenePlan], showings: list[_ManualShowing], fps: float, canvas: Canvas) -> list[ScenePlan]:
     """`plans` with each Manual Scene of `showings` moved by its override's Keyframes (`keyed_scene`).
     They are in seconds from its Scene's start on the Source's timeline: where the earliest of the
     Segments showing that Scene starts it, so that a Segment starting part way into it (the tail of
@@ -1443,7 +1435,7 @@ def _keyed_manual(plans: list[ScenePlan], showings: list[_ManualShowing], fps: f
                 for prop, given in showing.override.keys.items()
                 if (within := [key for key in given if key.at <= reach])
             }
-            plans[showing.index] = keyed_scene(scene, showing.override.framing.transform, backwards, scene.start, fps)
+            plans[showing.index] = keyed_scene(scene, showing.override.framing.transform, backwards, scene.start, fps, canvas)
             continue
         keys_from = round(scene.start - (showing.start - start) / speed, 3)
         kept: Keys = {}
@@ -1453,7 +1445,7 @@ def _keyed_manual(plans: list[ScenePlan], showings: list[_ManualShowing], fps: f
                 kept[prop] = within
             if past := [replace(key, at=round(keys_from + key.at / speed, 4)) for key in given if key.at > end - start + 1e-3]:
                 ignored[prop] = past
-        keyed = keyed_scene(scene, showing.override.framing.transform, kept, keys_from, fps)
+        keyed = keyed_scene(scene, showing.override.framing.transform, kept, keys_from, fps, canvas)
         plans[showing.index] = replace(keyed, keys_from=keys_from, ignored=ignored)
     return plans
 
@@ -1469,33 +1461,34 @@ def _keys_backwards(keys: list[Keyframe], until: float, speed: float) -> list[Ke
     return [replace(turned[0], ease=LINEAR), *turned[1:]] if turned else turned
 
 
-def _passed_through(start: float, end: float, source: SourceMetadata) -> ScenePlan:
+def _passed_through(start: float, end: float, source: SourceMetadata, canvas: Canvas) -> ScenePlan:
     """A Scene of a portrait `source` from `start` to `end`, whole and as large as fits, over black,
     as its Framing (scale 1 over black) draws it too."""
     shown = Framing(background=Background(BackgroundKind.COLOUR, "#000000"))
-    return ScenePlan(start, end, SceneLayout.PASSTHROUGH, [_fitted(source.width, source.height, start)], framing=shown)
+    return ScenePlan(start, end, SceneLayout.PASSTHROUGH, [_fitted(source.width, source.height, start, canvas)], framing=shown)
 
 
-def _first_framing(layout: SceneLayout, panels: list[Panel], source: SourceMetadata) -> Framing:
+def _first_framing(layout: SceneLayout, panels: list[Panel], source: SourceMetadata, canvas: Canvas) -> Framing:
     """The Framing that draws the first frame of a Scene in `layout` of `source`, whose `panels` are
     planned: Track's first crop; Blur's whole frame fitted over its blur; and, for Split, which shows
     two pictures, a centred cover of the frame."""
     if layout is SceneLayout.TRACK:
         [panel] = panels
         start = panel.path[0]
-        return _showing(source.width, source.height, Box(start.x, start.y, panel.crop_width, panel.crop_height))
+        return _showing(source.width, source.height, Box(start.x, start.y, panel.crop_width, panel.crop_height), canvas)
     if layout is SceneLayout.SPLIT:
-        return Framing(Transform(scale=min(cover_scale(source.width, source.height, FRAME), MAX_SCALE)))
+        return Framing(Transform(scale=min(cover_scale(source.width, source.height, canvas.size), MAX_SCALE)))
     return Framing()
 
 
-def _showing(width: int, height: int, box: Box) -> Framing:
-    """The Framing that draws the `box` of a `width` x `height` picture over the whole frame, as a
+def _showing(width: int, height: int, box: Box, canvas: Canvas) -> Framing:
+    """The Framing that draws the `box` of a `width` x `height` picture over the whole of `canvas`, as a
     panel filling the frame with it does: scaled to cover the frame with it and centred on it. Where
     the box is so far from the picture's middle that the picture's centre would be off the frame,
     the picture's far side is cropped off, just enough to bring it back on."""
     # Output pixels per pixel of the picture.
-    zoom = max(OUTPUT_WIDTH / box.width, OUTPUT_HEIGHT / box.height)
+    frame_width, frame_height = canvas.size
+    zoom = max(frame_width / box.width, frame_height / box.height)
 
     def cuts(size: int, start: int, length: int, frame: int) -> tuple[float, float]:
         # The shares cut off either end of one axis, so that the middle of what is kept is at most
@@ -1507,41 +1500,43 @@ def _showing(width: int, height: int, box: Box) -> Framing:
             return round((2 * (middle - reach) - size) / size, 4), 0.0
         return 0.0, 0.0
 
-    (left, right), (top, bottom) = cuts(width, box.x, box.width, OUTPUT_WIDTH), cuts(height, box.y, box.height, OUTPUT_HEIGHT)
+    (left, right), (top, bottom) = cuts(width, box.x, box.width, frame_width), cuts(height, box.y, box.height, frame_height)
     crop = Crop(left, top, right, bottom)
     cut = Box(*kept(width, height, crop))
-    scale = zoom / min(OUTPUT_WIDTH / cut.width, OUTPUT_HEIGHT / cut.height)
-    x = OUTPUT_WIDTH / 2 + (cut.x + cut.width / 2 - (box.x + box.width / 2)) * zoom
-    y = OUTPUT_HEIGHT / 2 + (cut.y + cut.height / 2 - (box.y + box.height / 2)) * zoom
-    centre = (round(min(max(x, 0.0), OUTPUT_WIDTH), 2), round(min(max(y, 0.0), OUTPUT_HEIGHT), 2))
+    scale = zoom / min(frame_width / cut.width, frame_height / cut.height)
+    x = frame_width / 2 + (cut.x + cut.width / 2 - (box.x + box.width / 2)) * zoom
+    y = frame_height / 2 + (cut.y + cut.height / 2 - (box.y + box.height / 2)) * zoom
+    centre = (round(min(max(x, 0.0), frame_width), 2), round(min(max(y, 0.0), frame_height), 2))
     return Framing(Transform(x=centre[0], y=centre[1], scale=round(min(scale, MAX_SCALE), 4)), crop)
 
 
-def framed_scene(start: float, end: float, layout: SceneLayout, width: int, height: int, framing: Framing) -> ScenePlan:
+def framed_scene(
+    start: float, end: float, layout: SceneLayout, width: int, height: int, framing: Framing, canvas: Canvas = PORTRAIT
+) -> ScenePlan:
     """A Scene from `start` to `end` of a `width` x `height` picture (a media Segment's video, or the
-    Source in a Manual Scene) placed by its `framing`, which it carries: the
-    picture (`picture_of`) over its Background, which is the largest 9:16 crop from the middle of what
-    its Crop keeps, blurred, filling the frame (as Blur's background is), or its colour."""
-    picture = picture_of(width, height, framing.transform, framing.crop)
+    Source in a Manual Scene) placed on `canvas` by its `framing`, which it carries: the
+    picture (`picture_of`) over its Background, which is the largest crop of the Canvas's shape from
+    the middle of what its Crop keeps, blurred, filling the frame (as Blur's background is), or its colour."""
+    picture = picture_of(width, height, framing.transform, framing.crop, canvas)
     if framing.background.kind is BackgroundKind.COLOUR:
         return ScenePlan(start, end, layout, [], picture, framing.background.colour, framing)
-    cropped, cover = picture.crop, _filled(picture.crop.width, picture.crop.height, start)
+    cropped, cover = picture.crop, _filled(picture.crop.width, picture.crop.height, start, canvas)
     point = replace(cover.path[0], x=cover.path[0].x + cropped.x, y=cover.path[0].y + cropped.y)
     return ScenePlan(start, end, layout, [replace(cover, path=[point], blur=True)], picture, framing=framing)
 
 
-def keyed_scene(scene: ScenePlan, transform: Transform, keys: Keys, start: float, fps: float) -> ScenePlan:
+def keyed_scene(scene: ScenePlan, transform: Transform, keys: Keys, start: float, fps: float, canvas: Canvas = PORTRAIT) -> ScenePlan:
     """`scene`, of one picture placed by `transform` (a media Segment's or a Manual Scene's), moved by
     the `keys` of its item, whose Keyframes count from `start` seconds into the Clip (`with_motion`;
     before the Scene, for a Manual one shown from part way into it): its Background is left out when
-    the picture covers the frame at every one of its frames at `fps` (`covers`), each at n / `fps`
+    the picture covers `canvas` at every one of its frames at `fps` (`covers`), each at n / `fps`
     seconds into the Scene, as the renderer draws it. Unkeyed, as it is."""
     assert scene.picture is not None
-    picture = with_motion(scene.picture, transform, keys, start)
+    picture = with_motion(scene.picture, transform, keys, start, canvas=canvas)
     if not picture.motion:
         return scene
     count = math.ceil((scene.end - scene.start) * fps - 1e-6)
-    if all(covers(picture_at(picture, scene.start + n / fps)) for n in range(count)):
+    if all(covers(picture_at(picture, scene.start + n / fps), canvas) for n in range(count)):
         return replace(scene, picture=picture, panels=[], colour=None)
     return replace(scene, picture=picture)
 
@@ -1550,15 +1545,15 @@ def keyed_scene(scene: ScenePlan, transform: Transform, keys: Keys, start: float
 _COVER_REACH = 1e-3
 
 
-def covers(picture: Picture) -> bool:
-    """Whether a still `picture` hides the whole frame: opaque, with every corner of the frame inside
-    it once it is turned."""
+def covers(picture: Picture, canvas: Canvas = PORTRAIT) -> bool:
+    """Whether a still `picture` hides the whole of `canvas`: opaque, with every corner of it inside
+    the picture once it is turned."""
     if picture.opacity < 1:
         return False
     angle = math.radians(picture.rotation)
     cos, sin = math.cos(angle), math.sin(angle)
     (cx, cy), half_width, half_height = picture.centre, picture.width / 2 + _COVER_REACH, picture.height / 2 + _COVER_REACH
-    for px, py in ((0, 0), (OUTPUT_WIDTH, 0), (0, OUTPUT_HEIGHT), (OUTPUT_WIDTH, OUTPUT_HEIGHT)):
+    for px, py in ((0, 0), (canvas.width, 0), (0, canvas.height), canvas.size):
         # The corner in the picture's own directions, from its centre (frames.py turns it so).
         across, down = (px - cx) * cos + (py - cy) * sin, -(px - cx) * sin + (py - cy) * cos
         if abs(across) > half_width or abs(down) > half_height:
@@ -1566,14 +1561,14 @@ def covers(picture: Picture) -> bool:
     return True
 
 
-def _retimed(framed: list[ScenePlan], time: SegmentTime, length: float, source: SourceMetadata) -> list[ScenePlan]:
+def _retimed(framed: list[ScenePlan], time: SegmentTime, length: float, source: SourceMetadata, canvas: Canvas) -> list[ScenePlan]:
     """The Scenes `framed` of a range of `source` (in seconds into it) as a Segment playing it as
     `time` says shows them, `length` long on the Timeline: their times and their crops' change points
     divided by its Speed; in Reverse, first mirrored (`_mirrored_scene`), the last Scene first."""
     speed = time.speed
     if time.reverse:
         span = framed[-1].end
-        framed = [_mirrored_scene(scene, span, source) for scene in reversed(framed)]
+        framed = [_mirrored_scene(scene, span, source, canvas) for scene in reversed(framed)]
     if speed == 1 and not time.reverse:
         return framed
 
@@ -1586,7 +1581,7 @@ def _retimed(framed: list[ScenePlan], time: SegmentTime, length: float, source: 
     return retimed
 
 
-def _mirrored_scene(scene: ScenePlan, span: float, source: SourceMetadata) -> ScenePlan:
+def _mirrored_scene(scene: ScenePlan, span: float, source: SourceMetadata, canvas: Canvas) -> ScenePlan:
     """`scene`, of a range `span` long (in seconds into it), as the range played backwards shows it:
     from `span − end` to `span − start`, each crop held over the mirror of the time it was held
     (its camera path run backwards), its first frame the forward Scene's last (`framing`)."""
@@ -1597,7 +1592,7 @@ def _mirrored_scene(scene: ScenePlan, span: float, source: SourceMetadata) -> Sc
         return replace(panel, path=path)
 
     panels = [mirrored(panel) for panel in scene.panels]
-    shown = _first_framing(scene.layout, panels, source) if scene.layout is SceneLayout.TRACK else scene.framing
+    shown = _first_framing(scene.layout, panels, source, canvas) if scene.layout is SceneLayout.TRACK else scene.framing
     return replace(scene, start=round(span - scene.end, 3), end=round(span - scene.start, 3), panels=panels, framing=shown)
 
 
@@ -1609,8 +1604,8 @@ def _moved(scene: ScenePlan, by: float) -> ScenePlan:
     return replace(scene, start=round(scene.start + by, 3), end=round(scene.end + by, 3), panels=panels)
 
 
-def watermark(style: WatermarkStyle, logo_size: tuple[int, int] | None = None) -> WatermarkEvent | None:
-    """The Watermark in `style`, its Logo `logo_size` pixels; None when it shows nothing: off, blank
+def watermark(style: WatermarkStyle, logo_size: tuple[int, int] | None = None, canvas: Canvas = PORTRAIT) -> WatermarkEvent | None:
+    """The Watermark in `style` on `canvas`, its Logo `logo_size` pixels; None when it shows nothing: off, blank
     text (without emoji, which the bundled fonts haven't got), or a Logo that is missing."""
     if style.kind is WatermarkKind.TEXT:
         text = without_emoji(style.text).strip()
@@ -1618,34 +1613,35 @@ def watermark(style: WatermarkStyle, logo_size: tuple[int, int] | None = None) -
             return None
         width = math.ceil(font_metrics(style.font).width(text, style.size))
         # As wide as the frame at most: set smaller when it is wider.
-        size = float(style.size) if width <= OUTPUT_WIDTH else math.floor(style.size * OUTPUT_WIDTH / width * 10) / 10
-        area = _watermark_area(style, min(width, OUTPUT_WIDTH), math.ceil(size))
+        size = float(style.size) if width <= canvas.width else math.floor(style.size * canvas.width / width * 10) / 10
+        area = _watermark_area(style, min(width, canvas.width), math.ceil(size), canvas)
         return WatermarkEvent(WatermarkKind.TEXT, area, style.opacity, text=text, size=size)
     if style.kind is WatermarkKind.LOGO and style.logo is not None and logo_size is not None:
         logo_width, logo_height = logo_size
-        height = min(style.size, OUTPUT_HEIGHT)
+        height = min(style.size, canvas.height)
         width = max(1, round(height * logo_width / logo_height))
-        if width > OUTPUT_WIDTH:
-            width, height = OUTPUT_WIDTH, max(1, round(OUTPUT_WIDTH * logo_height / logo_width))
-        return WatermarkEvent(WatermarkKind.LOGO, _watermark_area(style, width, height), style.opacity, logo=style.logo)
+        if width > canvas.width:
+            width, height = canvas.width, max(1, round(canvas.width * logo_height / logo_width))
+        return WatermarkEvent(WatermarkKind.LOGO, _watermark_area(style, width, height, canvas), style.opacity, logo=style.logo)
     return None
 
 
-def _watermark_area(style: WatermarkStyle, width: int, height: int) -> Box:
-    """Where a `width` x `height` Watermark goes at the style's position."""
+def _watermark_area(style: WatermarkStyle, width: int, height: int, canvas: Canvas) -> Box:
+    """Where a `width` x `height` Watermark goes on `canvas` at the style's position."""
     if style.position is WatermarkPosition.CUSTOM:
-        x = min(max(round(style.x - width / 2), 0), OUTPUT_WIDTH - width)
-        y = min(max(round(style.y - height / 2), 0), OUTPUT_HEIGHT - height)
+        x = min(max(round(style.x - width / 2), 0), canvas.width - width)
+        y = min(max(round(style.y - height / 2), 0), canvas.height - height)
         return Box(x, y, width, height)
     vertical, _, horizontal = style.position.value.rpartition("_")
     vertical = vertical or (horizontal if horizontal in ("top", "bottom") else "")
-    left, top = SAFE_AREA.x + WATERMARK_MARGIN, SAFE_AREA.y + WATERMARK_MARGIN
-    right = SAFE_AREA.x + SAFE_AREA.width - WATERMARK_MARGIN - width
-    bottom = SAFE_AREA.y + SAFE_AREA.height - WATERMARK_MARGIN - height
+    safe = canvas.safe_area
+    left, top = safe.x + WATERMARK_MARGIN, safe.y + WATERMARK_MARGIN
+    right = safe.x + safe.width - WATERMARK_MARGIN - width
+    bottom = safe.y + safe.height - WATERMARK_MARGIN - height
     # Its middle column is centred in the frame, as the captions and the hook are.
-    x = {"left": left, "right": right}.get(horizontal, (OUTPUT_WIDTH - width) // 2)
-    y = {"top": top, "bottom": bottom}.get(vertical, (SAFE_AREA.y * 2 + SAFE_AREA.height - height) // 2)
-    return Box(min(max(x, 0), OUTPUT_WIDTH - width), min(max(y, 0), OUTPUT_HEIGHT - height), width, height)
+    x = {"left": left, "right": right}.get(horizontal, (canvas.width - width) // 2)
+    y = {"top": top, "bottom": bottom}.get(vertical, (safe.y * 2 + safe.height - height) // 2)
+    return Box(min(max(x, 0), canvas.width - width), min(max(y, 0), canvas.height - height), width, height)
 
 
 def fades_within(fade_in: float, fade_out: float, secs: float) -> tuple[float, float]:
@@ -1723,17 +1719,17 @@ def own_volume(event: AudioEvent | SegmentPlan, source_volume: float) -> float:
     return source_volume if source else 1.0
 
 
-def overlay_events(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo]) -> list[OverlayEvent]:
-    """The Overlays as drawn in a Clip lasting `duration` (`_overlay_event`)."""
-    return [event for overlay in overlays if (event := _overlay_event(overlay, duration, items)) is not None]
+def overlay_events(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo], canvas: Canvas = PORTRAIT) -> list[OverlayEvent]:
+    """The Overlays as drawn on `canvas` in a Clip lasting `duration` (`_overlay_event`)."""
+    return [event for overlay in overlays if (event := _overlay_event(overlay, duration, items, canvas)) is not None]
 
 
-def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo]) -> list[AudioEvent]:
+def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, MediaInfo], canvas: Canvas = PORTRAIT) -> list[AudioEvent]:
     """The sound of the Overlays' videos that are turned up, or keyed, heard as Music Clips are, while
     they show (a Muted one's too, which isn't heard)."""
     sounds = []
     for overlay in overlays:
-        event = _overlay_event(overlay, duration, items)
+        event = _overlay_event(overlay, duration, items, canvas)
         gain = overlay.keys.get(KeyProperty.VOLUME, [])
         if event is None or event.image or (overlay.volume <= 0 and not gain) or not items[overlay.media].has_audio:
             continue
@@ -1746,7 +1742,7 @@ def overlay_sound(overlays: list[Overlay], duration: float, items: dict[str, Med
     return sounds
 
 
-def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo]) -> OverlayEvent | None:
+def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo], canvas: Canvas) -> OverlayEvent | None:
     """The Overlay as drawn: its item placed by its Transform (`picture_of`) with its corners, border
     and shadow, cut where the Clip or its video ends (`overlay_time`). Its `offset` is where the part
     of its video it shows begins: in Reverse, which shows that part from its end, a cut at the Clip's
@@ -1762,7 +1758,9 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     time = overlay_time(overlay.offset, overlay.secs, overlay.speed, overlay.reverse, video, duration - start)
     end = round(start + time.length, 3)
     offset = 0.0 if item.duration is None else round(time.start, 3)
-    picture = with_motion(picture_of(item.width, item.height, overlay.transform, overlay.crop), overlay.transform, overlay.keys, start)
+    picture = with_motion(
+        picture_of(item.width, item.height, overlay.transform, overlay.crop, canvas), overlay.transform, overlay.keys, start, canvas=canvas
+    )
     # The radius is a share of the shorter side as drawn, so it scales with the picture; the border
     # and shadow are in output pixels, so they don't.
     radius = round(overlay.radius * min(picture.width, picture.height), 2)
@@ -1781,17 +1779,17 @@ def overlay_scale(transform: Transform) -> float:
 
 
 def with_motion(
-    picture: Picture, transform: Transform, keys: Keys, start: float, unscaled: tuple[float, float] | None = None
+    picture: Picture, transform: Transform, keys: Keys, start: float, unscaled: tuple[float, float] | None = None, canvas: Canvas = PORTRAIT
 ) -> Picture:
     """`picture`, drawn by `transform`, moved by the `keys` of an item that starts `start` seconds into
     the Clip: its motion in seconds into the Clip, and its drawn size at scale 1 (`unscaled` when
-    given, else its crop's fitted size stretched). Unkeyed (a volume isn't the picture's), as it is."""
+    given, else its crop's fitted size on `canvas` stretched). Unkeyed (a volume isn't the picture's), as it is."""
     keys = {prop: given for prop, given in keys.items() if prop in PICTURE_KEYS}
     if not keys:
         return picture
     motion = {prop: [replace(key, at=round(start + key.at, 4)) for key in given] for prop, given in keys.items()}
     if unscaled is None:
-        across, down = fitted(picture.crop.width, picture.crop.height, FRAME)
+        across, down = fitted(picture.crop.width, picture.crop.height, canvas.size)
         unscaled = (across * transform.stretch_x, down * transform.stretch_y)
     return replace(picture, motion=motion, unscaled=unscaled)
 
@@ -1841,13 +1839,13 @@ def key_times(picture: Picture) -> list[float]:
     return sorted({key.at for keys in picture.motion.values() for key in keys})
 
 
-def picture_of(width: int, height: int, transform: Transform, crop: Crop = Crop()) -> Picture:
-    """A `width` x `height` item cut by `crop` and drawn as `transform` places it: what it keeps at
-    its drawn size (app/pictures.py), its centre kept on the frame, the picture not."""
+def picture_of(width: int, height: int, transform: Transform, crop: Crop = Crop(), canvas: Canvas = PORTRAIT) -> Picture:
+    """A `width` x `height` item cut by `crop` and drawn on `canvas` as `transform` places it: what it
+    keeps at its drawn size (app/pictures.py), its centre kept on the frame, the picture not."""
     cut = Box(*kept(width, height, crop))
-    drawn_width, drawn_height = drawn_size(cut.width, cut.height, transform, FRAME)
-    x = round(min(max(transform.x, 0.0), OUTPUT_WIDTH), 2)
-    y = round(min(max(transform.y, 0.0), OUTPUT_HEIGHT), 2)
+    drawn_width, drawn_height = drawn_size(cut.width, cut.height, transform, canvas.size)
+    x = round(min(max(transform.x, 0.0), canvas.width), 2)
+    y = round(min(max(transform.y, 0.0), canvas.height), 2)
     across, down = turned_size(drawn_width, drawn_height, transform.rotation)
     bounds = Box(round(x - across / 2), round(y - down / 2), round(across), round(down))
     return Picture(
@@ -1856,7 +1854,7 @@ def picture_of(width: int, height: int, transform: Transform, crop: Crop = Crop(
     )
 
 
-def on_frame(picture: Picture, frame: tuple[int, int] = FRAME) -> Picture:
+def on_frame(picture: Picture, frame: tuple[int, int] = PORTRAIT.size) -> Picture:
     """The part of an unturned `picture` that is on the `frame` (width, height; the plan's, or the
     size it is drawn at), as a Picture of its own: what it draws there, without scaling what is off
     it (a picture zoomed in or covering the frame is larger than the frame). A turned picture is
@@ -1892,7 +1890,7 @@ def _mirrored(low: float, high: float, flipped: bool) -> tuple[float, float]:
     return (1 - high, 1 - low) if flipped else (low, high)
 
 
-def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
+def text_event(layer: TextLayer, duration: float, canvas: Canvas = PORTRAIT) -> TextEvent | None:
     """The Text Layer in a Clip lasting `duration`, until its end if that comes sooner: its words
     (what no Face nor emoji image has left out, blank lines at either end left out) broken into
     lines at its wrap width (`text_lines`), each split into runs by Face (`text_runs`), and set in its
@@ -1902,7 +1900,7 @@ def text_event(layer: TextLayer, duration: float) -> TextEvent | None:
     if start >= duration:
         return None
     style = layer.style
-    lines = text_lines(layer.text, style)
+    lines = text_lines(layer.text, style, canvas)
     if not lines:
         return None
     runs = [text_runs(line, style.font) for line in lines]
@@ -1959,7 +1957,7 @@ def shape_event(shape: Shape, duration: float) -> ShapeEvent | None:
     )
 
 
-def text_lines(text: str, style: TextStyle) -> list[str]:
+def text_lines(text: str, style: TextStyle, canvas: Canvas = PORTRAIT) -> list[str]:
     """A Text Layer's `text` as the lines it is set in, in `style`: without what no Face nor emoji
     image has (`text_runs`), blank lines at either end left out, broken at its newlines and between
     its words where a line, measured run by run in its Faces (an emoji 1 em), would be wider than its
@@ -1972,15 +1970,15 @@ def text_lines(text: str, style: TextStyle) -> list[str]:
     if not paragraphs:
         return []
     return broken_lines(
-        "\n".join(paragraphs), text_room(style), lambda line: runs_width(text_runs(line, style.font), style.size, style.tracking)
+        "\n".join(paragraphs), text_room(style, canvas), lambda line: runs_width(text_runs(line, style.font), style.size, style.tracking)
     )
 
 
-def text_room(style: TextStyle) -> float:
-    """How wide a Text Layer's lines in `style` may be: its wrap width, or the frame less TEXT_MARGIN
-    either side when it has none, less its plate's padding either side."""
+def text_room(style: TextStyle, canvas: Canvas = PORTRAIT) -> float:
+    """How wide a Text Layer's lines in `style` may be: its wrap width, or the width of `canvas` less
+    TEXT_MARGIN either side when it has none, less its plate's padding either side."""
     pad_x = style.plate.padding_x if style.plate.shape is not HookShape.NONE else 0.0
-    return (style.wrap_width or OUTPUT_WIDTH - 2 * TEXT_MARGIN) - 2 * pad_x
+    return (style.wrap_width or canvas.width - 2 * TEXT_MARGIN) - 2 * pad_x
 
 
 def text_box(style: TextStyle, widths: list[float]) -> tuple[int, int, tuple[float, float]]:
@@ -2202,9 +2200,9 @@ def emoji_square(run: TextRun, baseline: float, size: float) -> tuple[float, flo
     return run.x, middle - run.width / 2, run.width
 
 
-def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], float]:
-    """How the hook `text` is set in `style`: its lines (none when it is blank) and their font size.
-    The fewest lines, up to the style's max_lines, that fit in HOOK_WIDTH at its size with its
+def fit_hook(text: str, style: HookStyle = HookStyle(), canvas: Canvas = PORTRAIT) -> tuple[list[str], float]:
+    """How the hook `text` is set in `style` on `canvas`: its lines (none when it is blank) and their font size.
+    The fewest lines, up to the style's max_lines, that fit in `hook_width` at its size with its
     tracking (or, with the style's own padding across, whose box is as wide as the captions' area),
     broken between words where the longest is shortest. Lines still too wide are set smaller (their
     tracking staying as wide, the style's padding shrinking with them), so that the longest just
@@ -2215,7 +2213,7 @@ def fit_hook(text: str, style: HookStyle = HookStyle()) -> tuple[list[str], floa
     metrics = font_metrics(style.font)
     tracking = style.tracking
     own = style.padding_x is not None and style.shape != HookShape.NONE
-    room, padding = (KICKER_WIDEST, 2 * style.padding_x) if own else (HOOK_WIDTH, 0.0)
+    room, padding = (kicker_widest(canvas), 2 * style.padding_x) if own else (hook_width(canvas), 0.0)
 
     def widest(lines: list[str]) -> float:
         return max(metrics.width(line, style.size, tracking) for line in lines)
@@ -2320,13 +2318,13 @@ def _balanced(words: list[str], count: int, metrics: "FontMetrics", tracking: fl
 
 
 def _hook(
-    text: str, duration: float, style: HookStyle, start: float = 0.0, secs: float = HOOK_SECS, kicker: str = ""
+    text: str, duration: float, style: HookStyle, canvas: Canvas, start: float = 0.0, secs: float = HOOK_SECS, kicker: str = ""
 ) -> HookEvent | None:
     """The hook `text` from `start` for `secs` seconds of the Clip, which lasts `duration` (until its
     end, if that comes sooner), as large as its lines and padding, its lines centred in the frame
     or its middle at the style's x (kept in the frame), placed by `style`: just below the top of
-    SAFE_AREA, in the middle of the frame, just above the bottom of SAFE_AREA, or with its top at
-    the style's height (kept inside SAFE_AREA).
+    the Canvas's Safe Area, in the middle of the frame, just above the bottom of the Safe Area, or
+    with its top at the style's height (kept inside the Safe Area).
     None when the text is blank or it would start at or after the Clip's end.
 
     A line is as wide as its letters and its tracking. A block (or no box) is its padding
@@ -2339,7 +2337,7 @@ def _hook(
     they do, KICKER_GAP of the hook's size away. A Quote Mark (QUOTE_SCALE) is on the first line's
     corner: the lines move down by what of it sticks out above them, but not sideways, so they stay
     centred."""
-    lines, size = fit_hook(text, style)
+    lines, size = fit_hook(text, style, canvas)
     start = round(max(start, 0.0), 3)
     if not lines or start >= duration:
         return None
@@ -2381,13 +2379,13 @@ def _hook(
     # The lines' place in the whole hook, and the pill's.
     lines_x = lines_y = 0
     lines_height = height
-    pill = _kicker_pill(kicker, size, style)
+    pill = _kicker_pill(kicker, size, style, canvas)
     if pill is not None:
         lines_y = pill.height + round(KICKER_GAP * size)
         if left:
             # From where the text starts, or nearer the left when that would take it past the
             # captions' width (and the safe area).
-            pill_x = min(HOOK_PAD_X if style.shape == HookShape.NONE else 0, max(0, KICKER_WIDEST - pill.width))
+            pill_x = min(HOOK_PAD_X if style.shape == HookShape.NONE else 0, max(0, kicker_widest(canvas) - pill.width))
             full_width = max(width, pill_x + pill.width)
         else:
             full_width = max(width, pill.width)
@@ -2400,14 +2398,15 @@ def _hook(
     if badge:
         lines_y += badge - inset_y
     height = lines_y + lines_height
-    bottom = SAFE_AREA.y + SAFE_AREA.height - height
+    safe = canvas.safe_area
+    bottom = safe.y + safe.height - height
     top = {
-        HookPosition.TOP: SAFE_AREA.y,
-        HookPosition.MIDDLE: (OUTPUT_HEIGHT - height) // 2,
+        HookPosition.TOP: safe.y,
+        HookPosition.MIDDLE: (canvas.height - height) // 2,
         HookPosition.BOTTOM: bottom,
-        HookPosition.CUSTOM: min(max(style.y, SAFE_AREA.y), bottom),
+        HookPosition.CUSTOM: min(max(style.y, safe.y), bottom),
     }[style.position]
-    area = Box((OUTPUT_WIDTH - width) // 2, top, width, height)
+    area = Box((canvas.width - width) // 2, top, width, height)
     placed = None
     if pill is not None:
         box = Box(area.x + pill_x, area.y, pill.width, pill.height)
@@ -2426,7 +2425,7 @@ def _hook(
         left_edge, right_edge = min(area.x, quote.x), max(area.x + area.width, quote.x + quote.width)
         area = Box(left_edge, area.y, right_edge - left_edge, area.height)
     # With its middle at the style's x, or as near as keeps it in the frame.
-    dx = 0 if style.x is None else min(max((2 * style.x - area.width) // 2, 0), OUTPUT_WIDTH - area.width) - area.x
+    dx = 0 if style.x is None else min(max((2 * style.x - area.width) // 2, 0), canvas.width - area.width) - area.x
     if dx and placed is not None:
         placed = replace(placed, box=_shifted(placed.box, dx), anchor=(placed.anchor[0] + dx, placed.anchor[1]))
     return HookEvent(
@@ -2458,9 +2457,10 @@ class _KickerPill:
     pad_y: float
 
 
-def _kicker_pill(text: str, size: float, style: HookStyle) -> _KickerPill | None:
+def _kicker_pill(text: str, size: float, style: HookStyle, canvas: Canvas) -> _KickerPill | None:
     """The Kicker `text` over a hook set at `size` (without emoji, in capitals if the style is), set
-    smaller when its pill would be wider than KICKER_WIDEST. None when it is blank."""
+    smaller when its pill would be wider than `kicker_widest` on `canvas`. None when it is blank."""
+    widest = kicker_widest(canvas)
     text = without_emoji(text)
     if style.uppercase:
         text = text.upper()
@@ -2469,8 +2469,8 @@ def _kicker_pill(text: str, size: float, style: HookStyle) -> _KickerPill | None
     metrics = font_metrics(style.font)
     pill_size = KICKER_SCALE * size
     padded = metrics.width(text, pill_size) + 2 * KICKER_PAD_X * pill_size
-    if padded > KICKER_WIDEST:
-        pill_size = math.floor(pill_size * KICKER_WIDEST / padded * 10) / 10
+    if padded > widest:
+        pill_size = math.floor(pill_size * widest / padded * 10) / 10
     pad_y = KICKER_PAD_Y * pill_size
     width = math.ceil(metrics.width(text, pill_size) + 2 * KICKER_PAD_X * pill_size)
     height = math.ceil(metrics.letters_height(pill_size) + 2 * pad_y)
@@ -2600,6 +2600,7 @@ def _captions(
     cue_edits: list[tuple[int, CueEdit]] | None = None,
     speeds: list[float] | None = None,
     given_ats: list[float] | None = None,
+    canvas: Canvas = PORTRAIT,
 ) -> tuple[list[Cue], set[int]]:
     """The Cues of `words` over the Clip, which lasts `duration` and is laid out in `scenes`, in
     `style`, with the Word Edits `edits` applied (match_edits): an edited Word shows the edit's text
@@ -2665,7 +2666,7 @@ def _captions(
                 retime, places[id(retime)] if retime is not None else -1,
             ))
 
-    areas = [_caption_area(style, scene.layout) for scene in scenes]
+    areas = [_caption_area(style, scene.layout, canvas) for scene in scenes]
     # The Layout changes that move the captions.
     moves = [scene.start for scene, area, before in zip(scenes[1:], areas[1:], areas) if area != before]
 
@@ -2782,7 +2783,7 @@ def _captions(
         scale = edit.scale if edit is not None and edit.scale is not None else 1.0
         for a, b, area in parts:
             if placed:
-                area = _custom_caption_area(edit.y)
+                area = _custom_caption_area(edit.y, canvas)
             size = _caption_size(widest, area, style, scale)
             events.append(Cue(
                 start=round(a, 3),
@@ -2790,7 +2791,7 @@ def _captions(
                 lines=[[CaptionWord(word.text, round(min(max(on, a), b), 3), round(min(max(off, a), b), 3))
                         for word, on, off in line] for line in highlights],
                 plain=[" ".join(word.plain for word in line) for line in lines],
-                area=_caption_placed(widest, _caption_box(area, len(lines), size), size, style, x),
+                area=_caption_placed(widest, _caption_box(area, len(lines), size), size, style, x, canvas),
                 size=size,
                 key=cue[0].key,
                 edited=edit is not None,
@@ -2867,37 +2868,38 @@ def _caption_length(text: str, style: CaptionStyle) -> float:
     return len(text) * metrics.width(text, style.size, style.tracking) / metrics.width(text, style.size)
 
 
-def _caption_placed(text: str, area: Box, size: float, style: CaptionStyle, x: float | None) -> Box:
+def _caption_placed(text: str, area: Box, size: float, style: CaptionStyle, x: float | None, canvas: Canvas) -> Box:
     """`area` moved to have its middle at `x` (the style's, or a Cue Edit's), or as near as keeps the
     line set in it at `size` (with its outline and tracking) in the frame. Without an x, it stays
     centred."""
     if x is None:
         return area
     half = (font_metrics(style.font).width(text, size, style.tracking) + 2 * style.outline) / 2
-    centre = min(max(x, half), OUTPUT_WIDTH - half)
+    centre = min(max(x, half), canvas.width - half)
     return _shifted(area, round(centre - area.width / 2) - area.x)
 
 
-def _caption_area(style: CaptionStyle, layout: SceneLayout) -> Box:
-    """Where a caption line is centred in a Scene in `layout`."""
+def _caption_area(style: CaptionStyle, layout: SceneLayout, canvas: Canvas) -> Box:
+    """Where a caption line is centred on `canvas` in a Scene in `layout` (its places are the Canvas's)."""
     match style.position:
         case CaptionPosition.AUTO:
-            return SEAM_CAPTIONS if layout is SceneLayout.SPLIT else LOWER_CAPTIONS
+            return canvas.seam_captions if layout is SceneLayout.SPLIT else canvas.lower_captions
         case CaptionPosition.TOP:
-            return TOP_CAPTIONS
+            return canvas.top_captions
         case CaptionPosition.MIDDLE:
-            return SEAM_CAPTIONS
+            return canvas.seam_captions
         case CaptionPosition.BOTTOM:
-            return LOWER_CAPTIONS
+            return canvas.lower_captions
         case CaptionPosition.CUSTOM:
-            return _custom_caption_area(style.y)
+            return _custom_caption_area(style.y, canvas)
 
 
-def _custom_caption_area(y: float) -> Box:
-    """Where a caption line centred at height `y` goes, kept inside the safe area."""
-    half = LOWER_CAPTIONS.height // 2
-    centre = min(max(round(y), SAFE_AREA.y + half), SAFE_AREA.y + SAFE_AREA.height - half)
-    return replace(LOWER_CAPTIONS, y=centre - half)
+def _custom_caption_area(y: float, canvas: Canvas) -> Box:
+    """Where a caption line centred at height `y` goes, kept inside the Safe Area of `canvas`."""
+    lower, safe = canvas.lower_captions, canvas.safe_area
+    half = lower.height // 2
+    centre = min(max(round(y), safe.y + half), safe.y + safe.height - half)
+    return replace(lower, y=centre - half)
 
 
 def _caption_size(text: str, area: Box, style: CaptionStyle, scale: float = 1.0) -> float:
@@ -2967,29 +2969,34 @@ def _choose(layout: Layout, count: int | None) -> SceneLayout:
     return SceneLayout.SPLIT if count == 2 else SceneLayout.BLUR
 
 
-def _track(start: float, end: float, faces: list[FrameFaces] | None, source: SourceMetadata, camera: CameraTuning) -> Panel:
-    """A full-height 9:16 crop that follows the speaker's face through the Scene from `start` to `end`;
-    in the middle of the frame while no face is known."""
-    panel = _centre_crop(source.width, source.height)
+def _track(
+    start: float, end: float, faces: list[FrameFaces] | None, source: SourceMetadata, camera: CameraTuning, canvas: Canvas
+) -> Panel:
+    """A full-height crop of the Canvas's shape that follows the speaker's face through the Scene from
+    `start` to `end`; in the middle of the frame while no face is known."""
+    panel = _centre_crop(source.width, source.height, canvas)
     if not faces:
         return replace(panel, path=[replace(panel.path[0], at=start)])
     tracked = _track_faces(faces, source.width, source.height, camera)
     return _follow(panel, _follow_speaker(tracked, source.fps, camera), start, end, source, camera)
 
 
-def _split(start: float, end: float, faces: list[FrameFaces] | None, source: SourceMetadata, camera: CameraTuning) -> list[Panel]:
-    """Two 9:8 crops, each half as wide as the frame, for the panels stacked top and bottom: the
+def _split(
+    start: float, end: float, faces: list[FrameFaces] | None, source: SourceMetadata, camera: CameraTuning, canvas: Canvas
+) -> list[Panel]:
+    """Two crops (9:8 on 9:16), each half as wide as the frame, for the panels stacked top and bottom: the
     two faces seen most in the Scene's sampled frames `faces`, each followed by its own camera, the
     left one's on top. Without `faces`, the frame's left half on top and its right half below."""
     width, height = source.width, source.height
+    panel_width, panel_height = canvas.width, canvas.split_height
     crop_width = _even_floor(width / 2)
-    crop_height = _even(crop_width * SPLIT_HEIGHT / OUTPUT_WIDTH)
+    crop_height = _even(crop_width * panel_height / panel_width)
     if crop_height > _even_floor(height):
         crop_height = _even_floor(height)
-        crop_width = _even(crop_height * OUTPUT_WIDTH / SPLIT_HEIGHT)
+        crop_width = _even(crop_height * panel_width / panel_height)
     y = _centred(height, crop_height)
     halves = [
-        Panel(Box(0, i * SPLIT_HEIGHT, OUTPUT_WIDTH, SPLIT_HEIGHT), crop_width, crop_height,
+        Panel(Box(0, i * panel_height, panel_width, panel_height), crop_width, crop_height,
               [CropPoint(start, min(max(_even(centre - crop_width / 2), 0), _even_floor(width - crop_width)), y)])
         for i, centre in enumerate((width / 4, width * 3 / 4))
     ]
@@ -3013,12 +3020,12 @@ def _split(start: float, end: float, faces: list[FrameFaces] | None, source: Sou
     ]
 
 
-def _blur(start: float, source: SourceMetadata) -> list[Panel]:
-    """The whole frame as large as fits in the output, centred over the full-height 9:16 crop from its
-    middle, blurred, which fills the output."""
-    background = _centre_crop(source.width, source.height)
+def _blur(start: float, source: SourceMetadata, canvas: Canvas) -> list[Panel]:
+    """The whole frame as large as fits on `canvas`, centred over the full-height crop of the Canvas's
+    shape from its middle, blurred, which fills it."""
+    background = _centre_crop(source.width, source.height, canvas)
     background = replace(background, path=[replace(background.path[0], at=start)], blur=True)
-    return [background, _fitted(source.width, source.height, start)]
+    return [background, _fitted(source.width, source.height, start, canvas)]
 
 
 def _follow(
@@ -3193,34 +3200,34 @@ def _spring(position: float, speed: float, goal: float, rate: float, step: float
     return goal + moved, speed
 
 
-def _centre_crop(width: int, height: int) -> Panel:
-    """The full-height 9:16 crop from the middle of a landscape (or square) frame."""
+def _centre_crop(width: int, height: int, canvas: Canvas) -> Panel:
+    """The full-height crop of the Canvas's shape from the middle of a landscape (or square) frame."""
     crop_height = _even_floor(height)
-    crop_width = min(_even(crop_height * OUTPUT_WIDTH / OUTPUT_HEIGHT), _even_floor(width))
+    crop_width = min(_even(crop_height * canvas.width / canvas.height), _even_floor(width))
     x = _centred(width, crop_width)
     y = _centred(height, crop_height)
-    return Panel(Box(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT), crop_width, crop_height, [CropPoint(0.0, x, y)])
+    return Panel(Box(0, 0, *canvas.size), crop_width, crop_height, [CropPoint(0.0, x, y)])
 
 
-def _filled(width: int, height: int, start: float) -> Panel:
-    """The largest 9:16 crop from the middle of a frame of any shape, filling the output."""
-    if width * OUTPUT_HEIGHT >= height * OUTPUT_WIDTH:
+def _filled(width: int, height: int, start: float, canvas: Canvas) -> Panel:
+    """The largest crop of the Canvas's shape from the middle of a frame of any shape, filling `canvas`."""
+    if width * canvas.height >= height * canvas.width:
         crop_height = _even_floor(height)
-        crop_width = min(_even(crop_height * OUTPUT_WIDTH / OUTPUT_HEIGHT), _even_floor(width))
+        crop_width = min(_even(crop_height * canvas.width / canvas.height), _even_floor(width))
     else:
         crop_width = _even_floor(width)
-        crop_height = min(_even(crop_width * OUTPUT_HEIGHT / OUTPUT_WIDTH), _even_floor(height))
+        crop_height = min(_even(crop_width * canvas.height / canvas.width), _even_floor(height))
     x, y = _centred(width, crop_width), _centred(height, crop_height)
-    return Panel(Box(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT), crop_width, crop_height, [CropPoint(start, x, y)])
+    return Panel(Box(0, 0, *canvas.size), crop_width, crop_height, [CropPoint(start, x, y)])
 
 
-def _fitted(width: int, height: int, start: float) -> Panel:
-    """The whole frame, as large as fits in the output and centred in it: a 9:16 one fills it."""
+def _fitted(width: int, height: int, start: float, canvas: Canvas) -> Panel:
+    """The whole frame, as large as fits on `canvas` and centred on it: one of its shape fills it."""
     crop_width, crop_height = _even_floor(width), _even_floor(height)
-    scale = min(OUTPUT_WIDTH / crop_width, OUTPUT_HEIGHT / crop_height)
-    area_width = min(_even(crop_width * scale), OUTPUT_WIDTH)
-    area_height = min(_even(crop_height * scale), OUTPUT_HEIGHT)
-    area = Box(_centred(OUTPUT_WIDTH, area_width), _centred(OUTPUT_HEIGHT, area_height), area_width, area_height)
+    scale = min(canvas.width / crop_width, canvas.height / crop_height)
+    area_width = min(_even(crop_width * scale), canvas.width)
+    area_height = min(_even(crop_height * scale), canvas.height)
+    area = Box(_centred(canvas.width, area_width), _centred(canvas.height, area_height), area_width, area_height)
     return Panel(area, crop_width, crop_height, [CropPoint(start, 0, 0)])
 
 

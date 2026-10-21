@@ -47,7 +47,8 @@ import cv2
 import numpy as np
 
 from app.candidates import Border, Shadow
-from app.planner import FRAME, Picture, picture_at
+from app.canvas import PORTRAIT
+from app.planner import Picture, picture_at
 from app.segment_time import SegmentTime
 from app.video_effects import Clock, VideoEffect, scaled_effects, video_effect_chain
 
@@ -70,7 +71,7 @@ def shadow_room(shadow: Shadow) -> int:
 
 class PictureFrames:
     """The frames of one keyed `picture`, each drawn into one reused frame of the Clip's size `frame`
-    (the plan's own by default; the renderer gives the size it draws the plan at), of an item whose
+    (the 9:16 Canvas's by default; the renderer gives the size it draws the plan at), of an item whose
     pixels are `image` (RGBA, its whole size), or of a video's frames, each cropped and flipped
     already (and maybe scaled), `show`n before it is drawn. The picture at a time is `sampled` from
     it: by its motion (`picture_at`) unless another rule is given (a picture layer's animations,
@@ -80,7 +81,7 @@ class PictureFrames:
         self,
         picture: Picture,
         image: np.ndarray | None = None,
-        frame: tuple[int, int] = FRAME,
+        frame: tuple[int, int] = PORTRAIT.size,
         sampled: Callable[[float], Picture] | None = None,
     ) -> None:
         self.picture = picture

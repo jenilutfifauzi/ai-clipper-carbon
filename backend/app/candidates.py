@@ -9,6 +9,7 @@ from typing import Annotated, Any, NamedTuple
 from pydantic import AfterValidator, BeforeValidator, Field, FiniteFloat, StringConstraints, WithJsonSchema
 
 from app.audio_effects import AUDIO_EFFECTS_MAX, AudioEffect, checked_effects
+from app.canvas import PORTRAIT
 from app.fonts import DEFAULT_FONT
 from app.segment_time import segment_time, track_length
 from app.video_effects import VIDEO_EFFECTS_MAX, VideoEffect, checked_video_effects
@@ -148,7 +149,7 @@ def _cut(value: float, most: float) -> float:
 
 @dataclass(frozen=True)
 class Transform:
-    """Where and how a picture sits on the 1080×1920 frame (docs/adr/0007): centred on (x, y) in
+    """Where and how a picture sits on the Canvas (docs/adr/0007, 0022): centred on (x, y) in
     output pixels, which stays on the frame though the picture may go past its edges; `scale` times its fitted size (the largest that fits the frame keeping its aspect: 1
     fits), stretched `stretch_x` across and `stretch_y` down on top of that (1 keeps its aspect);
     turned `rotation` degrees clockwise about its centre, mirrored left to right (`flip_h`) or top to
@@ -156,8 +157,8 @@ class Transform:
     item's Keyframes move (docs/adr/0008). A centre given off the
     frame is brought onto it."""
 
-    x: FiniteFloat = 540
-    y: FiniteFloat = 960
+    x: FiniteFloat = PORTRAIT.width // 2
+    y: FiniteFloat = PORTRAIT.height // 2
     scale: Annotated[FiniteFloat, Field(ge=MIN_SCALE, le=MAX_SCALE)] = 1.0
     stretch_x: Annotated[FiniteFloat, Field(ge=0.1, le=10)] = 1.0
     stretch_y: Annotated[FiniteFloat, Field(ge=0.1, le=10)] = 1.0
@@ -167,8 +168,8 @@ class Transform:
     opacity: Annotated[FiniteFloat, Field(ge=0, le=1)] = 1.0
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "x", _cut(self.x, 1080))
-        object.__setattr__(self, "y", _cut(self.y, 1920))
+        object.__setattr__(self, "x", _cut(self.x, PORTRAIT.width))
+        object.__setattr__(self, "y", _cut(self.y, PORTRAIT.height))
 
 
 # A new Overlay's: half its fitted size at the frame's centre, 540 px wide for any item wider than
@@ -463,8 +464,8 @@ SOUND_KEYS = (KeyProperty.VOLUME,)
 # Each property's range, in its own units. A centre beyond the frame is brought onto it, as a
 # Transform's is; any other value outside its range is refused. A picture may turn several times.
 KEY_RANGES = {
-    KeyProperty.X: (0.0, 1080.0),
-    KeyProperty.Y: (0.0, 1920.0),
+    KeyProperty.X: (0.0, float(PORTRAIT.width)),
+    KeyProperty.Y: (0.0, float(PORTRAIT.height)),
     KeyProperty.SCALE: (MIN_SCALE, MAX_SCALE),
     KeyProperty.ROTATION: (-3600.0, 3600.0),
     KeyProperty.OPACITY: (0.0, 1.0),

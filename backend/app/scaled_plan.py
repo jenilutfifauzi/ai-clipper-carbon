@@ -1,10 +1,10 @@
 """A Render Plan drawn at another size (docs/adr/0021-export-presets-and-a-plan-drawn-at-any-size.md).
 
-The planner works in 1080×1920 output pixels whatever the Export Settings' resolution: the preview,
-the Preview Plan, the plan file beside a Clip and every saved position are in them. The renderer
-draws a plan at the output's size by `scaled_plan`: every coordinate and size the plan holds in
-output pixels is multiplied by one factor, the output's height over the plan's (2/3 at 720p, 2 at
-4K). What is in other pixels stays: a Scene's crops and their paths are in the Source's, a Picture's
+The planner works in its Canvas's output pixels (app/canvas.py, docs/adr/0022; 1080×1920 for
+9:16) whatever the Export Settings' resolution: the preview, the Preview Plan, the plan file beside a
+Clip and every saved position are in them. The renderer draws a plan at the output's size by
+`scaled_plan`: every coordinate and size the plan holds in output pixels is multiplied by one factor,
+the output's short side over the plan's (2/3 at 720p, 2 at 4K). What is in other pixels stays: a Scene's crops and their paths are in the Source's, a Picture's
 crop and item size in its item's; and times, Eases, scales, rotations and opacities have no pixels.
 
 - A Scene's panels' areas are scaled even and kept inside the frame, as the planner lays them,
@@ -20,7 +20,7 @@ crop and item size in its item's; and times, Eases, scales, rotations and opacit
   1080 one of the same layer don't collide.
 - The captions' and the hook's boxes, sizes and anchors and the Watermark's area are scaled, so
   that the plan is whole. The renderer, though, writes their ASS script from the plan in its own
-  pixels (PlayRes 1080×1920, which its styles' sizes, outlines and shadows are in), and libass
+  pixels (PlayRes its Canvas's size, which its styles' sizes, outlines and shadows are in), and libass
   scales it to the frame, drawing the text sharp at any size. The Logo is laid over by the scaled area.
 
 A plan at its own size is itself.
@@ -31,8 +31,8 @@ from dataclasses import replace
 from app.candidates import Keyframe, KeyProperty, Keys
 from app.pictures import turned_size
 from app.video_effects import scaled_effects
+from app.canvas import SHORT_SIDE
 from app.planner import (
-    FRAME,
     MAX_LAYER_PICTURE,
     Box,
     HookEvent,
@@ -48,7 +48,7 @@ def scaled_plan(plan: RenderPlan, size: tuple[int, int]) -> RenderPlan:
     """`plan` as drawn in a `size` (width, height) frame: itself at its own size."""
     if size == (plan.width, plan.height):
         return plan
-    k = size[1] / plan.height
+    k = min(size) / min(plan.width, plan.height)
     watermark = plan.watermark
     return replace(
         plan,
@@ -72,7 +72,7 @@ def drawn_scale(plan: RenderPlan) -> float:
     """How many of a drawn plan's pixels one of the planner's output pixels is: 1 for a plan at the
     planner's size, 2 for one drawn at 4K. What the renderer has in the planner's pixels (Blur's
     tuning, a Slide's distance) is scaled by it."""
-    return plan.height / FRAME[1]
+    return min(plan.width, plan.height) / SHORT_SIDE
 
 
 def _scaled_scene(scene: ScenePlan, k: float, size: tuple[int, int]) -> ScenePlan:

@@ -16,6 +16,8 @@ from typing import Annotated, Literal, NamedTuple
 
 from pydantic import AfterValidator, Field
 
+from app.canvas import REFERENCE
+
 # Every Clip's sound: AAC at this bitrate, in kb/s.
 AUDIO_KBPS = 192
 # The software encoders' speed: x264's and x265's preset, and SVT-AV1's at the same place on its own scale.
@@ -87,24 +89,27 @@ class ExportSettings:
 TIER_CRF = {Quality.HIGH: 16, Quality.RECOMMENDED: 20, Quality.SMALLEST: 26}
 MAX_RATE_FACTOR = 1.5
 SVT_CRF_OFFSET = 8
-# Each tier's target at 1080x1920 and 30 fps, in Mb/s.
+# Each tier's target at 1080p (1080x1920's pixels) and 30 fps, in Mb/s.
 TIER_MBPS = {Quality.HIGH: 16, Quality.RECOMMENDED: 8, Quality.SMALLEST: 4}
 # The bitrate each codec needs for the picture H.264 gives at 1.
 CODEC_FACTORS = {Codec.H264: 1.0, Codec.HEVC: 0.6, Codec.AV1: 0.5}
 
 
-def output_size(settings: ExportSettings) -> tuple[int, int]:
-    """The output's width and height in pixels."""
-    return settings.resolution, settings.resolution * 16 // 9
+def output_size(settings: ExportSettings, frame: tuple[int, int] = REFERENCE) -> tuple[int, int]:
+    """The output's width and height in pixels for a plan whose Canvas is `frame` (width, height):
+    its shape, its short side the resolution (docs/adr/0022), each side kept even."""
+    width, height = frame
+    k = settings.resolution / min(width, height)
+    return round(width * k / 2) * 2, round(height * k / 2) * 2
 
 
-def target_kbps(settings: ExportSettings, fps: float) -> int:
-    """The video bitrate the encoders aim for at `fps`, in kb/s. A frame rate under 30 gets 30's, as
+def target_kbps(settings: ExportSettings, fps: float, frame: tuple[int, int] = REFERENCE) -> int:
+    """The video bitrate the encoders aim for at `fps` for a plan whose Canvas is `frame`, in kb/s. A frame rate under 30 gets 30's, as
     the platforms recommend one bitrate up to 30 fps."""
     if settings.bitrate is not None:
         return settings.bitrate.kbps
-    width, height = output_size(settings)
-    mbps = TIER_MBPS[settings.quality] * width * height / (1080 * 1920) * max(fps, 30) / 30 * CODEC_FACTORS[settings.codec]
+    width, height = output_size(settings, frame)
+    mbps = TIER_MBPS[settings.quality] * width * height / (REFERENCE[0] * REFERENCE[1]) * max(fps, 30) / 30 * CODEC_FACTORS[settings.codec]
     return round(mbps * 1000)
 
 
@@ -120,14 +125,14 @@ class EncoderArgs(NamedTuple):
     bitrate_fallback: bool
 
 
-def encoder_args(settings: ExportSettings, fps: float, encoder: str) -> EncoderArgs:
-    """The arguments that make `encoder` encode the Clip as `settings` say at `fps`.
+def encoder_args(settings: ExportSettings, fps: float, encoder: str, frame: tuple[int, int] = REFERENCE) -> EncoderArgs:
+    """The arguments that make `encoder` encode the Clip, whose Canvas is `frame`, as `settings` say at `fps`.
 
     VideoToolbox (and an encoder unknown here) encodes at the target as its average bitrate, and does
     VBR for CBR. libx264 and libx265 encode at the tier's CRF under the cap, or hold a CBR's bitrate
     exactly; SVT-AV1 the same, but does VBR for CBR, which it holds only in low-delay streams.
     """
-    target = target_kbps(settings, fps)
+    target = target_kbps(settings, fps, frame)
     cbr = settings.bitrate is not None and settings.bitrate.mode is RateMode.CBR
     tag = {Codec.H264: ["-profile:v", "high"], Codec.HEVC: ["-tag:v", "hvc1"], Codec.AV1: []}[settings.codec]
     crf, cap = TIER_CRF[settings.quality], _spelled(round(target * MAX_RATE_FACTOR))

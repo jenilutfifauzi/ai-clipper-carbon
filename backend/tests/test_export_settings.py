@@ -36,6 +36,15 @@ def test_the_output_is_9_16_with_the_resolution_as_its_short_side(resolution, si
 
 
 @pytest.mark.parametrize(
+    "frame, resolution, size",
+    [((1920, 1080), 1080, (1920, 1080)), ((1920, 1080), 720, (1280, 720)), ((1920, 1080), 2160, (3840, 2160)),
+     ((1080, 1080), 1440, (1440, 1440)), ((1080, 1350), 720, (720, 900))],
+)
+def test_the_output_takes_its_canvass_shape_at_the_resolution(frame, resolution, size):
+    assert output_size(ExportSettings(resolution=resolution), frame) == size
+
+
+@pytest.mark.parametrize(
     "settings, fps, kbps",
     [
         # The tiers at 1080p and 30 fps.

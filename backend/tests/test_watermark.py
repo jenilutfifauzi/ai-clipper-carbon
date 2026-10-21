@@ -12,7 +12,8 @@ import numpy as np
 import pytest
 
 from app.config import load_settings
-from app.planner import OUTPUT_HEIGHT, OUTPUT_WIDTH, SAFE_AREA, WATERMARK_MARGIN, Box, font_metrics, plan_render, watermark
+from app.canvas import PORTRAIT
+from app.planner import WATERMARK_MARGIN, Box, font_metrics, plan_render, watermark
 from app.renderer import _ass
 from app.styles import (
     DEFAULT,
@@ -49,8 +50,8 @@ def test_no_watermark_by_default_and_the_default_script_is_unchanged():
 
 
 def test_the_nine_positions_sit_inside_the_safe_area_by_its_margin():
-    margin = Box(SAFE_AREA.x + WATERMARK_MARGIN, SAFE_AREA.y + WATERMARK_MARGIN,
-                 SAFE_AREA.width - 2 * WATERMARK_MARGIN, SAFE_AREA.height - 2 * WATERMARK_MARGIN)
+    margin = Box(PORTRAIT.safe_area.x + WATERMARK_MARGIN, PORTRAIT.safe_area.y + WATERMARK_MARGIN,
+                 PORTRAIT.safe_area.width - 2 * WATERMARK_MARGIN, PORTRAIT.safe_area.height - 2 * WATERMARK_MARGIN)
     areas = {}
     for position in WatermarkPosition:
         if position is WatermarkPosition.CUSTOM:
@@ -63,7 +64,7 @@ def test_the_nine_positions_sit_inside_the_safe_area_by_its_margin():
     assert areas["bottom_right"].x + 200 == margin.x + margin.width
     assert areas["bottom_right"].y + 100 == margin.y + margin.height
     # The middle column is centred in the frame, like the captions and the hook.
-    assert areas["top"].x == areas["middle"].x == areas["bottom"].x == (OUTPUT_WIDTH - 200) // 2
+    assert areas["top"].x == areas["middle"].x == areas["bottom"].x == (PORTRAIT.width - 200) // 2
     assert areas["left"].y == areas["middle"].y == areas["right"].y
 
 
@@ -71,7 +72,7 @@ def test_a_custom_watermark_is_centred_where_it_was_dragged_and_kept_in_the_fram
     style = WatermarkStyle(kind=WatermarkKind.LOGO, logo="ab12cd34", position=WatermarkPosition.CUSTOM, x=300, y=700, size=100)
     assert watermark(style, (100, 100)).area == Box(250, 650, 100, 100)
     corner = WatermarkStyle(kind=WatermarkKind.LOGO, logo="ab12cd34", position=WatermarkPosition.CUSTOM, x=1080, y=1920, size=100)
-    assert watermark(corner, (100, 100)).area == Box(OUTPUT_WIDTH - 100, OUTPUT_HEIGHT - 100, 100, 100)
+    assert watermark(corner, (100, 100)).area == Box(PORTRAIT.width - 100, PORTRAIT.height - 100, 100, 100)
 
 
 def test_a_text_watermark_is_measured_in_its_font_and_set_smaller_when_wider_than_the_frame():
@@ -79,7 +80,7 @@ def test_a_text_watermark_is_measured_in_its_font_and_set_smaller_when_wider_tha
     assert (event.size, event.area.height) == (60, 60)
     assert event.area.width == pytest.approx(font_metrics(TEXT.font).width("@kanal", 60), abs=1)
     wide = watermark(WatermarkStyle(kind=WatermarkKind.TEXT, text="W" * 60, size=200))
-    assert wide.size < 200 and wide.area.width <= OUTPUT_WIDTH
+    assert wide.size < 200 and wide.area.width <= PORTRAIT.width
 
 
 def test_a_text_watermark_is_the_first_event_of_the_script_for_the_whole_clip():

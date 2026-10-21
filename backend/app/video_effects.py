@@ -31,6 +31,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from app.audio_effects import COLOUR, Setting, colour_setting
+from app.canvas import REFERENCE
 
 # The most entries one picture's stack holds (each effect at most once, so the catalogue's size bounds it too).
 VIDEO_EFFECTS_MAX = 20
@@ -188,8 +189,8 @@ def _fisheye(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> l
 # size (Concat's are 16 and 12 of its picture's pixels).
 GLOW_SIGMA = 16.0
 BLOOM_SIGMA = 12.0
-# The frame a fitted picture fits, whose size a picture's light spreads with.
-_FRAME = (1080, 1920)
+# The frame a fitted picture fits, whose size a picture's light spreads with: the 9:16 Canvas's.
+_FRAME = REFERENCE
 
 
 def _screened(size: tuple[int, int], sigma: float, light: str, over: str) -> list[str]:

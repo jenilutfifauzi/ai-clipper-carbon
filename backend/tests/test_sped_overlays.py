@@ -10,7 +10,8 @@ import pytest
 
 from app.candidates import KeyProperty, Overlay
 from app.pictures import cover_scale
-from app.planner import FRAME, MediaInfo, overlay_events, overlay_sound
+from app.canvas import PORTRAIT
+from app.planner import MediaInfo, overlay_events, overlay_sound
 from test_keyed_volume import tone_level
 from test_media_library import make, upload
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
@@ -21,7 +22,7 @@ from test_sped_media_segments import FPS, TONE, centre_luma, from_source_at_30, 
 
 VIDEO, STILL = "ab" * 16, "cd" * 16
 ITEMS = {VIDEO: MediaInfo(640, 360, 10.0, True), STILL: MediaInfo(200, 100, None, False)}
-COVER = {"scale": cover_scale(640, 360, FRAME)}
+COVER = {"scale": cover_scale(640, 360, PORTRAIT.size)}
 
 
 def overlay(**fields) -> Overlay:

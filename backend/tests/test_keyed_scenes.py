@@ -12,7 +12,8 @@ from app.candidates import Background, BackgroundKind, Framing, Keyframe, KeyPro
 from app.config import load_settings
 from app.keyframes import value_at
 from app.pictures import cover_scale
-from app.planner import FRAME, Scene, SceneLayout, SegmentInput, plan_render
+from app.canvas import PORTRAIT
+from app.planner import Scene, SceneLayout, SegmentInput, plan_render
 from test_keyframes import clip_of
 from test_manual_layout import SOURCE
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
@@ -55,7 +56,7 @@ def test_a_manual_scenes_keyframes_come_out_in_timeline_time_in_every_segment_th
 
 
 def test_a_manual_scene_covering_the_frame_throughout_has_no_background_and_its_keyframes_past_its_end_are_ignored():
-    cover = cover_scale(1920, 1080, FRAME)
+    cover = cover_scale(1920, 1080, PORTRAIT.size)
     push = {KeyProperty.SCALE: [Keyframe(0, cover + 0.1), Keyframe(2, cover + 0.5), Keyframe(9, 1)]}
     [scene] = plan_render(100, 103, SOURCE, layout_overrides=[by_hand(1, push, Framing())]).scenes
     # The 3 s Scene never reaches its Keyframe at 9 s, which is left out of its track.

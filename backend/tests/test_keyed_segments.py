@@ -9,7 +9,8 @@ import pytest
 from app.candidates import Background, BackgroundKind, Framing, Keyframe, KeyProperty, Transform
 from app.keyframes import value_at
 from app.pictures import cover_scale
-from app.planner import FRAME, SceneLayout, SegmentInput, plan_render
+from app.canvas import PORTRAIT
+from app.planner import SceneLayout, SegmentInput, plan_render
 from test_keyframes import clip_of
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
 from test_mcp import reviewed as reviewed_by_mcp
@@ -24,7 +25,7 @@ from test_segments import ramp_video  # noqa: F401
 
 VIDEO = "ab" * 16
 # A 1280x720 video covers the frame at this scale.
-COVER = cover_scale(1280, 720, FRAME)
+COVER = cover_scale(1280, 720, PORTRAIT.size)
 RED = np.array([255, 0, 0])
 
 
@@ -162,7 +163,7 @@ def test_a_keyed_media_segment_is_drawn_at_its_sampled_size_and_its_background_s
     # 640x360 fits as 1080x607.5: from half that wide to all of it, over blue; and zooming out from
     # cover to scale 1 over its blurred self.
     grow = {"scale": [{"at": 0, "value": 0.5}, {"at": 2, "value": 1}]}
-    cover = cover_scale(640, 360, FRAME)
+    cover = cover_scale(640, 360, PORTRAIT.size)
     zoom_out = {"scale": [{"at": 0, "value": cover}, {"at": 1.5, "value": 1}]}
     candidate = patch(client, job, candidate, segments=[
         {"id": "grow", "start": 0, "end": 2, "media": red["id"], "framing": over_blue, "keys": grow},

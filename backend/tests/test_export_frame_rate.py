@@ -18,7 +18,8 @@ from app.config import RenderTuning
 from app.encoding import ExportSettings
 from app.layer_pictures import make_pictures
 from app.pictures import cover_scale
-from app.planner import FRAME, Join, SegmentInput, TransitionEvent, plan_render
+from app.canvas import PORTRAIT as NINE_SIXTEEN
+from app.planner import Join, SegmentInput, TransitionEvent, plan_render
 from app.renderer import Renderer
 from app.video_source import SourceMetadata
 from test_export_settings import picture
@@ -35,7 +36,7 @@ SOURCE = SourceMetadata(duration=600, fps=25.0, width=1920, height=1080, codec="
 def test_a_plan_at_a_given_rate_carries_it_and_checks_a_keyed_manual_scene_at_its_frames():
     # A Manual Scene's picture covers the frame at every one of the 25 fps Source's frames (0.04 s
     # apart), but dips under cover at 0.1 s, between two of them: a frame of a 60 fps Clip.
-    cover = cover_scale(1920, 1080, FRAME)
+    cover = cover_scale(1920, 1080, NINE_SIXTEEN.size)
     dip = {KeyProperty.SCALE: [Keyframe(0, cover + 0.1), Keyframe(0.1, cover - 0.01), Keyframe(0.2, cover + 0.1)]}
     overrides = [by_hand(1, dip, Framing())]
     at_source = plan_render(100, 103, SOURCE, layout_overrides=overrides)
@@ -157,3 +158,10 @@ def test_the_preview_plan_stays_at_the_sources_rate(client):
     candidate = add(client, job, "Podcast", "ya")
     plan = preview(client, job, candidate)["plan"]
     assert plan["fps"] == plan["source_fps"] == 25
+
+
+def test_the_preview_plan_has_its_canvas_and_safe_area(client):
+    job = reviewed(client)
+    plan = preview(client, job, add(client, job, "Podcast", "ya"))["plan"]
+    assert (plan["width"], plan["height"]) == (1080, 1920)
+    assert plan["safe_area"] == {"x": 0, "y": 232, "width": 950, "height": 1304}

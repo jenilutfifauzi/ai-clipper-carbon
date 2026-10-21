@@ -12,8 +12,8 @@ about a second for a 90 s Clip. Without a target, nothing is measured and the mi
 The same mix, measured and normalized the same way, is what "Save audio" writes alone
 (`Renderer.render_audio`).
 
-The Render Plan is in 1080×1920 output pixels; the Clip is the Export Settings' size, and the plan
-is drawn at it (app/scaled_plan.py, docs/adr/0021): every coordinate and size the filter graph is
+The Render Plan is in its Canvas's output pixels (app/canvas.py, docs/adr/0022); the Clip is that
+shape at the Export Settings' short side, and the plan is drawn at it (app/scaled_plan.py, docs/adr/0021): every coordinate and size the filter graph is
 given comes from the plan scaled to that size, the keyed pictures' frames are that size, and the
 picture layers' pictures are rasterised at it (`picture_layouts` names them; they are made before
 the render). The ASS script for the captions, the hook and a text Watermark is written from the plan
@@ -264,7 +264,7 @@ class Renderer:
                     if stderr is None and parts[1].is_file():
                         os.replace(parts[0], video)
                         os.replace(parts[1], poster)
-                        return Encoded(encoder, encoder_args(export, plan.fps, encoder).bitrate_fallback)
+                        return Encoded(encoder, encoder_args(export, plan.fps, encoder, (plan.width, plan.height)).bitrate_fallback)
                     stderr = stderr or "no poster frame was written"
                     logger.warning("Rendering with %s failed: %s", encoder, stderr)
                     failures.append(f"{encoder}: {last_lines(stderr)}")
@@ -326,7 +326,7 @@ class Renderer:
         `output` for as long as the block runs."""
         # The plan at the output's size, which the graph and the frame processes draw; the ASS script
         # is written from the plan in its own pixels, which libass scales to the frame.
-        drawn = scaled_plan(plan, output_size(export))
+        drawn = scaled_plan(plan, output_size(export, (plan.width, plan.height)))
         if missing := [event.layer.id for event in drawn.picture_layers if event.image not in pictures]:
             raise RuntimeError(f"The pictures of picture layers {', '.join(missing)} weren't made")
         # With picture layers, the script is cut in two about them: what they are drawn over, then the hook.
@@ -568,7 +568,7 @@ class Renderer:
             *sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *scene_inputs, *picture_inputs,
             "-filter_complex", f"{frame};{audio}",
             "-map", "[v]", "-map", "[a]", "-map_metadata", "-1", "-map_chapters", "-1",
-            *encoder_args(export, plan.fps, encoder).args, "-g", str(max(1, round(plan.fps * tuning.keyframe_secs))),
+            *encoder_args(export, plan.fps, encoder, (plan.width, plan.height)).args, "-g", str(max(1, round(plan.fps * tuning.keyframe_secs))),
             "-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k",
             "-movflags", "+faststart", "-f", "mp4", str(video),
             "-map", "[poster]", "-frames:v", "1", "-q:v", "3", "-f", "image2", "-update", "1", str(poster),
@@ -637,7 +637,7 @@ def picture_layouts(plan: RenderPlan, export: ExportSettings) -> list[PictureLay
     """The layouts of the pictures a render of `plan` as `export` says draws, rasterised at its size
     (docs/adr/0010, 0021): what to make (app/layer_pictures.py) before the render, which takes them
     by their names."""
-    return [event.layout for event in scaled_plan(plan, output_size(export)).picture_layers]
+    return [event.layout for event in scaled_plan(plan, output_size(export, (plan.width, plan.height))).picture_layers]
 
 
 def available_codecs(ffmpeg: Path, tuning: RenderTuning) -> frozenset[Codec]:

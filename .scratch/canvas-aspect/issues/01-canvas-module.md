@@ -20,7 +20,7 @@ Also in this ticket:
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Canvas module tests: the four sizes, the four Safe Areas (9:16 identical to today's), and a Reference Space mapping on 16:9.
 - [ ] A 9:16 Candidate's Render Plan and Preview Plan are identical to before this ticket, for each Layout, captions, hook, watermark, Text Layer and Overlay. Compare whole plans for a few fixtures.
@@ -28,3 +28,19 @@ Also in this ticket:
 - [ ] The output size for 720/1080/1440/2160 on 9:16 is unchanged. On 1:1 and 16:9 (called directly, before Candidates can have them), it follows the short side.
 - [ ] No remaining 1080/1920 literals in the planner other than inside the Canvas module and the Reference Space (Style validators keep their 1920/1080 limits).
 - [ ] Only the affected backend test files are run.
+
+## Comments
+
+**2026-10-21 (implementation):** `app/canvas.py` holds the four Canvases, their Safe Areas and caption places, and the Reference Space mapping. The planner takes a `canvas` (default `PORTRAIT`) through every function that placed things on the frame. `RenderPlan` and the Preview Plan carry `width`, `height` and `safe_area`. `output_size`, `target_kbps` and `encoder_args` take the plan's frame. `scaled_plan` scales by short side.
+
+Left on the 9:16 Canvas on purpose, for 03 (which knows the Candidate's aspect):
+- `Transform.__post_init__` clamps its centre to 1080×1920. `KEY_RANGES` X/Y are 0–1080 and 0–1920, and `picture_at` and `_frozen` clamp keyed centres to them. These are Candidate-level checks that need the aspect.
+- `CueEdit.x`/`y` use the Reference Space's `Width`/`Height` types. Per the spec they are Canvas pixels and need per-Canvas checks.
+- Callers that still use the default `PORTRAIT`:
+  - `rendering.py` (`plan_render`, which needs `canvas=` from the Candidate);
+  - `review.py` (`fit_hook`);
+  - `layer_pictures.py` (`text_event`, the pre-made pictures);
+  - the size estimate in `api.py`.
+- `video_effects._FRAME`, which sizes Glow's and Bloom's spread, is the Reference Space. On a 16:9 Canvas a full-frame picture's spread would be about 1.8× too wide, so it should take the plan's Canvas.
+
+Pre-existing failure on `main`, not from this ticket: `tests/test_freeze_frame.py::test_freeze_frames_are_saved_unsnapped_and_validated`. It expects no `video_effects` key on a saved Segment.

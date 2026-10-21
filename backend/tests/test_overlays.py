@@ -17,7 +17,8 @@ from pydantic import TypeAdapter, ValidationError
 from app.candidates import Border, Crop, Overlay, Shadow, Transform
 from app.migration import migrated_candidate, migrated_overlay
 from app.pictures import cover_scale, drawn_size
-from app.planner import FRAME, OUTPUT_WIDTH, MediaInfo, overlay_events
+from app.canvas import PORTRAIT
+from app.planner import MediaInfo, overlay_events
 from test_media_library import make, upload
 from test_render import add, full_frame, preview, render, rendered, reviewed
 # The Sources Seam A renders from (from_render_video makes render_video every test's).
@@ -53,14 +54,14 @@ def box(bounds) -> tuple[int, int, int, int]:
 
 def test_a_picture_is_its_fitted_size_times_its_scale_and_stretch_and_a_cover_scale_fills_the_frame():
     # A 16:9 picture fits the frame's width: 1080 x 607.5, kept even.
-    assert drawn_size(1920, 1080, Transform(), FRAME) == (1080, 608)
-    assert drawn_size(1920, 1080, Transform(scale=0.5), FRAME) == (540, 304)
-    assert cover_scale(1920, 1080, FRAME) == pytest.approx(1920 / 607.5)
+    assert drawn_size(1920, 1080, Transform(), PORTRAIT.size) == (1080, 608)
+    assert drawn_size(1920, 1080, Transform(scale=0.5), PORTRAIT.size) == (540, 304)
+    assert cover_scale(1920, 1080, PORTRAIT.size) == pytest.approx(1920 / 607.5)
     # A 9:16 one fits it exactly, and covers it at 1.
-    assert drawn_size(540, 960, Transform(), FRAME) == (1080, 1920) and cover_scale(540, 960, FRAME) == pytest.approx(1)
+    assert drawn_size(540, 960, Transform(), PORTRAIT.size) == (1080, 1920) and cover_scale(540, 960, PORTRAIT.size) == pytest.approx(1)
     # Stretch is on top of the scale, on its own axis.
-    assert drawn_size(1920, 1080, Transform(scale=0.5, stretch_x=2), FRAME) == (1080, 304)
-    assert drawn_size(1920, 1080, Transform(scale=0.5, stretch_y=0.5), FRAME) == (540, 152)
+    assert drawn_size(1920, 1080, Transform(scale=0.5, stretch_x=2), PORTRAIT.size) == (1080, 304)
+    assert drawn_size(1920, 1080, Transform(scale=0.5, stretch_y=0.5), PORTRAIT.size) == (540, 152)
 
 
 def test_an_overlay_is_drawn_at_its_transform_and_kept_in_the_clip_and_its_video():
@@ -95,7 +96,7 @@ def test_a_turned_picture_is_bounded_by_its_turned_box_about_the_same_centre():
 
 def test_the_centre_is_kept_on_the_frame_and_the_picture_may_go_past_its_edges():
     picture = drawn(Transform(x=1300, y=-40, scale=2))
-    assert picture.centre == (OUTPUT_WIDTH, 0)
+    assert picture.centre == (PORTRAIT.width, 0)
     assert (picture.width, picture.height) == (2160, 1216)
     assert box(picture.bounds) == (0, -608, 2160, 1216)
 
@@ -103,7 +104,7 @@ def test_the_centre_is_kept_on_the_frame_and_the_picture_may_go_past_its_edges()
 def test_a_centre_given_off_the_frame_is_clamped_onto_it_and_a_non_finite_one_is_refused():
     given = TypeAdapter(Transform)
     clamped = given.validate_python({"x": 1200, "y": -5, "scale": 2})
-    assert (clamped.x, clamped.y, clamped.scale) == (OUTPUT_WIDTH, 0, 2)
+    assert (clamped.x, clamped.y, clamped.scale) == (PORTRAIT.width, 0, 2)
     assert (given.validate_python({"y": 2500}).x, given.validate_python({"y": 2500}).y) == (540, 1920)
     for bad in (float("inf"), float("nan"), "x"):
         with pytest.raises(ValidationError):

@@ -13,7 +13,8 @@ import pytest
 from app.analysis import Analyzer
 from app.candidates import Background, BackgroundKind, Crop, Framing, Layout, LayoutOverride, Transform
 from app.pictures import cover_scale
-from app.planner import FRAME, OUTPUT_HEIGHT, OUTPUT_WIDTH, Box, FrameFaces, Scene, SceneLayout, on_frame, picture_of, plan_render
+from app.canvas import PORTRAIT as NINE_SIXTEEN
+from app.planner import Box, FrameFaces, Scene, SceneLayout, on_frame, picture_of, plan_render
 from app.video_source import SourceMetadata
 from test_mcp import HALO_KABAR, call, fails, manual
 # The MCP client the MCP tests use.
@@ -103,21 +104,21 @@ def test_a_track_scenes_framing_draws_its_first_crop():
         [panel] = scene.panels
         start = panel.path[0]
         framing = scene.framing
-        assert 0 <= framing.transform.x <= OUTPUT_WIDTH and framing.background.kind is BackgroundKind.BLUR
+        assert 0 <= framing.transform.x <= NINE_SIXTEEN.width and framing.background.kind is BackgroundKind.BLUR
         drawn = on_frame(picture_of(1920, 1080, framing.transform, framing.crop))
         # The same part of the Source fills the frame, within a pixel.
-        assert (drawn.width, drawn.height) == (OUTPUT_WIDTH, OUTPUT_HEIGHT), centre
+        assert (drawn.width, drawn.height) == (NINE_SIXTEEN.width, NINE_SIXTEEN.height), centre
         assert within_a_pixel(box(drawn.crop), (start.x, start.y, panel.crop_width, panel.crop_height)), (centre, drawn.crop, start)
     # Near the middle, it is the Source zoomed: nothing is cropped.
     [scene] = plan_render(100, 103, SOURCE, [Scene(0, 3)], sampled((3, [face(960)])), Layout.TRACK).scenes
-    assert scene.framing.crop == Crop() and scene.framing.transform.scale == pytest.approx(cover_scale(1920, 1080, FRAME), abs=0.01)
+    assert scene.framing.crop == Crop() and scene.framing.transform.scale == pytest.approx(cover_scale(1920, 1080, NINE_SIXTEEN.size), abs=0.01)
 
 
 def test_blur_offers_scale_1_over_its_blur_and_split_a_centred_cover():
     blur, split = plan_render(100, 106, SOURCE, SCENES, faces(), layout_overrides=[LayoutOverride(1.0, Layout.BLUR)]).scenes
     assert blur.framing == Framing()
     assert split.layout is SceneLayout.SPLIT
-    assert split.framing == Framing(Transform(scale=cover_scale(1920, 1080, FRAME)))
+    assert split.framing == Framing(Transform(scale=cover_scale(1920, 1080, NINE_SIXTEEN.size)))
 
 
 # Seam A

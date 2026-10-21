@@ -13,7 +13,8 @@ import pytest
 from app.candidates import Framing, Segment, TransitionKind, WordEdit, manual_candidate
 from app.config import CameraTuning
 from app.media_words import MediaWordsFailed, MediaWordsStatus, MediaWordsStore
-from app.planner import LOWER_CAPTIONS, TOP_CAPTIONS, Join, SegmentInput, plan_render
+from app.canvas import PORTRAIT
+from app.planner import Join, SegmentInput, plan_render
 from app.rendering import candidate_plan
 from app.styles import CaptionPosition, CaptionStyle, PresetStore
 from app.transcript import Word
@@ -82,10 +83,10 @@ def test_cues_break_at_a_media_segments_joins_and_transitions():
 def test_a_media_segments_scenes_are_captioned_at_the_caption_styles_position_auto_in_the_lower_third():
     words = [Word("halo", 0.2, 0.6)]
     [auto] = plan_render(0, 2, SOURCE, main_track=[talking(0.0, 2.0, words)]).captions
-    assert (auto.area.y, auto.area.height) == (LOWER_CAPTIONS.y, LOWER_CAPTIONS.height)
+    assert (auto.area.y, auto.area.height) == (PORTRAIT.lower_captions.y, PORTRAIT.lower_captions.height)
     top = CaptionStyle(position=CaptionPosition.TOP)
     [placed] = plan_render(0, 2, SOURCE, main_track=[talking(0.0, 2.0, words)], caption_style=top).captions
-    assert placed.area.y == TOP_CAPTIONS.y
+    assert placed.area.y == PORTRAIT.top_captions.y
 
 
 def test_candidate_plan_captions_a_media_segment_with_its_media_words_and_no_source_word_edit_touches_them(tmp_path):

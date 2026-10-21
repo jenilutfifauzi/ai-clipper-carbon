@@ -22,7 +22,8 @@ from app.jobs import CANDIDATES_FILE, REVISIONS_DIR
 from app.layer_pictures import rasterised
 from app.migration import migrated_candidate, migrated_clip, migrated_text_layer
 from app.config import FONTS_DIR, load_settings
-from app.planner import MAX_LAYER_PICTURE, OUTPUT_HEIGHT, OUTPUT_WIDTH, TEXT_MARGIN, Box, TextEvent, font_metrics, plan_render, text_event
+from app.canvas import PORTRAIT
+from app.planner import MAX_LAYER_PICTURE, TEXT_MARGIN, Box, TextEvent, font_metrics, plan_render, text_event
 from app.renderer import _ass
 from app.video_source import SourceMetadata
 from conftest import FIXTURES
@@ -76,18 +77,18 @@ def old_look(at: float) -> np.ndarray:
         path = Path(work, "old.ass")
         path.write_text(script)
         command = [
-            str(load_settings().ffmpeg_bin), "-v", "error", "-f", "lavfi", "-i", f"color=c=0x4a5560:s={OUTPUT_WIDTH}x{OUTPUT_HEIGHT}:r=10:d=7",
+            str(load_settings().ffmpeg_bin), "-v", "error", "-f", "lavfi", "-i", f"color=c=0x4a5560:s={PORTRAIT.width}x{PORTRAIT.height}:r=10:d=7",
             "-vf", f"format=rgb24,ass=filename={path}:fontsdir={FONTS_DIR}", "-ss", f"{at}", "-frames:v", "1",
             "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
         ]
         data = subprocess.run(command, capture_output=True, check=True).stdout
-    return np.frombuffer(data, np.uint8).reshape(OUTPUT_HEIGHT, OUTPUT_WIDTH, 3).astype(float)
+    return np.frombuffer(data, np.uint8).reshape(PORTRAIT.height, PORTRAIT.width, 3).astype(float)
 
 
 def new_look(events: list[TextEvent], at: float) -> np.ndarray:
     """The pictures of the Text Layers shown at `at` (none coming on or going off then) laid over
     GREY, each at its picture's place, as the render lays them."""
-    frame = np.tile(GREY.astype(float), (OUTPUT_HEIGHT, OUTPUT_WIDTH, 1))
+    frame = np.tile(GREY.astype(float), (PORTRAIT.height, PORTRAIT.width, 1))
     for event in events:
         if not event.start <= at < event.end:
             continue
@@ -95,7 +96,7 @@ def new_look(events: list[TextEvent], at: float) -> np.ndarray:
         x, y = (round(c - size / 2) for c, size in zip(event.picture.centre, (event.picture.width, event.picture.height)))
         # Only what is on the frame.
         left, top = max(x, 0), max(y, 0)
-        right, bottom = min(x + pixels.shape[1], OUTPUT_WIDTH), min(y + pixels.shape[0], OUTPUT_HEIGHT)
+        right, bottom = min(x + pixels.shape[1], PORTRAIT.width), min(y + pixels.shape[0], PORTRAIT.height)
         shown = pixels[top - y : bottom - y, left - x : right - x]
         alpha = shown[..., 3:] / 255
         frame[top:bottom, left:right] = shown[..., :3] * alpha + frame[top:bottom, left:right] * (1 - alpha)
@@ -154,11 +155,11 @@ def test_a_sentence_wider_than_the_frame_breaks_between_words_at_its_size_inside
     assert " ".join(wide.lines) == text
     # Each line as long as fits the frame less TEXT_MARGIN and the padding either side: the next
     # word would not.
-    room = OUTPUT_WIDTH - 2 * TEXT_MARGIN - 2 * 30
+    room = PORTRAIT.width - 2 * TEXT_MARGIN - 2 * 30
     for line, after in zip(wide.lines, wide.lines[1:]):
         assert metrics.width(line, 200) <= room < metrics.width(f"{line} {after.split()[0]}", 200)
     widest = max(metrics.width(line, 200) for line in wide.lines)
-    assert wide.area.width == pytest.approx(widest + 60, abs=1) and wide.area.width <= OUTPUT_WIDTH - 2 * TEXT_MARGIN
+    assert wide.area.width == pytest.approx(widest + 60, abs=1) and wide.area.width <= PORTRAIT.width - 2 * TEXT_MARGIN
     assert [y for _, y in wide.anchors] == pytest.approx([wide.anchors[0][1] + i * 1.1 * 200 for i in range(len(wide.lines))])
 
 
@@ -219,7 +220,7 @@ def test_tracking_widens_each_line_by_its_gaps_and_a_line_too_wide_with_it_wraps
     assert fits.lines == [words]
     wrapped = text_event(layer(style={"size": 70, "tracking": 20}, text=words), 10)
     assert len(wrapped.lines) == 2 and " ".join(wrapped.lines) == words
-    assert all(metrics.width(line, 70, 20) <= OUTPUT_WIDTH - 2 * TEXT_MARGIN for line in wrapped.lines)
+    assert all(metrics.width(line, 70, 20) <= PORTRAIT.width - 2 * TEXT_MARGIN for line in wrapped.lines)
     assert wrapped.layout.style.tracking == 20
 
 
@@ -353,8 +354,8 @@ def test_an_old_text_layer_the_planner_kept_inside_the_frame_is_centred_where_it
     old = next(layer for layer in BEFORE["layers"] if layer["id"] == "corner")
     area = next(event for layer, event in zip(BEFORE["layers"], BEFORE["events"]) if layer["id"] == "corner")["area"]
     # Centred on the frame's corner, it was drawn inside the frame.
-    assert (old["x"], old["y"]) == (OUTPUT_WIDTH, OUTPUT_HEIGHT)
-    assert area["x"] + area["width"] == OUTPUT_WIDTH and area["y"] + area["height"] == OUTPUT_HEIGHT
+    assert (old["x"], old["y"]) == (PORTRAIT.width, PORTRAIT.height)
+    assert area["x"] + area["width"] == PORTRAIT.width and area["y"] + area["height"] == PORTRAIT.height
     new = migrated_text_layer(old)
     assert new["transform"] == {"x": area["x"] + area["width"] / 2, "y": area["y"] + area["height"] / 2}
     assert drawn(text_event(_LAYER.validate_python(new), 10))["area"] == area
@@ -388,13 +389,13 @@ def test_a_text_layer_is_never_stretched_nor_flipped():
 
 
 def test_a_text_layer_is_centred_on_its_transform_past_the_frames_edges():
-    corner = text_event(layer({"x": OUTPUT_WIDTH, "y": OUTPUT_HEIGHT}, {"size": 120}), 10)
-    assert corner.area.x + corner.area.width / 2 == pytest.approx(OUTPUT_WIDTH, abs=1)
-    assert corner.area.y + corner.area.height / 2 == pytest.approx(OUTPUT_HEIGHT, abs=1)
-    assert corner.picture.centre == pytest.approx((OUTPUT_WIDTH, OUTPUT_HEIGHT), abs=1)
+    corner = text_event(layer({"x": PORTRAIT.width, "y": PORTRAIT.height}, {"size": 120}), 10)
+    assert corner.area.x + corner.area.width / 2 == pytest.approx(PORTRAIT.width, abs=1)
+    assert corner.area.y + corner.area.height / 2 == pytest.approx(PORTRAIT.height, abs=1)
+    assert corner.picture.centre == pytest.approx((PORTRAIT.width, PORTRAIT.height), abs=1)
     # Its centre is kept on the frame.
     off = text_event(layer({"x": -400, "y": 5000}), 10)
-    assert off.picture.centre == pytest.approx((0, OUTPUT_HEIGHT), abs=1)
+    assert off.picture.centre == pytest.approx((0, PORTRAIT.height), abs=1)
 
 
 def test_a_scaled_and_turned_text_layer_keeps_its_layout_and_turns_its_bounds_about_its_centre():

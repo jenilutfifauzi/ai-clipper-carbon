@@ -30,8 +30,12 @@ from pydantic import TypeAdapter
 
 from app.candidates import MAX_SCALE, MIN_SCALE, MIN_TEXT_SIZE, TextLayer
 from app.pictures import cover_scale, fitted
-from app.planner import FRAME, OUTPUT_HEIGHT, OUTPUT_WIDTH, TEXT_MARGIN, font_metrics, text_event, without_emoji
+from app.canvas import PORTRAIT
+from app.planner import TEXT_MARGIN, font_metrics, text_event, without_emoji
 
+# Every Candidate saved in an older shape is 9:16: on the PORTRAIT Canvas.
+FRAME = PORTRAIT.size
+OUTPUT_WIDTH, OUTPUT_HEIGHT = FRAME
 # Media Library items' picture sizes, by id.
 Sizes = Mapping[str, tuple[int, int]]
 # The size taken for an item that is missing.
