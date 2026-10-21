@@ -359,6 +359,7 @@ export function CandidateEditor({
                   preview={graded}
                   fonts={fonts}
                   playback={playback}
+                  aspect={candidate.aspect}
                   // Dragged on the preview while its tab is open.
                   onWatermarkMove={
                     tab === "watermark" && style.controls
@@ -515,7 +516,7 @@ export function CandidateEditor({
                 <h4 id="watermark-heading" className="sr-only">
                   Watermark
                 </h4>
-                {style.controls ? <WatermarkPanel style={style.controls} fonts={fonts} /> : !style.error && <StyleFieldsSkeleton />}
+                {style.controls ? <WatermarkPanel style={style.controls} fonts={fonts} aspect={candidate.aspect} /> : !style.error && <StyleFieldsSkeleton />}
               </section>
             )}
             {tab === "transitions" && (

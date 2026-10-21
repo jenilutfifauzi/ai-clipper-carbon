@@ -1,6 +1,6 @@
 import { Check, ChevronDown, Clapperboard, SlidersHorizontal } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
-import { api, type ExportPresetList } from "../../api";
+import { api, type Aspect, type ExportPresetList } from "../../api";
 import { Button, buttonClass } from "../../components/Button";
 import { formatBytes } from "../../format";
 
@@ -30,8 +30,8 @@ export function RenderButton({
   onRender: (exportPresetId?: string) => void;
   variant?: "primary" | "secondary";
   disabled?: boolean;
-  // The Clips it renders: how long they last in all, and the Source's frame rate.
-  batch?: { secs: number; fps: number } | null;
+  // The Clips it renders: how long they last in all of each Canvas Aspect (batchParts), and the Source's frame rate.
+  batch?: { parts: { aspect: Aspect; secs: number }[]; fps: number } | null;
   onManage?: () => void;
 }) {
   const toggle = useRef<HTMLButtonElement>(null);
@@ -43,13 +43,19 @@ export function RenderButton({
   // The batch's estimated size with the picked Preset, asked for while the menu is open.
   const [total, setTotal] = useState<number | null>(null);
   const settings = chosen && JSON.stringify(chosen.settings);
+  const parts = batch && JSON.stringify(batch.parts.filter((part) => part.secs > 0));
   useEffect(() => {
     setTotal(null);
-    if (!open || !settings || !batch || batch.secs <= 0) return;
+    const shapes: { aspect: Aspect; secs: number }[] = parts ? JSON.parse(parts) : [];
+    if (!open || !settings || !batch || shapes.length === 0) return;
     let current = true;
-    api.estimateExport(JSON.parse(settings), batch.secs, batch.fps).then((bytes) => current && setTotal(bytes), () => {});
+    // One estimate per aspect in the batch, added up.
+    Promise.all(shapes.map((part) => api.estimateExport(JSON.parse(settings), part.secs, batch.fps, part.aspect))).then(
+      (sizes) => current && setTotal(sizes.reduce((sum, bytes) => sum + bytes, 0)),
+      () => {},
+    );
     return () => void (current = false);
-  }, [open, settings, batch?.secs, batch?.fps]);
+  }, [open, settings, parts, batch?.fps]);
 
   // The menu is a popover in the top layer, so that a scrolling panel doesn't clip it; light dismiss and Escape close it.
   useEffect(() => {

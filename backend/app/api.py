@@ -52,7 +52,7 @@ from app.candidates import (
     WordEdit,
     grades_of,
 )
-from app.canvas import Aspect
+from app.canvas import Aspect, canvas_for
 from app.caption_files import CaptionFormat, caption_file
 from app.clips import Clip
 from app.config import Settings
@@ -450,13 +450,14 @@ class ExportPresetChoice(BaseModel):
 
 class ExportEstimate(BaseModel):
     """A batch of Clips `secs` long in all, made as `settings` say; at the Source's frame rate `fps`
-    when they keep it."""
+    when they keep it, and of the Canvas Aspect `aspect` (a batch of mixed shapes asks once per aspect)."""
 
     model_config = ConfigDict(extra="forbid")
 
     settings: ExportSettings
     secs: Annotated[float, Field(ge=0, le=86_400)]
     fps: Annotated[float, Field(gt=0, le=240)]
+    aspect: Aspect = Aspect.PORTRAIT
 
 
 class ManualCandidate(BaseModel):
@@ -1591,7 +1592,8 @@ def create_export_preset(body: ExportPresetBody, export_presets: ExportPresets) 
 def estimate_export(body: ExportEstimate) -> dict[str, int]:
     """The bytes Clips `secs` long in all come to as `settings` say: what the encoders aim for, video
     and sound (app/encoding.py). The sheet's MB per minute and the Render menu's total both ask here."""
-    return {"bytes": estimated_bytes(body.settings, body.settings.fps or body.fps, body.secs)}
+    frame = canvas_for(body.aspect).size
+    return {"bytes": estimated_bytes(body.settings, body.settings.fps or body.fps, body.secs, frame)}
 
 
 @router.put("/export-presets/default")

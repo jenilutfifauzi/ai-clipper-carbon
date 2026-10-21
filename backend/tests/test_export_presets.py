@@ -251,8 +251,9 @@ def test_settings_off_the_lists_are_refused(client):
     assert all(preset["builtin"] for preset in listed(client)["presets"])
 
 
-def estimate(client, secs: float, source_fps: float, **settings) -> int:
-    response = client.post(f"{URL}/estimate", json={"settings": SHORTS | settings, "secs": secs, "fps": source_fps})
+def estimate(client, secs: float, source_fps: float, aspect: str | None = None, **settings) -> int:
+    body = {"settings": SHORTS | settings, "secs": secs, "fps": source_fps} | ({"aspect": aspect} if aspect else {})
+    response = client.post(f"{URL}/estimate", json=body)
     assert response.status_code == 200, response.text
     return response.json()["bytes"]
 
@@ -271,6 +272,14 @@ def test_the_estimate_is_the_target_bitrate_and_the_sound_over_the_duration(clie
     assert estimate(client, 8, 30, bitrate={"mode": "cbr", "kbps": 6000}) == (6000 + 192) * 1000
     assert client.post(f"{URL}/estimate", json={"settings": SHORTS | {"codec": "prores"}, "secs": 1, "fps": 30}).status_code == 422
     assert client.post(f"{URL}/estimate", json={"settings": SHORTS, "secs": -1, "fps": 30}).status_code == 422
+
+
+def test_the_estimate_counts_the_pixels_of_the_batchs_aspect(client):
+    # 16:9 at 1080p is 1920x1080, as many pixels as 9:16; 1:1 is 1080x1080 and 4:5 1080x1350, fewer.
+    assert estimate(client, 60, 30, aspect="16:9") == estimate(client, 60, 30, aspect="9:16") == estimate(client, 60, 30)
+    assert estimate(client, 60, 30, aspect="1:1") == round((8000 * 1080 / 1920 + 192) * 1000 * 60 / 8)
+    assert estimate(client, 60, 30, aspect="4:5") == round((8000 * 1350 / 1920 + 192) * 1000 * 60 / 8)
+    assert client.post(f"{URL}/estimate", json={"settings": SHORTS, "secs": 1, "fps": 30, "aspect": "3:2"}).status_code == 422
 
 
 def test_a_codec_without_an_encoder_in_ffmpeg_is_not_available(settings, video_source, transcriber, llm):

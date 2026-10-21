@@ -4,6 +4,7 @@ import {
   CUE_MAX_SCALE,
   CUE_MIN_SCALE,
   logoUrl,
+  type Aspect,
   type Box,
   type CaptionStyle,
   type Cue,
@@ -107,6 +108,7 @@ export function ClipPreview({
   hideBar = false,
   over,
   onPlay,
+  aspect,
 }: {
   src: string;
   // The Job whose Source `src` is: a reversed Segment of it plays from its Retimed copy.
@@ -129,6 +131,8 @@ export function ClipPreview({
   // What the Play button does instead of playing or pausing (the Advanced Edit's Space, which stops a
   // Take while one records).
   onPlay?: () => void;
+  // The Candidate's Canvas Aspect: the stage's shape until its plan comes (9:16 when left out).
+  aspect?: Aspect;
 }) {
   const stage = useRef<HTMLDivElement>(null);
   const room = useRef<HTMLDivElement>(null);
@@ -139,7 +143,7 @@ export function ClipPreview({
   const masters = useMemo(() => decks.map(([master]) => master), [decks]);
   const [scale, setScale] = useState(1 / 3);
   const plan = preview?.plan ?? null;
-  const canvas = useCanvasOf(plan);
+  const canvas = useCanvasOf(plan, aspect);
   const fitted = useFittedSize(room, fit, canvas);
 
   useEffect(() => {

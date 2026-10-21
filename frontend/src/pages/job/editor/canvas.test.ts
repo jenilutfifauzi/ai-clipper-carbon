@@ -2,7 +2,7 @@
 // aspect in a player, as worked examples.
 import { describe, expect, test } from "vitest";
 import type { RenderPlan } from "../../../api";
-import { canvasOf, fittedStage, PORTRAIT } from "./canvas";
+import { aspectParts, aspectRatio, canvasOf, fittedStage, PORTRAIT, tallestAspect } from "./canvas";
 
 const LANDSCAPE = { width: 1920, height: 1080, safe_area: { x: 96, y: 54, width: 1728, height: 972 } };
 
@@ -15,6 +15,29 @@ describe("the Canvas", () => {
   test("is the 9:16 one before a plan comes", () => {
     expect(canvasOf(null)).toBe(PORTRAIT);
     expect(PORTRAIT).toEqual({ width: 1080, height: 1920, safe_area: { x: 0, y: 232, width: 950, height: 1304 } });
+  });
+
+  test("is the Candidate's aspect's before its plan comes, as canvas.py makes it", () => {
+    expect(canvasOf(null, "9:16")).toBe(PORTRAIT);
+    expect(canvasOf(null, "16:9")).toEqual(LANDSCAPE);
+    // test_aspects.py's 4:5 Safe Area.
+    expect(canvasOf(undefined, "4:5")).toEqual({ width: 1080, height: 1350, safe_area: { x: 54, y: 68, width: 972, height: 1214 } });
+    expect(canvasOf(null, "1:1")).toMatchObject({ width: 1080, height: 1080 });
+    // The plan's wins over the aspect's.
+    expect(canvasOf({ ...LANDSCAPE, scenes: [] } as unknown as RenderPlan, "9:16")).toEqual(LANDSCAPE);
+  });
+
+  test("a card of an aspect takes its shape", () => {
+    expect(aspectRatio("9:16")).toBe("9 / 16");
+    expect(aspectRatio("16:9")).toBe("16 / 9");
+    expect(aspectParts("4:5")).toEqual({ width: 4, height: 5 });
+  });
+
+  test("cards of mixed shapes share the tallest one's slot", () => {
+    expect(tallestAspect(["16:9", "1:1", "4:5"])).toBe("4:5");
+    expect(tallestAspect(["16:9", "9:16", "1:1"])).toBe("9:16");
+    expect(tallestAspect(["16:9", "16:9"])).toBe("16:9");
+    expect(tallestAspect([])).toBe("9:16");
   });
 });
 

@@ -5,6 +5,7 @@ import { ScoreRing } from "../../components/ScoreRing";
 import { Skeleton } from "../../components/Skeleton";
 import { cx, formatClock } from "../../format";
 import { useReveal } from "../../hooks/useReveal";
+import { aspectRatio } from "./editor/canvas";
 
 // How many more Candidates are drawn each time the end of the list comes into reach.
 const BATCH = 12;
@@ -106,8 +107,9 @@ export function candidateName(candidate: Candidate, index: number): string {
   return candidate.title || (candidate.origin === "manual" ? `Manual clip ${formatClock(candidate.start)}` : `Candidate ${index + 1}`);
 }
 
-// A 16:9 still with the score in its corner, on a scrim so it reads over any frame, and the Clip's
-// length in the other; a film icon while there's no still.
+// A 16:9 still with the Candidate's shape framed in its middle, the score in its corner, on a scrim
+// so it reads over any frame, and the Clip's length in the other; a film icon while there's no still.
+// The rows keep one size, so Candidates of mixed shapes line up.
 function Thumbnail({ jobId, candidate }: { jobId: string; candidate: Candidate }) {
   const src = candidateThumbnailUrl(jobId, candidate);
   const [loaded, setLoaded] = useState<string | null>(null);
@@ -127,6 +129,14 @@ function Thumbnail({ jobId, candidate }: { jobId: string; candidate: Candidate }
           onLoad={() => setLoaded(src)}
           onError={() => setFailed(src)}
           className={cx("size-full object-cover motion-safe:transition-opacity motion-safe:duration-200", loaded === src ? "opacity-100" : "opacity-0")}
+        />
+      )}
+      {/* The Candidate's shape, framed on the still and the rest dimmed; a 16:9 one is the whole still. */}
+      {candidate.aspect !== "16:9" && (
+        <span
+          aria-hidden
+          className="absolute inset-y-0 left-1/2 -translate-x-1/2 rounded-[2px] shadow-[0_0_0_100vmax_rgb(0_0_0/0.45)] outline-1 -outline-offset-1 outline-white/70"
+          style={{ aspectRatio: aspectRatio(candidate.aspect) }}
         />
       )}
       <span className="absolute top-1 left-1 grid place-items-center rounded-full bg-black/65 text-white backdrop-blur-sm">
