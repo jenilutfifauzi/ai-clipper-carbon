@@ -253,6 +253,26 @@ export function gradeFilter(grade: Partial<Grade> | null | undefined): string | 
   return id && hasGradeFilter(grade) ? `url(#${id})` : undefined;
 }
 
+/**
+ * A display colour `rgb` (0..1 each) as `grade` turns it: through its fold's tables and then its
+ * matrix, as the preview's filter draws a pixel (sharpen and vignette, which depend on the pixel's
+ * neighbours and place, and an Imported Look's 3D table, left out). What the eyedropper picks from an
+ * Overlay's picture, which the render keys after its Grade.
+ */
+export function gradedColour(grade: Partial<Grade> | null | undefined, rgb: [number, number, number]): [number, number, number] {
+  const folded = foldGrade(grade);
+  const clamp = (value: number) => Math.min(1, Math.max(0, value));
+  const looked = (table: number[], value: number) => {
+    const at = clamp(value) * (table.length - 1);
+    const below = Math.floor(at);
+    const above = Math.min(below + 1, table.length - 1);
+    return table[below] + (table[above] - table[below]) * (at - below);
+  };
+  const tabled = rgb.map((value, channel) => (folded?.tables ? looked(folded.tables[channel], value) : value));
+  const mixed = folded?.matrix ? folded.matrix.map((row) => row.reduce((sum, weight, channel) => sum + weight * tabled[channel], 0)) : tabled;
+  return mixed.map(clamp) as [number, number, number];
+}
+
 /** `grade` with the dials of `change` set, the rest kept. */
 export const adjusted = (grade: Partial<Grade> | null | undefined, change: Partial<Adjust>): Grade => {
   const given = gradeOf(grade);

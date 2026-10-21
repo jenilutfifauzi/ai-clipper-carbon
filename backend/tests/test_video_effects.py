@@ -47,7 +47,8 @@ def played(filters: list[str]) -> tuple[tuple[int, int], int]:
 @pytest.mark.parametrize("corner", ["default", "min", "max"])
 @pytest.mark.parametrize("effect", effects(), ids=lambda effect: effect.id)
 def test_each_effect_runs_at_its_default_minimum_and_maximum_and_keeps_a_1_s_clips_size_and_length(effect, corner):
-    params = {setting.key: getattr(setting, corner) for setting in effect.settings}
+    # A colour has no range: its default.
+    params = {setting.key: setting.default if setting.type == "color" else getattr(setting, corner) for setting in effect.settings}
     chain = video_effect_chain([VideoEffect(effect.id, params)], (1080, 1920))
     assert chain
     assert played(chain) == ((1080, 1920), 30)
@@ -60,6 +61,7 @@ def test_the_registry_lists_its_effects_under_the_video_kind_by_category(client)
         ("Distort", "pixelate"), ("Distort", "chromatic-aberration"), ("Distort", "fisheye"),
         ("Light", "glow"), ("Light", "bloom-pulse"),
         ("Stylize", "posterize"), ("Stylize", "film-grain"),
+        ("Cutout", "chroma-key"), ("Cutout", "luma-key"),
     ]
     assert all(effect["kind"] == "video" for effect in listed)
     blur = listed[0]

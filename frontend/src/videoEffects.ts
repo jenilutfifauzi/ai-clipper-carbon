@@ -12,12 +12,13 @@ export const CATEGORIES = ["Blur", "Distort", "Light", "Stylize", "Cutout"] as c
 
 /**
  * The Add effect library: the catalogue by category, each by order, kept to those whose name or
- * description has `query` (ignoring case and the spaces around it). A category left with none is dropped.
+ * description has `query` (ignoring case and the spaces around it). A category left with none is
+ * dropped, and so is Cutout without `keys` (no Overlay picked: a key is an Overlay's only).
  */
-export function videoLibraryOf(kinds: VideoEffectKind[], query: string): { category: (typeof CATEGORIES)[number]; effects: VideoEffectKind[] }[] {
+export function videoLibraryOf(kinds: VideoEffectKind[], query: string, keys = true): { category: (typeof CATEGORIES)[number]; effects: VideoEffectKind[] }[] {
   const needle = query.trim().toLowerCase();
   const found = (kind: VideoEffectKind) => !needle || kind.name.toLowerCase().includes(needle) || kind.description.toLowerCase().includes(needle);
-  return CATEGORIES.map((category) => ({
+  return CATEGORIES.filter((category) => keys || category !== "Cutout").map((category) => ({
     category,
     effects: kinds.filter((kind) => kind.category === category && found(kind)).sort((a, b) => a.order - b.order),
   })).filter(({ effects }) => effects.length > 0);

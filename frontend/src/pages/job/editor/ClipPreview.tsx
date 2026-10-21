@@ -38,6 +38,7 @@ import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./lay
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
 import { DecksGraded, EffectFilters, EffectsClock, GradeFilters } from "./GradeFilters";
+import { EyedropperLayer } from "./EyedropperLayer";
 import { pictureBox } from "./videoEffects";
 import { PreviewAdjusted } from "./PreviewAdjustments";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
@@ -330,6 +331,8 @@ export function ClipPreview({
         />
       )}
       {plan && controls && <StageHandles plan={plan} playback={playback} edit={edit} scale={scale} />}
+      {/* Chroma key's eyedropper, while the Inspector has it armed, takes the next click. */}
+      {plan && controls && <EyedropperLayer plan={drawn} playback={playback} stage={stage} />}
       {dropOver && <div aria-hidden className="pointer-events-none absolute inset-0 bg-accent/10" />}
       {preview && editing && retype && (
         <InlineText

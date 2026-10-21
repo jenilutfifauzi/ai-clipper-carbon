@@ -40,19 +40,38 @@ class Group(StrEnum):
     SPACE = "Space"
 
 
+# A setting's types: a number (every Audio Effect's), or a colour, `#RRGGBB` (a Video Effect's key).
+NUMBER = "number"
+COLOUR = "color"
+
+
 @dataclass(frozen=True)
 class Setting:
     """One of an effect's knobs: a number from `min` to `max` in steps of `step`, `default` when left
-    out. The `intensity` one is the slider of the effect's row in the stack."""
+    out. The `intensity` one is the slider of the effect's row in the stack. A colour one (`type`
+    COLOUR, `colour_setting`) is a `#RRGGBB` string instead, its default one too, and has no range."""
 
     key: str
     label: str
     min: float
     max: float
-    default: float
+    default: float | str
     step: float
     unit: str = ""
     intensity: bool = False
+    type: str = NUMBER
+
+    def listed(self) -> dict:
+        """As the catalogue lists it: a number's key, label, min, max, default, step, unit and
+        intensity; a colour's key, label, type, default and intensity."""
+        if self.type == COLOUR:
+            return {"key": self.key, "label": self.label, "type": COLOUR, "default": self.default, "intensity": self.intensity}
+        return {key: value for key, value in vars(self).items() if key != "type"}
+
+
+def colour_setting(key: str, label: str, default: str) -> Setting:
+    """A colour setting, `#RRGGBB`, `default` when left out."""
+    return Setting(key, label, 0, 0, default, 0, type=COLOUR)
 
 
 # An effect's filters from its settings (each one given) at the chain's sample rate.
@@ -443,7 +462,7 @@ def catalogue() -> list[dict]:
     return [
         {
             "id": effect.id, "name": effect.name, "group": effect.group.value, "order": effect.order, "description": effect.description,
-            "settings": [vars(setting) for setting in effect.settings],
+            "settings": [setting.listed() for setting in effect.settings],
         }
         for effect in effects()
     ]

@@ -37,9 +37,10 @@ The `video-effects` feature (roadmap #12, `.scratch/advanced-edit-v2/roadmap.md`
   | Light | Bloom pulse | highlights, blur at ¼ resolution + screen, strength by `sin` | the same, updated per frame |
   | Stylize | Posterize | `lutrgb` table | `feComponentTransfer discrete` |
   | Stylize | Film grain | `noise`, a new pattern every frame | `feTurbulence`, reseeded every frame |
-  | Cutout | Chroma key | `chromakey` + `despill` | near |
-  | Cutout | Luma key | `lumakey` | luminance to alpha + a table |
+  | Cutout | Chroma key | `lut2` tables of BT.709 Cb and Cr: the alpha, and the spill taken out of R, G, B | near |
+  | Cutout | Luma key | a `lut2` table of BT.709 luma and the alpha | luminance to alpha + a table |
 
+  - The keys measure the display's RGB (as BT.709 Y, Cb, Cr at full range), as Concat's do and as the eyedropper picks. ffmpeg's `chromakey` and `lumakey` read the frame's own YUV, whose matrix and range differ between an image and a video; `despill` knows only green and blue. (Amended by the Chroma key ticket, 06.)
   - Concat's colour effects are dropped; the Grade has them.
   - Sharpen and Vignette are dropped because Adjust has them.
   - Halftone (only `geq`, far too slow, no SVG) and Zoom blur (no radial blur in ffmpeg, no SVG) are dropped.

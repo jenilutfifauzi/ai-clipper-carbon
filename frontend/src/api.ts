@@ -1159,7 +1159,24 @@ export interface AudioEffectSetting {
   step: number;
   unit: string;
   intensity: boolean;
+  // Absent: a number. (A Video Effect's may be a colour, ColourSetting.)
+  type?: "number";
 }
+
+// A Video Effect's colour setting (a key's colour, ADR 0014): `#RRGGBB`, `default` when left out.
+export interface ColourSetting {
+  key: string;
+  label: string;
+  type: "color";
+  default: string;
+  intensity: false;
+}
+
+// One of a Video Effect's settings: a number, as an Audio Effect's, or a colour.
+export type VideoEffectSetting = AudioEffectSetting | ColourSetting;
+
+/** Whether a Video Effect's `setting` is a colour (`#RRGGBB`) rather than a number. */
+export const isColourSetting = (setting: VideoEffectSetting): setting is ColourSetting => setting.type === "color";
 
 // An entry of the Audio Effects catalogue (backend/app/audio_effects.py), on its group's shelf at `order`.
 export interface AudioEffectKind {
@@ -1173,16 +1190,17 @@ export interface AudioEffectKind {
 
 // A Video Effect applied to a picture (GLOSSARY: Video Effect; ADR 0014): a catalogue effect's `id`,
 // its settings by key (the server fills in each one left out with its default), and whether it is
-// drawn; off, it stays in the stack. An id is at most once in a stack.
+// drawn; off, it stays in the stack. An id is at most once in a stack. A colour setting's value is
+// `#RRGGBB` (the server keeps it in capitals).
 export interface VideoEffect {
   id: string;
-  params: Record<string, number>;
+  params: Record<string, number | string>;
   enabled: boolean;
 }
 
 // An entry of the Video Effects catalogue (backend/app/video_effects.py, the effects registry's video
 // kind), on its category's shelf at `order`. A setting in "px" is output pixels at the picture's
-// fitted size, times its scale when drawn.
+// fitted size, times its scale when drawn. A Cutout effect (a key) is an Overlay's only.
 export interface VideoEffectKind {
   id: string;
   kind: "video";
@@ -1190,7 +1208,7 @@ export interface VideoEffectKind {
   category: "Blur" | "Distort" | "Light" | "Stylize" | "Cutout";
   order: number;
   description: string;
-  settings: AudioEffectSetting[];
+  settings: VideoEffectSetting[];
 }
 
 // The dials of a Grade (GLOSSARY: Adjust), in Concat's ranges, each neutral by default: temperature

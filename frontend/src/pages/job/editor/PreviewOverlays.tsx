@@ -16,7 +16,8 @@ import { copyProgress, eventCopy, eventPlay, useRetimedCopy } from "./retimedCop
  * on or going off as a picture layer does (its picture only: a video's sound is left to its volume).
  * Each is in its Grade (ADR 0013) and its Video Effects (ADR 0014), its border and shadow not.
  * A selected one is shown whole while paused in its time, as a picked Text Layer is, so that it can
- * be seen while it is edited on a frame its animation hasn't reached.
+ * be seen while it is edited on a frame its animation hasn't reached. Its media element names its
+ * Overlay (`data-overlay-media`), for Chroma key's eyedropper to read (EyedropperLayer).
  */
 export function PreviewOverlays({ plan, playback, selected }: { plan: RenderPlan | null; playback: Playback; selected: string[] }) {
   if (!plan || !plan.overlays.length) return null;
@@ -91,9 +92,9 @@ function OverlayView({
         start={start}
         media={
           image ? (
-            <img src={mediaItemUrl(media)} alt="" draggable={false} className="size-full object-fill" />
+            <img src={mediaItemUrl(media)} alt="" draggable={false} className="size-full object-fill" data-overlay-media={event.id} />
           ) : (
-            <video ref={video} src={src} muted playsInline preload="auto" className="size-full object-fill" />
+            <video ref={video} src={src} muted playsInline preload="auto" className="size-full object-fill" data-overlay-media={event.id} />
           )
         }
       />

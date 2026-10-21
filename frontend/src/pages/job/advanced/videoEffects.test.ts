@@ -6,7 +6,7 @@
 import { describe, expect, test } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import type { AdjustmentEvent, AdjustmentLayer, ClipSegment, Overlay, OverlayEvent, RenderPlan, SegmentPlan, VideoEffect, VideoEffectKind } from "../../../api";
+import { isColourSetting, type AdjustmentEvent, type AdjustmentLayer, type AudioEffectSetting, type ClipSegment, type Overlay, type OverlayEvent, type RenderPlan, type SegmentPlan, type VideoEffect, type VideoEffectKind } from "../../../api";
 import { adjustmentFilters } from "../editor/adjustments";
 import { EffectFilters, EffectsClock, GradeFilter } from "../editor/GradeFilters";
 import { NEUTRAL_GRADE } from "../editor/grading";
@@ -151,7 +151,7 @@ describe("the Inspector's Video Effects actions", () => {
     const off = setVideoEffectEnabled({ edits: twins(), pick }, 0, false)!;
     expect(changed(off.edits).every((stack) => stack![0].enabled === false && stack![1] === grain)).toBe(true);
 
-    const radius = blurKind.settings[0];
+    const radius = blurKind.settings[0] as AudioEffectSetting;
     const set = setVideoEffectSetting({ edits: twins(), pick }, 0, radius, 24.4)!;
     expect(changed(set.edits).map((stack) => stack![0].params.radius)).toEqual(pick === one ? [24] : [24, 24]);
     // Within its range.
@@ -233,7 +233,8 @@ describe("the preview", () => {
     for (const kind of catalogue as VideoEffectKind[]) {
       expect(IMITATIONS[kind.id], kind.id).toBeDefined();
       for (const corner of ["default", "min", "max"] as const) {
-        const params = Object.fromEntries(kind.settings.map((setting) => [setting.key, setting[corner]]));
+        // A colour has no range: its default.
+        const params = Object.fromEntries(kind.settings.map((setting) => [setting.key, isColourSetting(setting) ? setting.default : setting[corner]]));
         const primitives = effectPrimitives([{ id: kind.id, params, enabled: true }], box);
         expect(primitives.length, `${kind.id} ${corner}`).toBeGreaterThan(0);
         const values = primitives.flatMap(function all(primitive): string[] {
@@ -311,7 +312,7 @@ describe("a Segment's stack", () => {
   test("a mixed Pick of Segments and Overlays takes an action on all of them while their stacks are equal", () => {
     const state = edits([overlay("a", { video_effects: [blur] }), overlay("b")], [segment("s1", { video_effects: [blur] })]);
     expect(sharedVideoStack({ edits: state, pick: mixed })).toEqual([blur]);
-    const radius = blurKind.settings[0];
+    const radius = blurKind.settings[0] as AudioEffectSetting;
     const set = setVideoEffectSetting({ edits: state, pick: mixed }, 0, radius, 30)!.edits;
     expect([...segmentStacks(set), ...stacks(set)]).toEqual([[{ ...blur, params: { radius: 30 } }], [{ ...blur, params: { radius: 30 } }], undefined]);
     // The Overlays not picked are as they were, the same list when none of them changed.

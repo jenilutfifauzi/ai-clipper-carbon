@@ -346,7 +346,11 @@ Edits:
   refused. merge_candidate_items replaces an Overlay's stack as a whole. The dry run lists each
   Overlay's enabled ones, their sizes as drawn (scaled). Film grain moves every frame and Bloom
   pulse breathes, both in seconds from the item's own start, so moving an item moves its pulse; an
-  image Overlay with either is drawn as a moving picture.
+  image Overlay with either is drawn as a moving picture. Keys ("chroma-key": color "#RRGGBB",
+  default "#00B140" green, similarity, softness, spill; "luma-key": threshold, softness, invert 0/1
+  to take out the light instead of the dark) are for Overlays only, refused on a Segment or an
+  Adjustment Layer: the part they take out shows what is under the Overlay, through its corners,
+  border, rotation, shadow and opacity. The key colour is matched after the Overlay's Grade.
 - A Segment's `video_effects` (of the episode or a video, a Freeze frame too) is the same stack over
   its whole frame (panels, picture and Background): after its Grade and before the joins, so a
   Transition crossfades pictures that already carry them. Its frame is 1080x1920 at scale 1, so its

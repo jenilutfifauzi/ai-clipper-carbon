@@ -1,4 +1,4 @@
-import type { Picture, RenderPlan, Transform, VideoEffect, VideoEffectKind } from "../../../api";
+import { isColourSetting, type Picture, type RenderPlan, type Transform, type VideoEffect, type VideoEffectKind } from "../../../api";
 import { FRAME } from "./picture";
 
 /*
@@ -25,7 +25,8 @@ export function scaledEffects(stack: VideoEffect[] | undefined, scale: number, k
     const params = Object.fromEntries(
       kind.settings.map((setting) => {
         const value = entry.params[setting.key] ?? setting.default;
-        return [setting.key, setting.unit === "px" ? Math.round(value * scale * 1000) / 1000 : value];
+        const size = !isColourSetting(setting) && setting.unit === "px" && typeof value === "number";
+        return [setting.key, size ? Math.round(value * scale * 1000) / 1000 : value];
       }),
     );
     return [{ id: entry.id, params, enabled: true }];
@@ -78,6 +79,7 @@ export interface Primitive {
     | "feFuncR"
     | "feFuncG"
     | "feFuncB"
+    | "feFuncA"
     | "feBlend"
     | "feTurbulence";
   attributes: Record<string, string>;
@@ -208,12 +210,39 @@ export function fisheyeOffset(strength: number, box: Box): (u: number, v: number
   };
 }
 
+/** A display colour's chroma, BT.709's Cb and Cr (-0.5 to 0.5), as the render's key measures it (backend's chroma). */
+export const chroma = (red: number, green: number, blue: number): [number, number] => [
+  -0.1146 * red - 0.3854 * green + 0.5 * blue,
+  0.5 * red - 0.4542 * green - 0.0458 * blue,
+];
+
+/** A `#RRGGBB` colour's red, green and blue, 0 to 1. */
+export const hexRgb = (colour: string): [number, number, number] => [1, 3, 5].map((at) => parseInt(colour.slice(at, at + 2), 16) / 255) as [number, number, number];
+
+// 0 below `edge`, 1 past `edge` + `width`, smooth between (the render's smoothstep).
+const smoothstep = (edge: number, width: number, value: number) => {
+  const t = Math.max(0, Math.min((value - edge) / width, 1));
+  return t * t * (3 - 2 * t);
+};
+
+// How many points a key's tables have: the browser fills in between them linearly.
+const KEY_TABLE = 65;
+const table = (f: (x: number) => number) => Array.from({ length: KEY_TABLE }, (_, i) => number(f(i / (KEY_TABLE - 1)))).join(" ");
+// A colour matrix's rows of `rows` (each five numbers: red, green, blue, alpha and a constant).
+const matrix = (rows: number[][]) => rows.map((row) => row.map(number).join(" ")).join(" ");
+
+// `input` with the alpha of `keep` (whose alpha is the key's) times its own: its colours `colours`'s.
+const keyedBy = (input: string, keep: string, colours: string): Primitive[] => [
+  { element: "feComposite", attributes: { in: keep, in2: input, operator: "in", result: `${keep}-mask` } },
+  { element: "feComposite", attributes: { in: colours, in2: `${keep}-mask`, operator: "in" } },
+];
+
 /**
- * Each effect's imitation, by id, from its planned settings (sizes as drawn, in output pixels) and the
- * element's `box`, in the filter's units (fractions of the element's box, primitiveUnits
- * objectBoundingBox), so that it holds at any size of the stage.
+ * Each effect's imitation, by id, from its planned settings (sizes as drawn, in output pixels; a
+ * colour setting's `#RRGGBB` in `colours`) and the element's `box`, in the filter's units (fractions
+ * of the element's box, primitiveUnits objectBoundingBox), so that it holds at any size of the stage.
  */
-export const IMITATIONS: Record<string, (params: Record<string, number>, box: Box) => Primitive[]> = {
+export const IMITATIONS: Record<string, (params: Record<string, number>, box: Box, colours: Record<string, string>) => Primitive[]> = {
   // Exact but for the picture's edges, which ffmpeg extends and an SVG blur fades out.
   "gaussian-blur": ({ radius }, box) => [{ element: "feGaussianBlur", attributes: { stdDeviation: `${number(radius / box.width)} ${number(radius / box.height)}` } }],
   // Along an axis, the render's Gaussian along the line exactly. Otherwise near: nine samples along
@@ -345,11 +374,76 @@ export const IMITATIONS: Record<string, (params: Record<string, number>, box: Bo
       { element: "feComposite", attributes: { in2: "vfx-grain", operator: "in" } },
     ];
   },
+  // Near: the render's key of the chroma's distance to the key colour's, by a colour matrix (each of
+  // Cb and Cr's difference about a half), a table squaring each, their sum (twice it, as the alpha)
+  // and a table from its root to the key's alpha; the spill taken out of the colours by the lean
+  // towards the key's hue in a matrix, its parts added and taken away (the latter added to inverted
+  // colours: a composite never goes below 0) on an opaque copy. The input's own alpha times the key's.
+  "chroma-key": ({ similarity, softness, spill }, _box, { color }) => {
+    const [keyCb, keyCr] = chroma(...hexRgb(color ?? "#00B140"));
+    const cb = [-0.1146, -0.3854, 0.5];
+    const cr = [0.5, -0.4542, -0.0458];
+    const opaque = [0, 0, 0, 0, 1];
+    const square = table((x) => (2 * x - 1) ** 2);
+    const keep = table((x) => smoothstep(similarity / 100, Math.max(softness / 100, 0.001), Math.sqrt(x)));
+    const reach = Math.hypot(keyCb, keyCr);
+    const [towardsCb, towardsCr] = reach > 1e-4 ? [keyCb / reach, keyCr / reach] : [0, 0];
+    // One of the key's hue in red, green and blue at the same luma; the lean, a row of the colours.
+    const lean = [1.5748 * towardsCr, -0.1873 * towardsCb - 0.4681 * towardsCr, 1.8556 * towardsCb];
+    const dot = [0, 1, 2].map((c) => towardsCb * cb[c] + towardsCr * cr[c]);
+    const leaned = (sign: 1 | -1) => matrix([...lean.map((step) => [...dot.map((d) => (spill / 100) * Math.max(sign * step, 0) * d), 0, 0]), opaque]);
+    const inverted = matrix([[-1, 0, 0, 0, 1], [0, -1, 0, 0, 1], [0, 0, -1, 0, 1], [0, 0, 0, 1, 0]]);
+    const cleaned: Primitive[] =
+      spill > 0 && reach > 1e-4
+        ? [
+            { element: "feColorMatrix", attributes: { in: "vfx-chroma", type: "matrix", values: leaned(-1), result: "vfx-chroma-up" } },
+            { element: "feColorMatrix", attributes: { in: "vfx-chroma", type: "matrix", values: leaned(1), result: "vfx-chroma-down" } },
+            added("vfx-chroma-base", "vfx-chroma-up", 1, 1, "vfx-chroma-raised"),
+            { element: "feColorMatrix", attributes: { in: "vfx-chroma-raised", type: "matrix", values: inverted, result: "vfx-chroma-inverted" } },
+            added("vfx-chroma-inverted", "vfx-chroma-down", 1, 1, "vfx-chroma-lowered"),
+            { element: "feColorMatrix", attributes: { in: "vfx-chroma-lowered", type: "matrix", values: inverted, result: "vfx-chroma-clean" } },
+          ]
+        : [{ element: "feOffset", attributes: { in: "vfx-chroma-base", dx: "0", dy: "0", result: "vfx-chroma-clean" } }];
+    return [
+      kept("vfx-chroma"),
+      {
+        element: "feColorMatrix",
+        attributes: {
+          type: "matrix",
+          values: matrix([[...cb.map((k) => k / 2), 0, 0.5 - keyCb / 2], [...cr.map((k) => k / 2), 0, 0.5 - keyCr / 2], [0, 0, 0, 0, 0], opaque]),
+        },
+      },
+      { element: "feComponentTransfer", attributes: {}, children: [{ element: "feFuncR", attributes: { type: "table", tableValues: square } }, { element: "feFuncG", attributes: { type: "table", tableValues: square } }] },
+      { element: "feColorMatrix", attributes: { type: "matrix", values: matrix([[0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [2, 2, 0, 0, 0]]) } },
+      { element: "feComponentTransfer", attributes: { result: "vfx-chroma-keep" }, children: [{ element: "feFuncA", attributes: { type: "table", tableValues: keep } }] },
+      { element: "feColorMatrix", attributes: { in: "vfx-chroma", type: "matrix", values: matrix([[1, 0, 0, 0, 0], [0, 1, 0, 0, 0], [0, 0, 1, 0, 0], opaque]), result: "vfx-chroma-base" } },
+      ...cleaned,
+      ...keyedBy("vfx-chroma", "vfx-chroma-keep", "vfx-chroma-clean"),
+    ];
+  },
+  // The render's key of the luma (BT.709): the luma as the alpha by a colour matrix, then a table of
+  // the key's alpha; the input's own alpha times it.
+  "luma-key": ({ threshold, softness, invert }) => {
+    const [edge, width] = [threshold / 100, Math.max(softness / 100, 0.001)];
+    const keep = table((level) => (invert > 0.5 ? 1 - smoothstep(edge, width, level) : smoothstep(edge - width, width, level)));
+    return [
+      kept("vfx-luma"),
+      { element: "feColorMatrix", attributes: { type: "matrix", values: matrix([[0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0.2126, 0.7152, 0.0722, 0, 0]]) } },
+      { element: "feComponentTransfer", attributes: { result: "vfx-luma-keep" }, children: [{ element: "feFuncA", attributes: { type: "table", tableValues: keep } }] },
+      ...keyedBy("vfx-luma", "vfx-luma-keep", "vfx-luma"),
+    ];
+  },
 };
 
 /** The primitives `effects` (planned: enabled, sizes as drawn) are imitated by, in order; an effect without an imitation draws nothing. */
 export const effectPrimitives = (effects: VideoEffect[], box: Box): Primitive[] =>
-  effects.flatMap((effect) => (effect.enabled ? (IMITATIONS[effect.id]?.(effect.params, box) ?? []) : []));
+  effects.flatMap((effect) => {
+    const imitation = effect.enabled ? IMITATIONS[effect.id] : undefined;
+    if (!imitation) return [];
+    const of = <T extends number | string>(kind: string) =>
+      Object.fromEntries(Object.entries(effect.params).filter(([, value]) => typeof value === kind)) as Record<string, T>;
+    return imitation(of<number>("number"), box, of<string>("string"));
+  });
 
 /** The size, in output pixels, of the element an Overlay's `picture` is drawn on: its whole item, scaled as its crop is. */
 export const pictureBox = (picture: Picture): Box => ({

@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronUp, Loader2, Plus, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
-import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
-import type { AudioEffect, AudioEffectKind, AudioEffectSetting } from "../../../api";
+import { Fragment, useId, useState, type KeyboardEvent, type ReactNode } from "react";
+import { isColourSetting, type AudioEffect, type AudioEffectKind, type AudioEffectSetting, type ColourSetting, type VideoEffectSetting } from "../../../api";
 import { CLEAN_SWITCHES, isCleanSwitch, libraryOf, useAudioEffects, type CleanSwitchId } from "../../../audioEffects";
 import { Button, buttonClass } from "../../../components/Button";
 import { useMenu } from "../../../components/Menu";
@@ -209,7 +209,8 @@ function EffectRows({ stack, kinds, controls }: { stack: AudioEffect[]; kinds: A
 export type RowControls = { [K in "onMove" | "onEnabled" | "onRemove" | "onSetting"]: AudioEffectControls[K] };
 
 // One entry of the stack: its name, on/off, up, down, remove; its intensity slider; and its other
-// settings in a "More" popover. Also a Video Effect's row (VideoEffectsFields).
+// settings in a "More" popover. Also a Video Effect's row (VideoEffectsFields), whose colour setting
+// (a key's colour) is drawn by `colourField`.
 export function EffectRow({
   entry,
   kind,
@@ -220,22 +221,29 @@ export function EffectRow({
   onEnabled,
   onRemove,
   onSetting,
+  colourField,
 }: RowControls & {
-  entry: AudioEffect;
-  kind: { name: string; description: string; settings: AudioEffectSetting[] } | undefined;
+  entry: AudioEffect | { id: string; params: Record<string, number | string>; enabled: boolean };
+  kind: { name: string; description: string; settings: VideoEffectSetting[] } | undefined;
   index: number;
   first: boolean;
   last: boolean;
+  colourField?: (setting: ColourSetting, value: string) => ReactNode;
 }) {
   const name = kind?.name ?? entry.id;
   const nameId = useId();
-  const intensity = kind?.settings.find((setting) => setting.intensity);
+  const intensity = kind?.settings.find((setting): setting is AudioEffectSetting => setting.intensity && !isColourSetting(setting));
   const others = kind?.settings.filter((setting) => setting !== intensity) ?? [];
+  const field = (setting: VideoEffectSetting) => {
+    if (!isColourSetting(setting)) return slider(setting);
+    const value = entry.params[setting.key];
+    return <Fragment key={setting.key}>{colourField?.(setting, typeof value === "string" ? value : setting.default)}</Fragment>;
+  };
   const slider = (setting: AudioEffectSetting) => (
     <Slider
       key={setting.key}
       label={setting.label}
-      value={entry.params[setting.key] ?? setting.default}
+      value={Number(entry.params[setting.key] ?? setting.default)}
       min={setting.min}
       max={setting.max}
       step={setting.step}
@@ -253,7 +261,7 @@ export function EffectRow({
           </span>
         </Switch>
         <div className="ml-auto flex shrink-0">
-          {others.length > 0 && <MoreSettings name={name} settings={others} slider={slider} />}
+          {others.length > 0 && <MoreSettings name={name} settings={others} field={field} />}
           <Button variant="ghost" size="xs" className={ROW_BUTTON} onClick={() => onMove(index, -1)} disabled={first} aria-label={`Move ${name} up`}>
             <ChevronUp aria-hidden size={16} />
           </Button>
@@ -280,7 +288,7 @@ export const keepEscape = (event: KeyboardEvent) => {
 };
 
 // An effect's settings other than its intensity, in a popover from its "More" button.
-function MoreSettings({ name, settings, slider }: { name: string; settings: AudioEffectSetting[]; slider: (setting: AudioEffectSetting) => ReactNode }) {
+function MoreSettings({ name, settings, field }: { name: string; settings: VideoEffectSetting[]; field: (setting: VideoEffectSetting) => ReactNode }) {
   const { buttonRef, menuRef, open, toggle } = useMenu();
   const id = useId();
   return (
@@ -306,7 +314,7 @@ function MoreSettings({ name, settings, slider }: { name: string; settings: Audi
         className="glass fixed inset-auto m-0 w-72 max-w-[calc(100vw-1rem)] flex-col gap-3 rounded-[10px] bg-bg/90! p-3 text-text [&:popover-open]:flex"
       >
         <p className="text-sm font-semibold">{name}</p>
-        {settings.map(slider)}
+        {settings.map(field)}
       </div>
     </>
   );

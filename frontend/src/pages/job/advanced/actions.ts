@@ -1521,10 +1521,10 @@ export function picturedItems({ edits, pick }: { edits: AdvancedEdits; pick: Pic
 const pictureOf = (edits: AdvancedEdits, ref: PictureRef): Pictured | undefined =>
   (ref.kind === "segment" ? edits.segments : ref.kind === "overlay" ? edits.overlays : listOf(edits, "adjustment")).find((item) => item.id === ref.id);
 
-// Every picked picture given `change` of its stack (an emptied one left without the field; one
-// `change` leaves as it was, untouched, and a list with none changed kept as it was); null when none
-// is picked or none changes.
-function repictured(scene: { edits: AdvancedEdits; pick: Pick }, change: (stack: VideoEffect[]) => VideoEffect[]): Outcome | null {
+// Every picked picture given `change` of its stack (told what kind of picture it is; an emptied one
+// left without the field; one `change` leaves as it was, untouched, and a list with none changed kept
+// as it was); null when none is picked or none changes.
+function repictured(scene: { edits: AdvancedEdits; pick: Pick }, change: (stack: VideoEffect[], kind: PictureRef["kind"]) => VideoEffect[]): Outcome | null {
   const { edits, pick } = scene;
   const refs = picturedItems(scene);
   const set = <T extends Pictured>(items: T[], kind: PictureRef["kind"]): T[] => {
@@ -1533,7 +1533,7 @@ function repictured(scene: { edits: AdvancedEdits; pick: Pick }, change: (stack:
       if (!refs.some((ref) => ref.kind === kind && ref.id === item.id)) return item;
       const { video_effects, ...rest } = item;
       const was = video_effects ?? [];
-      const stack = change(was);
+      const stack = change(was, kind);
       if (stack === was) return item;
       changed = true;
       return (stack.length ? { ...rest, video_effects: stack } : rest) as T;
@@ -1555,13 +1555,21 @@ export const videoEffectOf = (kind: VideoEffectKind): VideoEffect => ({
   enabled: true,
 });
 
+/** Whether a catalogue Video Effect is a key (Cutout), which only an Overlay takes (ADR 0014). */
+export const isKey = (kind: { category: VideoEffectKind["category"] }): boolean => kind.category === "Cutout";
+
+/** Whether a key (isKey) can be added to the Pick: some picked picture is an Overlay. */
+export const keysPicked = (scene: { edits: AdvancedEdits; pick: Pick }): boolean => picturedItems(scene).some((ref) => ref.kind === "overlay");
+
 /**
  * Add effect: `kind` at its defaults, switched on, at the bottom of every picked picture's stack, as
- * one change; one that has it already is skipped (an effect is once in a stack). Null when none is
- * picked, or every one has it.
+ * one change; one that has it already is skipped (an effect is once in a stack), and so is a Segment
+ * or an Adjustment Layer for a key (isKey: an Overlay's only). Null when none is picked, or none takes it.
  */
 export function addVideoEffect(scene: { edits: AdvancedEdits; pick: Pick }, kind: VideoEffectKind): Outcome | null {
-  return repictured(scene, (stack) => (stack.some((entry) => entry.id === kind.id) ? stack : [...stack, videoEffectOf(kind)]));
+  return repictured(scene, (stack, picture) =>
+    stack.some((entry) => entry.id === kind.id) || (isKey(kind) && picture !== "overlay") ? stack : [...stack, videoEffectOf(kind)],
+  );
 }
 
 /** The stack of the picked pictures, when every one's is the same; "mixed" when they differ; null when none is picked. */
@@ -1609,6 +1617,15 @@ export function removeVideoEffect(scene: { edits: AdvancedEdits; pick: Pick }, i
 export function setVideoEffectSetting(scene: { edits: AdvancedEdits; pick: Pick }, index: number, setting: AudioEffectSetting, value: number): Outcome | null {
   const level = steppedSetting(setting, value);
   return videoEntryChanged(scene, index, (stack) => stack.map((entry, at) => (at === index ? { ...entry, params: { ...entry.params, [setting.key]: level } } : entry)));
+}
+
+/** Entry `index`'s colour setting `key` (a key's colour) set to `colour` (`#RRGGBB`, kept in capitals) in every picked stack. */
+export function setVideoEffectColour(scene: { edits: AdvancedEdits; pick: Pick }, index: number, key: string, colour: string): Outcome | null {
+  if (!/^#[0-9a-f]{6}$/i.test(colour)) return null;
+  const value = colour.toUpperCase();
+  return videoEntryChanged(scene, index, (stack) =>
+    stack[index].params[key] === value ? null : stack.map((entry, at) => (at === index ? { ...entry, params: { ...entry.params, [key]: value } } : entry)),
+  );
 }
 
 /** Remove all effects: every picked stack emptied, whether they are the same or Mixed. Null when none is picked or all are empty. */

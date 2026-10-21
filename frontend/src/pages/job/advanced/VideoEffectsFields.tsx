@@ -1,10 +1,12 @@
-import { Plus, Search, X } from "lucide-react";
+import { Pipette, Plus, Search, X } from "lucide-react";
 import { useId, useState } from "react";
-import type { AudioEffectSetting, VideoEffect, VideoEffectKind } from "../../../api";
+import type { AudioEffectSetting, ColourSetting, VideoEffect, VideoEffectKind } from "../../../api";
 import { Button, buttonClass } from "../../../components/Button";
+import { ColorField } from "../../../components/ColorField";
 import { useMenu } from "../../../components/Menu";
 import { cx } from "../../../format";
 import { useVideoEffects, videoLibraryOf } from "../../../videoEffects";
+import { eyedropper, useEyedropper } from "../editor/eyedropper";
 import { Mixed } from "../editor/StyleFields";
 import {
   addVideoEffect,
@@ -12,12 +14,13 @@ import {
   picturedItems,
   removeAllVideoEffects,
   removeVideoEffect,
+  setVideoEffectColour,
   setVideoEffectEnabled,
   setVideoEffectSetting,
   sharedVideoStack,
   type Outcome,
 } from "./actions";
-import { EffectRow, keepEscape } from "./AudioEffectsFields";
+import { EffectRow, keepEscape, ROW_BUTTON } from "./AudioEffectsFields";
 import type { AdvancedEdits } from "./edits";
 import type { Pick } from "./pick";
 
@@ -31,7 +34,12 @@ export interface VideoEffectControls {
   onRemove: (index: number) => void;
   // A setting's slider, each drag one change of its group.
   onSetting: (index: number, setting: AudioEffectSetting, value: number) => void;
+  // A colour setting (a key's colour), `#RRGGBB`; a drag of its swatch one change of its group.
+  onColour: (index: number, setting: ColourSetting, value: string) => void;
   onRemoveAll: () => void;
+  // The picked Overlays: whether the library offers keys (Cutout, an Overlay's only), and what the
+  // key colour's eyedropper picks from.
+  overlays: string[];
 }
 
 /**
@@ -54,7 +62,9 @@ export function videoEffectChanges(scene: { edits: AdvancedEdits; pick: Pick }, 
     onEnabled: (index, enabled) => apply(setVideoEffectEnabled(scene, index, enabled)),
     onRemove: (index) => apply(removeVideoEffect(scene, index)),
     onSetting: (index, setting, value) => apply(setVideoEffectSetting(scene, index, setting, value), `video-effects:${ids}:${index}:${setting.key}`),
+    onColour: (index, setting, value) => apply(setVideoEffectColour(scene, index, setting.key, value), `video-effects:${ids}:${index}:${setting.key}`),
     onRemoveAll: () => apply(removeAllVideoEffects(scene)),
+    overlays: picturedItems(scene).flatMap((item) => (item.kind === "overlay" ? [item.id] : [])),
   };
 }
 
@@ -67,7 +77,7 @@ export function videoEffectChanges(scene: { edits: AdvancedEdits; pick: Pick }, 
 export function VideoEffectsFields({ kinds: given, ...controls }: VideoEffectControls & { kinds?: VideoEffectKind[] | null }) {
   const listed = useVideoEffects();
   const kinds = given ?? listed;
-  const { stack, onAdd, onRemoveAll } = controls;
+  const { stack, onAdd, onRemoveAll, onColour, overlays } = controls;
   const headingId = useId();
   const applied = stack === "mixed" ? [] : stack;
   return (
@@ -76,7 +86,7 @@ export function VideoEffectsFields({ kinds: given, ...controls }: VideoEffectCon
         <h3 id={headingId} className="font-semibold">
           Effects
         </h3>
-        <AddVideoEffect kinds={kinds} applied={applied} onAdd={onAdd} />
+        <AddVideoEffect kinds={kinds} applied={applied} keys={overlays.length > 0} onAdd={onAdd} />
       </div>
       {stack === "mixed" ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -103,6 +113,9 @@ export function VideoEffectsFields({ kinds: given, ...controls }: VideoEffectCon
                 first={index === 0}
                 last={index === stack.length - 1}
                 {...controls}
+                colourField={(setting, value) => (
+                  <KeyColourField setting={setting} value={value} overlays={overlays} onChange={(colour) => onColour(index, setting, colour)} />
+                )}
               />
             ))}
           </ol>
@@ -116,14 +129,55 @@ export function VideoEffectsFields({ kinds: given, ...controls }: VideoEffectCon
   );
 }
 
+/**
+ * A key's colour (Chroma key's): a swatch, its hex code and an eyedropper, which, pressed, waits for
+ * a click on the paused preview over one of the picked `overlays` and takes the colour of its graded
+ * picture there (EyedropperLayer); pressed again, or Escape, it stops waiting.
+ */
+function KeyColourField({ setting, value, overlays, onChange }: { setting: ColourSetting; value: string; overlays: string[]; onChange: (colour: string) => void }) {
+  const armed = useEyedropper();
+  const picking = armed !== null && armed.overlays.join() === overlays.join();
+  return (
+    <ColorField
+      label={setting.label}
+      value={value}
+      onChange={onChange}
+      after={
+        <Button
+          variant="ghost"
+          size="xs"
+          className={ROW_BUTTON}
+          aria-pressed={picking}
+          aria-label={picking ? "Stop picking the key colour" : "Pick the key colour from the preview"}
+          title="Pick the colour from the preview"
+          disabled={!overlays.length}
+          onClick={() => (picking ? eyedropper.cancel() : eyedropper.arm({ overlays, onPick: onChange }))}
+        >
+          <Pipette aria-hidden size={16} />
+        </Button>
+      }
+    />
+  );
+}
+
 // Add effect: a popover of the library by category (videoLibraryOf), searched as it is typed; an
-// effect already in the stack is greyed out. A click on another adds it at the bottom of the stack
-// and closes the popover.
-function AddVideoEffect({ kinds, applied, onAdd }: { kinds: VideoEffectKind[] | null; applied: VideoEffect[]; onAdd: (kind: VideoEffectKind) => void }) {
+// effect already in the stack is greyed out, and the keys (Cutout) are left out unless an Overlay is
+// picked (`keys`). A click on another adds it at the bottom of the stack and closes the popover.
+function AddVideoEffect({
+  kinds,
+  applied,
+  keys,
+  onAdd,
+}: {
+  kinds: VideoEffectKind[] | null;
+  applied: VideoEffect[];
+  keys: boolean;
+  onAdd: (kind: VideoEffectKind) => void;
+}) {
   const { buttonRef, menuRef, open, hide, toggle } = useMenu();
   const [query, setQuery] = useState("");
   const id = useId();
-  const categories = kinds ? videoLibraryOf(kinds, query) : [];
+  const categories = kinds ? videoLibraryOf(kinds, query, keys) : [];
   return (
     <>
       <button ref={buttonRef} type="button" className={buttonClass("ghost", "sm")} onClick={toggle} aria-expanded={open} aria-controls={id} aria-haspopup="dialog">

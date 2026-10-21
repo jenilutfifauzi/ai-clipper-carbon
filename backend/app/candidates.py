@@ -715,7 +715,7 @@ class Overlay:
     def __post_init__(self) -> None:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))
         object.__setattr__(self, "audio_effects", checked_effects(self.audio_effects, f"Overlay {self.id}"))
-        object.__setattr__(self, "video_effects", checked_video_effects(self.video_effects, f"Overlay {self.id}"))
+        object.__setattr__(self, "video_effects", checked_video_effects(self.video_effects, f"Overlay {self.id}", keyed=True))
 
 
 @dataclass(frozen=True)
