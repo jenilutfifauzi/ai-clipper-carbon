@@ -80,3 +80,21 @@ The `video-effects` feature (roadmap #12, `.scratch/advanced-edit-v2/roadmap.md`
 - **Keyed pictures take the frame process route (0008).** Their Effects run in the decoder's `-vf` after the Grade; a still is looped when an effect changes with time.
 - **A Blend Mode other than Normal costs one full-frame `blend` per Overlay** over its span.
 - **The Asset Panel gains an Effects tab.** Favourites gain a small global store and endpoint.
+- **What each effect costs to render** (measured 2026-10-21, `ffmpeg version 9.0.2`, an Apple M1, h264_videotoolbox; the render cost ticket, 10). A 6.45 s Clip of a 1080×1920, 25 fps Source rendered through the API, each effect at its defaults; the fastest of two renders. The factor is against a plain render (1.51 s) for a Segment or an Adjustment Layer, and against the same render with a plain full-frame video Overlay (2.03 s, 1.34×) for an Overlay. "Extra" is the seconds added per second of Clip. An image Overlay without a timed effect is drawn once and held, so its stack costs next to nothing. Another test run shared the machine, so take the figures to about ±20 %; one run of Bloom pulse on a Segment took 98 s and was measured again. `RENDER_COST=1 pytest tests/test_render_cost.py -s` prints the table.
+
+  | Effect | Segment | Overlay | Adjustment Layer |
+  |---|---|---|---|
+  | Gaussian blur | 4.0× (+0.72 s) | 4.3× (+1.05 s) | |
+  | Motion blur | 8.8× (+1.84 s) | 8.9× (+2.54 s) | |
+  | Pixelate | 1.4× (+0.08 s) | 1.6× (+0.18 s) | |
+  | Chromatic aberration | 3.0× (+0.48 s) | 3.8× (+0.91 s) | |
+  | Fisheye | 5.8× (+1.13 s) | 5.7× (+1.51 s) | |
+  | Glow | 5.2× (+0.99 s) | 9.2× (+2.63 s) | 10.8× (+2.31 s) |
+  | Bloom pulse | 19.8× (+4.41 s) | 18.2× (+5.43 s) | 20.5× (+4.58 s) |
+  | Posterize | 2.7× (+0.39 s) | 2.7× (+0.54 s) | |
+  | Film grain | 1.2× (+0.05 s) | 1.5× (+0.15 s) | 1.6× (+0.15 s) |
+  | Chroma key | | 4.1× (+1.01 s) | |
+  | Luma key | | 3.6× (+0.84 s) | |
+  | Blend Mode Screen | | 2.9× (+0.59 s) | |
+
+  Bloom pulse (its `geq`), Motion blur and Glow are the slow ones; cheaper chains are proposed in ticket 10's Comments, not adopted.
