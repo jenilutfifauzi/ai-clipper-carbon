@@ -167,6 +167,15 @@ def test_split_with_fewer_than_two_faces_shows_the_sources_halves_in_the_same_pa
     assert first.path[0].x + first.crop_width / 2 == 480 and second.path[0].x + second.crop_width / 2 == 1440
 
 
+def test_track_on_a_canvas_wider_than_the_source_crops_its_full_width_at_the_canvass_shape():
+    four_three = SourceMetadata(duration=3600, fps=25, width=1440, height=1080, codec="h264")
+    [scene] = plan_render(100, 105, four_three, layout=Layout.TRACK, canvas=canvas_for(Aspect.LANDSCAPE)).scenes
+    [panel] = scene.panels
+    # The Source's whole width and as much of its height as keeps 16:9, from its middle: never stretched.
+    assert (panel.crop_width, panel.crop_height, panel.area) == (1440, 810, Box(0, 0, 1920, 1080))
+    assert [(point.x, point.y) for point in panel.path] == [(0, 136)]
+
+
 TALL = SourceMetadata(duration=3600, fps=25, width=1080, height=1920, codec="h264")
 
 

@@ -3001,11 +3001,12 @@ def _choose(layout: Layout, count: int | None) -> SceneLayout:
 def _track(
     start: float, end: float, faces: list[FrameFaces] | None, source: SourceMetadata, camera: CameraTuning, canvas: Canvas
 ) -> Panel:
-    """A full-height crop of the Canvas's shape that follows the speaker's face through the Scene from
-    `start` to `end`; in the middle of the frame while no face is known."""
-    panel = _centre_crop(source.width, source.height, canvas)
+    """A crop of the Canvas's shape, of the frame's full height (or its full width, on a Canvas wider
+    than the Source), that follows the speaker's face through the Scene from `start` to `end`; in the
+    middle of the frame while no face is known."""
+    panel = _filled(source.width, source.height, start, canvas)
     if not faces:
-        return replace(panel, path=[replace(panel.path[0], at=start)])
+        return panel
     tracked = _track_faces(faces, source.width, source.height, camera)
     return _follow(panel, _follow_speaker(tracked, source.fps, camera), start, end, source, camera)
 
@@ -3228,15 +3229,6 @@ def _spring(position: float, speed: float, goal: float, rate: float, step: float
     if offset and moved * offset <= 0:
         return goal, 0.0
     return goal + moved, speed
-
-
-def _centre_crop(width: int, height: int, canvas: Canvas) -> Panel:
-    """The full-height crop of the Canvas's shape from the middle of a landscape (or square) frame."""
-    crop_height = _even_floor(height)
-    crop_width = min(_even(crop_height * canvas.width / canvas.height), _even_floor(width))
-    x = _centred(width, crop_width)
-    y = _centred(height, crop_height)
-    return Panel(Box(0, 0, *canvas.size), crop_width, crop_height, [CropPoint(0.0, x, y)])
 
 
 def _filled(width: int, height: int, start: float, canvas: Canvas) -> Panel:
