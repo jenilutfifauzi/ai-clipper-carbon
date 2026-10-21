@@ -138,7 +138,7 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
 **HTTP API.**
 - `GET /api/voices` returns:
   - the engines, each with id, label, service, cloud/local, ready, takes-style and its Voices;
-  - Kokoro's download state (absent, downloading with bytes done and total, ready, failed with message);
+  - Kokoro's download state (absent, downloading with bytes done and total, ready, failed with message), as `kokoro: {state, done, total, message}`, `total` the archive's size whatever the state; null when Kokoro isn't offered;
   - the default engine for a given Job language.
 - `POST /api/narrations` takes `{text, engine, voice, speed, pauses, style}` and returns a narration id. A Speed outside 0.5–2 is refused (422), and so is a Style for an engine that takes none (a blank Style is none).
   - It answers 409 when busy and 422 when the text is empty or too long, or the engine or Voice is unknown or not ready.
@@ -147,16 +147,17 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
 - `GET /api/voices/{engine}/{voice}/sample?lang=` returns the sample sound, a WAV.
   - It is made on first request from a fixed sentence per language (Indonesian and English; English for any other language), read at 1× with no Style and levelled as a Narration is, and kept on this Mac per engine, Voice and language (under `DATA_DIR/voice-samples`).
   - It is refused (422) when the engine isn't ready or the Voice is unknown. Samples share the one-at-a-time runner, so a sample is refused as busy (409) while a Narration is being made, and a Narration while a sample is being read. A kept sample is served whatever is running. An engine's failure answers 502 with its message, and nothing is kept.
-- `POST /api/voices/kokoro/download` starts the download, `DELETE` on the same path cancels it, and `DELETE /api/voices/kokoro` removes the model. Removal answers 409 while a Narration or sample is being made.
+- `POST /api/voices/kokoro/download` starts the download (202 with its state; nothing new when it is here or downloading), `DELETE` on the same path cancels it (204), and `DELETE /api/voices/kokoro` removes the model and Kokoro's kept samples (204). Removal answers 409 while a Narration or sample is being made (it holds the runner's one-at-a-time lock) or while the model downloads.
 - Download progress shows in `GET /api/voices`, which the tab polls while downloading.
 
 **Kokoro download.**
-- **Pinned source and digest.** One archive URL and its SHA-256 are pinned in code.
-- **Resume.** The download writes a `.part` file under `DATA_DIR/models` and resumes it with an HTTP Range request.
+- **Pinned source and digest.** One archive URL and its SHA-256 are pinned in code (`app/kokoro.py`): sherpa-onnx's `tts-models` release, `kokoro-int8-multi-lang-v1_0.tar.bz2`, 132,303,094 bytes, as Concat's `models/manifest.toml` lists its upstream.
+- **Resume.** The download writes a `.part` file under `DATA_DIR/models` and resumes it with an HTTP Range request from its size. A server that answers the whole file instead starts the `.part` over.
+- **Cancel** stops it at the next chunk and reports absent at once; the `.part` stays for the next download. A dropped connection reports failed and keeps the `.part` too.
 - **Check.**
   - The finished file is checked against the digest. A mismatch deletes it and reports a failure.
   - The archive is unpacked into a staging folder and then renamed into place, so a torn download never looks installed.
-  - Archive members whose paths escape the folder are refused.
+  - Archive members whose paths escape the folder are refused, and so are links that lead out of it. Nothing is installed then, and the file is deleted. An archive without the model's `.onnx` is refused the same way.
 - **One download at a time.** It runs in its own thread, separate from the runner.
 
 **MCP.**

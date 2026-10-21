@@ -1,6 +1,6 @@
-import { LoaderCircle, Play, Speech, Square, X } from "lucide-react";
+import { Download, LoaderCircle, Play, Speech, Square, Trash2, X } from "lucide-react";
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
-import { api, type NarrationRequest, type VoicesList } from "../../../api";
+import { api, type KokoroInfo, type NarrationRequest, type VoicesList } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { ProgressBar } from "../../../components/ProgressBar";
@@ -11,6 +11,7 @@ import { cx } from "../../../format";
 import {
   chosenVoice,
   engineOption,
+  kokoroSize,
   NARRATE_AT_END_HINT,
   NARRATE_TITLE_AT_END_HINT,
   NARRATION_SPEED_STEP,
@@ -23,6 +24,8 @@ import {
   playSound,
   scriptTooLong,
   VoiceSamples,
+  VoicesSource,
+  type KokoroAction,
   type SampleState,
   type NarrateDraft,
   type NarratedTitle,
@@ -42,13 +45,28 @@ import { speedLabel } from "./speed";
  * made, its progress and Cancel take Generate's place; the draft is the flow's, so it outlives the tab.
  * Generate is off with the start `atEnd` of the Clip, and past 5,000 characters. Each Voice has Play
  * sample (VoiceSamples), in the Job's language; it says busy when a Narration elsewhere holds the runner.
+ * Kokoro, on this Mac, is offered for download beside the engine picker, its progress polled
+ * (VoicesSource), and removed from there.
  */
 export function NarratePanel({ flow, language, atEnd, title }: { flow: NarrateFlow; language: string; atEnd: boolean; title: NarratedTitle | null }) {
-  const [voices, setVoices] = useState<VoicesList | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [source] = useState(
+    () =>
+      new VoicesSource({
+        list: api.listVoices,
+        download: api.downloadKokoro,
+        cancel: api.cancelKokoroDownload,
+        remove: api.removeKokoro,
+        after: (ms, run) => {
+          const timer = setTimeout(run, ms);
+          return () => clearTimeout(timer);
+        },
+      }),
+  );
+  const { voices, error, message } = useSyncExternalStore(source.subscribe, () => source.state, () => source.state);
   useEffect(() => {
-    api.listVoices(language).then(setVoices, (reason: Error) => setError(`Couldn't load the Voices: ${reason.message}`));
-  }, [language]);
+    void source.load(language);
+    return source.dispose;
+  }, [source, language]);
   const state = useSyncExternalStore(flow.subscribe, () => flow.state, () => flow.state);
   const draft = useSyncExternalStore(flow.subscribe, () => flow.draft, () => flow.draft);
   const remembered = rememberedVoice.use();
@@ -77,12 +95,15 @@ export function NarratePanel({ flow, language, atEnd, title }: { flow: NarrateFl
       onCancel={flow.cancel}
       sample={sample}
       onSample={(engine, voice) => void samples.play(engine, voice, language)}
+      kokoroMessage={message}
+      onKokoro={(action) => void source.kokoro(action)}
     />
   );
 }
 
 /** The tab's fields, given the engines, the Job's language (the estimate's pace), the flow's state, the
- * draft, the remembered engine and Voice, and the picked title it lands at the start of. */
+ * draft, the remembered engine and Voice, the picked title it lands at the start of, and Kokoro's
+ * download (its row, with why its last action was refused). */
 export function NarrateFields({
   voices,
   language = "id",
@@ -96,6 +117,8 @@ export function NarrateFields({
   onCancel,
   sample = null,
   onSample = () => {},
+  kokoroMessage = null,
+  onKokoro = () => {},
 }: {
   voices: VoicesList;
   language?: string;
@@ -110,19 +133,27 @@ export function NarrateFields({
   // The Play sample loading, playing or refused, and Play sample pressed (engine and Voice ids).
   sample?: SampleState;
   onSample?: (engine: string, voice: string) => void;
+  // Why Kokoro's last Download, Cancel or Remove was refused, and one of them pressed.
+  kokoroMessage?: string | null;
+  onKokoro?: (action: KokoroAction) => void;
 }) {
   const id = useId();
   const ready = voices.engines.filter((engine) => engine.ready);
   const choice = chosenVoice(voices, draft, remembered);
   const { script, speed, pause, style } = draft;
+  const making = state.phase === "making";
+  const kokoro = voices.kokoro ? (
+    <KokoroRow kokoro={voices.kokoro} message={kokoroMessage} disabled={making} onAction={onKokoro} />
+  ) : null;
   if (!choice) {
     return (
       <div className="flex flex-col gap-4">
         <Hint>
           No speech engine is set up. In <code>.env</code>, add your Gemini API key as <code>GEMINI_API_KEY</code>, or an
           OpenAI-compatible speech service as <code>TTS_BASE_URL</code>, <code>TTS_API_KEY</code> and <code>TTS_MODEL</code>, and
-          restart to narrate.
+          restart to narrate{voices.kokoro ? ", or download Kokoro to narrate English on this Mac" : ""}.
         </Hint>
+        {kokoro}
         <Button variant="primary" disabled>
           <Speech aria-hidden size={18} />
           Generate
@@ -131,7 +162,6 @@ export function NarrateFields({
     );
   }
   const { engine, voice: chosen } = choice;
-  const making = state.phase === "making";
   const text = script.trim();
   const tooLong = scriptTooLong(script);
   const estimate = narrationEstimate(script, language, speed);
@@ -148,6 +178,7 @@ export function NarrateFields({
         onChange={(value) => onDraft({ engine: value, voice: null })}
         disabled={making}
       />
+      {kokoro}
       <div role="radiogroup" aria-label="Voice" className="flex max-h-56 flex-col gap-1 overflow-y-auto">
         {engine.voices.map((option) => {
           const playing = sample?.engine === engine.id && sample.voice === option.id ? sample : null;
@@ -264,6 +295,66 @@ function SampleButton({ voice, state, disabled, onPlay }: { voice: string; state
         <Play aria-hidden size={18} />
       )}
     </Button>
+  );
+}
+
+/**
+ * Kokoro's model beside the engine picker: Download (its size) while it isn't here, again after a failed
+ * download with its message; its progress with Cancel while it downloads; Remove once it is here, off
+ * while a Narration is being made (the backend refuses it then).
+ */
+function KokoroRow({
+  kokoro,
+  message,
+  disabled,
+  onAction,
+}: {
+  kokoro: KokoroInfo;
+  message: string | null;
+  disabled: boolean;
+  onAction: (action: KokoroAction) => void;
+}) {
+  const size = kokoroSize(kokoro);
+  const told = [kokoro.state === "failed" ? kokoro.message : null, message].filter(Boolean);
+  return (
+    <div className="flex flex-col gap-2">
+      {kokoro.state === "downloading" ? (
+        <>
+          <div aria-live="polite" className="flex items-center justify-between gap-2 text-sm">
+            <span className="font-medium">Downloading Kokoro…</span>
+            <span className="text-muted tabular-nums">
+              {`${Math.round(kokoro.done / 1e6)} of ${size}`}
+            </span>
+          </div>
+          <ProgressBar percent={(100 * kokoro.done) / Math.max(1, kokoro.total)} label="Downloading Kokoro" />
+          <Button size="sm" onClick={() => onAction("cancel")}>
+            <X aria-hidden size={16} />
+            Cancel the download
+          </Button>
+        </>
+      ) : kokoro.state === "ready" ? (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm text-muted">Kokoro is on this Mac</span>
+          <Button size="sm" variant="ghost" disabled={disabled} onClick={() => onAction("remove")}>
+            <Trash2 aria-hidden size={16} />
+            {`Remove Kokoro (${size})`}
+          </Button>
+        </div>
+      ) : (
+        <>
+          <span className="text-sm text-muted">Kokoro · On this Mac: English Voices, your words never leave it</span>
+          <Button size="sm" onClick={() => onAction("download")}>
+            <Download aria-hidden size={16} />
+            {`Download Kokoro (${size})`}
+          </Button>
+        </>
+      )}
+      {told.map((text) => (
+        <p key={text} role="status" className="text-xs text-danger">
+          {text}
+        </p>
+      ))}
+    </div>
   );
 }
 

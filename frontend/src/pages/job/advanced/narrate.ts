@@ -1,5 +1,5 @@
-import { ApiError, narrationEventsUrl, type MediaItem, type NarrationProgress, type NarrationRequest, type Voice, type VoiceEngine, type VoicesList } from "../../../api";
-import { formatClock } from "../../../format";
+import { ApiError, narrationEventsUrl, type KokoroInfo, type MediaItem, type NarrationProgress, type NarrationRequest, type Voice, type VoiceEngine, type VoicesList } from "../../../api";
+import { formatBytes, formatClock } from "../../../format";
 import { rememberedValue } from "../../../remembered";
 import type { AdvancedEdits } from "./edits";
 import type { Pick as TimelinePick } from "./pick";
@@ -435,6 +435,111 @@ export class VoiceSamples {
 
   private set(state: SampleState) {
     this.state = state;
+    for (const listener of this.listeners) listener();
+  }
+}
+
+export type KokoroAction = "download" | "cancel" | "remove";
+
+export interface VoicesState {
+  voices: VoicesList | null;
+  // Why the Voices couldn't be loaded the first time.
+  error: string | null;
+  // Why Kokoro's Download, Cancel or Remove was refused.
+  message: string | null;
+}
+
+export interface VoicesDeps {
+  list: (language: string) => Promise<VoicesList>;
+  download: () => Promise<KokoroInfo>;
+  cancel: () => Promise<void>;
+  // Rejects with an ApiError of 409 while a Narration or sample is being made.
+  remove: () => Promise<void>;
+  // Runs `run` after `ms`; returns what calls it off.
+  after: (ms: number, run: () => void) => () => void;
+}
+
+export const KOKORO_POLL_MS = 1000;
+export const KOKORO_REMOVE_BUSY = "Busy: a Narration is being made. Remove Kokoro once it is done.";
+
+/** Kokoro's download size for its buttons: "132 MB". */
+export const kokoroSize = (kokoro: KokoroInfo) => formatBytes(kokoro.total);
+
+/**
+ * The Narrate tab's engines and Voices, and Kokoro's model (.scratch/text-to-speech/issues/
+ * 07-download-and-remove-kokoro.md): loaded for the Job's language, and polled every KOKORO_POLL_MS while
+ * Kokoro downloads, which the backend does in the background, app-wide. Download, Cancel and Remove ask
+ * the backend and load again; a refusal (Remove while a Narration is being made) is told in `message`.
+ * `subscribe` and `state` are for the tab (useSyncExternalStore).
+ */
+export class VoicesSource {
+  state: VoicesState = { voices: null, error: null, message: null };
+  private listeners = new Set<() => void>();
+  private language = "";
+  private poll: (() => void) | null = null;
+  // Bumped by every load and by dispose: an answer for an older one is dropped.
+  private asked = 0;
+
+  constructor(private deps: VoicesDeps) {}
+
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => void this.listeners.delete(listener);
+  };
+
+  /** Loads the Voices for a Job in `language`, and again shortly while Kokoro downloads. */
+  load = async (language = this.language): Promise<void> => {
+    this.language = language;
+    this.stopPolling();
+    const asked = ++this.asked;
+    let voices: VoicesList;
+    try {
+      voices = await this.deps.list(language);
+    } catch (reason) {
+      if (asked !== this.asked) return;
+      if (!this.state.voices) this.set({ error: `Couldn't load the Voices: ${reason instanceof Error ? reason.message : String(reason)}` });
+      // A poll that failed is tried again: the download goes on in the backend.
+      else if (this.state.voices.kokoro?.state === "downloading") this.schedule();
+      return;
+    }
+    if (asked !== this.asked) return;
+    this.set({ voices, error: null });
+    if (voices.kokoro?.state === "downloading") this.schedule();
+  };
+
+  /** Kokoro's Download, Cancel or Remove; the Voices loaded again after it. */
+  kokoro = async (action: KokoroAction): Promise<void> => {
+    this.set({ message: null });
+    try {
+      await this.deps[action]();
+    } catch (reason) {
+      const busy = action === "remove" && reason instanceof ApiError && reason.status === 409;
+      const verb = action === "cancel" ? "cancel Kokoro's download" : `${action} Kokoro`;
+      this.set({ message: busy ? KOKORO_REMOVE_BUSY : `Couldn't ${verb}: ${reason instanceof Error ? reason.message : String(reason)}` });
+    }
+    await this.load();
+  };
+
+  /** The tab closed: no more polling. */
+  dispose = () => {
+    this.asked += 1;
+    this.stopPolling();
+  };
+
+  private schedule() {
+    this.poll = this.deps.after(KOKORO_POLL_MS, () => {
+      this.poll = null;
+      void this.load();
+    });
+  }
+
+  private stopPolling() {
+    this.poll?.();
+    this.poll = null;
+  }
+
+  private set(change: Partial<VoicesState>) {
+    this.state = { ...this.state, ...change };
     for (const listener of this.listeners) listener();
   }
 }

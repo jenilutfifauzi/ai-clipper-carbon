@@ -12,12 +12,12 @@
 
 **Blocked by:** 03.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Local server: a good archive is fetched, checked, unpacked and reported ready.
-- [ ] Local server: a wrong digest deletes the file and reports failed.
-- [ ] Local server: an interrupted download resumes with a Range request from the `.part` size.
-- [ ] An archive member escaping the folder is refused, and nothing is installed.
-- [ ] Cancel leaves the `.part` for a later resume and reports absent.
-- [ ] Remove deletes the model; it is refused while a Narration runs.
-- [ ] Vitest: the Download / progress / Cancel / Remove states of the picker.
+- [x] Local server: a good archive is fetched, checked, unpacked and reported ready.
+- [x] Local server: a wrong digest deletes the file and reports failed.
+- [x] Local server: an interrupted download resumes with a Range request from the `.part` size.
+- [x] An archive member escaping the folder is refused, and nothing is installed.
+- [x] Cancel leaves the `.part` for a later resume and reports absent.
+- [x] Remove deletes the model; it is refused while a Narration runs.
+- [x] Vitest: the Download / progress / Cancel / Remove states of the picker.

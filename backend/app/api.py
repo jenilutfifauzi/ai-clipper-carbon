@@ -64,6 +64,7 @@ from app.export_presets import BuiltinExportPreset, ExportPreset, ExportPresetNo
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
 from app.effected import EFFECTED_DIR, NoCopy, copies_used as effected_used, effected_copy, sweep as sweep_effected
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
+from app.kokoro import KokoroBusy, KokoroModel
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app import audio_effects, video_effects
@@ -192,6 +193,14 @@ def _narrations(request: Request) -> NarrationRunner:
     return request.app.state.narrations
 
 
+def _kokoro(request: Request) -> KokoroModel:
+    """Kokoro's model, or a 404 when this app doesn't offer Kokoro."""
+    model = request.app.state.kokoro
+    if model is None:
+        raise HTTPException(404, "Kokoro isn't offered here")
+    return model
+
+
 def _media_words(request: Request) -> MediaWordsStore:
     return request.app.state.media_words
 
@@ -240,6 +249,7 @@ Logos = Annotated[LogoStore, Depends(_logos)]
 Media = Annotated[MediaStore, Depends(_media)]
 MediaWordsDep = Annotated[MediaWordsStore, Depends(_media_words)]
 Narrations = Annotated[NarrationRunner, Depends(_narrations)]
+Kokoro = Annotated[KokoroModel, Depends(_kokoro)]
 FaceRegistry = Annotated[Faces, Depends(_faces)]
 ImportedLookStore = Annotated[ImportedLooks, Depends(_imported_looks)]
 EditBy = Annotated[Edit, Depends(_edit)]
@@ -1902,10 +1912,22 @@ class EngineInfo(BaseModel):
     voices: list[VoiceInfo]
 
 
+class KokoroInfo(BaseModel):
+    """Kokoro's model on this Mac (app/kokoro.py): absent, downloading (`done` bytes of `total`), ready
+    (installed) or failed (`message`). `total` is the archive's size whatever the state."""
+
+    state: Literal["absent", "downloading", "ready", "failed"]
+    done: int
+    total: int
+    message: str | None
+
+
 class VoicesList(BaseModel):
     engines: list[EngineInfo]
     # The engine a Job in the language asked for starts with; null when none is ready.
     default: str | None
+    # Kokoro's download; null when Kokoro isn't offered.
+    kokoro: KokoroInfo | None
 
 
 class NarrationBody(BaseModel):
@@ -1929,9 +1951,10 @@ class NarrationStarted(BaseModel):
 
 
 @router.get("/voices")
-def list_voices(narrations: Narrations, language: Language | None = None) -> VoicesList:
-    """The speech engines set up, each with its Voices, and the one a Job in `language` starts with:
-    Indonesian the first ready cloud engine, English a ready one on this Mac first."""
+def list_voices(request: Request, narrations: Narrations, language: Language | None = None) -> VoicesList:
+    """The speech engines set up, each with its Voices, the one a Job in `language` starts with
+    (Indonesian the first ready cloud engine, English a ready one on this Mac first), and Kokoro's
+    download state: polled while it downloads."""
     engines = [
         EngineInfo(
             id=engine.id,
@@ -1944,7 +1967,36 @@ def list_voices(narrations: Narrations, language: Language | None = None) -> Voi
         )
         for engine in narrations.engines
     ]
-    return VoicesList(engines=engines, default=default_engine(narrations.engines, language))
+    kokoro: KokoroModel | None = request.app.state.kokoro
+    return VoicesList(
+        engines=engines, default=default_engine(narrations.engines, language), kokoro=KokoroInfo(**kokoro.state()) if kokoro else None
+    )
+
+
+@router.post("/voices/kokoro/download", status_code=202)
+def download_kokoro(kokoro: Kokoro) -> KokoroInfo:
+    """Start downloading Kokoro's model (about 132 MB), in the background, taken up from what an earlier
+    download left; nothing when it is installed or being downloaded. Its progress is in /api/voices."""
+    kokoro.download()
+    return KokoroInfo(**kokoro.state())
+
+
+@router.delete("/voices/kokoro/download", status_code=204)
+def cancel_kokoro_download(kokoro: Kokoro) -> None:
+    """Cancel the download: it stops at once, what it fetched kept for the next download."""
+    kokoro.cancel()
+
+
+@router.delete("/voices/kokoro", status_code=204)
+def remove_kokoro(kokoro: Kokoro, narrations: Narrations) -> None:
+    """Remove Kokoro's model from this Mac, and its Voices' samples. 409 while a Narration or a sample is
+    being made, or the model is being downloaded."""
+    try:
+        with narrations.idle("A Narration is being made: remove Kokoro once it is done"):
+            kokoro.remove()
+            narrations.forget_samples("kokoro")
+    except (NarrationBusy, KokoroBusy) as exc:
+        raise HTTPException(409, str(exc)) from None
 
 
 @router.get("/voices/{engine}/{voice}/sample", response_class=FileResponse)

@@ -13,9 +13,12 @@
 // at its start, the earliest of several winning; an edited script is sent, from the item's start.
 // And 06-voice-samples.md: Play sample on each Voice plays the sound the backend returns, once at a
 // time, and tells busy when the backend refuses it.
+// And 07-download-and-remove-kokoro.md: Kokoro beside the engine picker, Download (its size), its
+// progress with Cancel, a failure's message, and Remove once it is here; the tab polls the Voices while it
+// downloads, and the hint with no ready engine offers it.
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { ApiError, type MediaItem, type MusicClip, type NarrationRequest, type TextLayer, type VoicesList } from "../../../api";
+import { ApiError, type KokoroInfo, type MediaItem, type MusicClip, type NarrationRequest, type TextLayer, type VoicesList } from "../../../api";
 import { landTake } from "./actions";
 import { AssetPanel } from "./AssetPanel";
 import { ASSET_TABS, AssetTabs, PHONE_ASSET_TABS } from "./Chrome";
@@ -27,6 +30,9 @@ import {
   EMPTY_DRAFT,
   engineLabel,
   engineOption,
+  KOKORO_POLL_MS,
+  KOKORO_REMOVE_BUSY,
+  kokoroSize,
   NARRATE_AT_END_HINT,
   NARRATE_TITLE_AT_END_HINT,
   NARRATION_IN_LIBRARY,
@@ -40,6 +46,8 @@ import {
   rememberedVoice,
   SAMPLE_BUSY,
   VoiceSamples,
+  VoicesSource,
+  type KokoroAction,
   type NarrateDraft,
   type SampleState,
   type NarratedTitle,
@@ -264,8 +272,10 @@ function Fields({
   atEnd = false,
   title = null,
   sample = null,
+  kokoroMessage = null,
 }: {
   sample?: SampleState;
+  kokoroMessage?: string | null;
   voices?: VoicesList;
   language?: string;
   state?: NarrateState;
@@ -287,6 +297,7 @@ function Fields({
       onGenerate={() => {}}
       onCancel={() => {}}
       sample={sample}
+      kokoroMessage={kokoroMessage}
     />
   );
 }
@@ -735,5 +746,145 @@ describe("Play sample", () => {
   test("while its sample loads or plays, the button says so", () => {
     expect(renderToStaticMarkup(<Fields sample={{ engine: "gemini", voice: "Kore", phase: "loading" }} />)).toContain('aria-label="Making the sample of Kore"');
     expect(renderToStaticMarkup(<Fields sample={{ engine: "gemini", voice: "Kore", phase: "playing" }} />)).toContain('aria-label="Stop the sample of Kore"');
+  });
+});
+
+describe("Kokoro's download", () => {
+  const TOTAL = 132_303_094;
+  const kokoro = (state: KokoroInfo["state"], more: Partial<KokoroInfo> = {}): KokoroInfo => ({ state, done: 0, total: TOTAL, message: null, ...more });
+  const KOKORO = { id: "kokoro", label: "Kokoro", service: null, local: true, ready: false, takes_style: false, voices: [] };
+  const withKokoro = (info: KokoroInfo, engines = VOICES.engines): VoicesList => ({ engines: [...engines, KOKORO], default: "gemini", kokoro: info });
+  const button = (html: string, label: string) => html.match(new RegExp(`<button[^>]*>(?:(?!</button>).)*${label}</button>`))?.[0];
+
+  test("is offered for download with its size while its model isn't here", () => {
+    expect(kokoroSize(kokoro("absent"))).toBe("132 MB");
+    const html = renderToStaticMarkup(<Fields voices={withKokoro(kokoro("absent"))} />);
+    expect(html).toContain("Kokoro · On this Mac");
+    expect(button(html, "Download Kokoro \\(132 MB\\)")).not.toContain('disabled=""');
+    expect(html).not.toContain("Remove Kokoro");
+    // An engine that can't read isn't in the picker: Gemini is still the one chosen.
+    expect(html).not.toContain('<option value="kokoro"');
+    expect(html).toContain('<option value="gemini" selected="">');
+  });
+
+  test("shows its progress in megabytes with Cancel while it downloads", () => {
+    const html = renderToStaticMarkup(<Fields voices={withKokoro(kokoro("downloading", { done: 45_000_000 }))} />);
+    expect(html).toContain("Downloading Kokoro…");
+    expect(html).toContain("45 of 132 MB");
+    expect(html).toMatch(/role="progressbar" aria-label="Downloading Kokoro"[^>]*aria-valuenow="34(\.\d+)?"/);
+    expect(button(html, "Cancel the download")).toBeDefined();
+    expect(html).not.toContain("Download Kokoro (132 MB)");
+  });
+
+  test("tells a failed download's message, with Download again", () => {
+    const message = "Kokoro's download didn't match its checksum, so it was deleted: Download it again";
+    const html = renderToStaticMarkup(<Fields voices={withKokoro(kokoro("failed", { message }))} />);
+    expect(html).toContain("Kokoro&#x27;s download didn&#x27;t match its checksum");
+    expect(button(html, "Download Kokoro \\(132 MB\\)")).toBeDefined();
+  });
+
+  test("once here, offers Remove with the space it gives back, off while a Narration is made", () => {
+    const html = renderToStaticMarkup(<Fields voices={withKokoro(kokoro("ready", { done: TOTAL }))} />);
+    expect(html).toContain("Kokoro is on this Mac");
+    expect(button(html, "Remove Kokoro \\(132 MB\\)")).not.toContain('disabled=""');
+    expect(html).not.toContain("Download Kokoro");
+    const making = renderToStaticMarkup(<Fields voices={withKokoro(kokoro("ready"))} state={{ phase: "making", start: 0, progress: null }} />);
+    expect(button(making, "Remove Kokoro \\(132 MB\\)")).toContain('disabled=""');
+    // A refused remove tells why.
+    expect(renderToStaticMarkup(<Fields voices={withKokoro(kokoro("ready"))} kokoroMessage={KOKORO_REMOVE_BUSY} />)).toContain("Remove Kokoro once it is done");
+  });
+
+  test("with no engine ready, the hint offers the Kokoro download beside the .env settings", () => {
+    const html = renderToStaticMarkup(<Fields voices={withKokoro(kokoro("absent"), [])} />);
+    expect(html).toContain("<code>GEMINI_API_KEY</code>");
+    expect(html).toContain("download Kokoro");
+    expect(button(html, "Download Kokoro \\(132 MB\\)")).toBeDefined();
+    expect(html.match(/<button type="button"[^>]*>(?:(?!<\/button>).)*Generate<\/button>/)![0]).toContain('disabled=""');
+    // Without Kokoro offered, none of it shows.
+    expect(renderToStaticMarkup(<Fields voices={{ engines: [], default: null }} />)).not.toContain("Kokoro");
+  });
+
+  // The Voices on a fake backend whose Kokoro is `info`, and a clock the test runs.
+  function setUp(info: KokoroInfo) {
+    const world = { info, listed: 0, asked: [] as KokoroAction[], refuse: null as ApiError | null };
+    const timers: (() => void)[] = [];
+    const source = new VoicesSource({
+      list: async () => {
+        world.listed += 1;
+        return withKokoro(world.info);
+      },
+      download: async () => {
+        world.asked.push("download");
+        world.info = kokoro("downloading");
+        return world.info;
+      },
+      cancel: async () => {
+        world.asked.push("cancel");
+        world.info = kokoro("absent");
+      },
+      remove: async () => {
+        world.asked.push("remove");
+        if (world.refuse) throw world.refuse;
+        world.info = kokoro("absent");
+      },
+      after: (ms, run) => {
+        expect(ms).toBe(KOKORO_POLL_MS);
+        timers.push(run);
+        return () => void timers.splice(timers.indexOf(run), 1);
+      },
+    });
+    const tick = async () => {
+      const due = timers.splice(0);
+      for (const run of due) run();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    return { world, source, timers, tick };
+  }
+
+  test("the tab polls the Voices while Kokoro downloads, and stops once it is here", async () => {
+    const { world, source, timers, tick } = setUp(kokoro("absent"));
+    await source.load("en");
+    expect(source.state.voices?.kokoro?.state).toBe("absent");
+    expect(timers).toHaveLength(0);
+    await source.kokoro("download");
+    expect(world.asked).toEqual(["download"]);
+    expect(source.state.voices?.kokoro?.state).toBe("downloading");
+    expect(timers).toHaveLength(1);
+    world.info = kokoro("downloading", { done: 66_000_000 });
+    await tick();
+    expect(source.state.voices?.kokoro).toEqual(kokoro("downloading", { done: 66_000_000 }));
+    expect(timers).toHaveLength(1);
+    world.info = kokoro("ready", { done: TOTAL });
+    await tick();
+    expect(source.state.voices?.kokoro?.state).toBe("ready");
+    expect(timers).toHaveLength(0);
+  });
+
+  test("Cancel stops the download and the polling; the tab closed stops the polling", async () => {
+    const { world, source, timers } = setUp(kokoro("downloading"));
+    await source.load("en");
+    expect(timers).toHaveLength(1);
+    await source.kokoro("cancel");
+    expect(world.asked).toEqual(["cancel"]);
+    expect(source.state.voices?.kokoro?.state).toBe("absent");
+    expect(timers).toHaveLength(0);
+
+    const other = setUp(kokoro("downloading"));
+    await other.source.load("en");
+    other.source.dispose();
+    expect(other.timers).toHaveLength(0);
+  });
+
+  test("Remove deletes it; refused while a Narration is made, it says so", async () => {
+    const { world, source } = setUp(kokoro("ready"));
+    await source.load("en");
+    world.refuse = new ApiError(409, "A Narration is being made: remove Kokoro once it is done");
+    await source.kokoro("remove");
+    expect(source.state.message).toBe(KOKORO_REMOVE_BUSY);
+    expect(source.state.voices?.kokoro?.state).toBe("ready");
+    world.refuse = null;
+    await source.kokoro("remove");
+    expect(source.state.message).toBeNull();
+    expect(source.state.voices?.kokoro?.state).toBe("absent");
   });
 });

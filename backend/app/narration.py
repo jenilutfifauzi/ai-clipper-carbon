@@ -30,8 +30,8 @@ import shutil
 import subprocess
 import threading
 import wave
-from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import suppress
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -197,6 +197,21 @@ class NarrationRunner:
         finally:
             shutil.rmtree(folder, ignore_errors=True)
             self._busy.release()
+
+    @contextmanager
+    def idle(self, busy: str) -> Iterator[None]:
+        """Hold the runner while the body runs, so that no Narration or sample starts meanwhile:
+        NarrationBusy, saying `busy`, while one is being made (as removing Kokoro's model is refused)."""
+        if not self._busy.acquire(blocking=False):
+            raise NarrationBusy(busy)
+        try:
+            yield
+        finally:
+            self._busy.release()
+
+    def forget_samples(self, engine_id: str) -> None:
+        """Delete the samples kept of the engine's Voices (its model removed: they'd sound of nothing here)."""
+        shutil.rmtree(self.samples_dir / _safe(engine_id), ignore_errors=True)
 
     def start(self, request: NarrationRequest) -> str:
         """Start making a Narration; its id. NarrationRefused for an empty or too long script, an unknown
