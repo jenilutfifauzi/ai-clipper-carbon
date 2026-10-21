@@ -42,7 +42,7 @@ Today:
   - A script is at most 5,000 characters.
 - **The joined sound is levelled to a fixed loudness before upload**, so every Voice sits alike. No Audio Effect is added.
 - **A Narration runner of its own, not the Worker.** One Narration at a time for the whole app; a second is refused as busy.
-  - A cloud 429 or 5xx is retried once per sentence.
+  - A cloud 429, 5xx or network failure is retried once per sentence, after the service's `Retry-After` or a short wait.
   - Any failure or cancel discards the partial sound and keeps the script and settings in the panel.
 - **The start is fixed when Generate is pressed:** the playhead, or the start of the earliest picked Text Layer or hook, whose words fill the script.
   - Editing goes on meanwhile.

@@ -1,20 +1,28 @@
-import { narrationEventsUrl, type MediaItem, type NarrationRequest, type VoiceEngine } from "../../../api";
+import { narrationEventsUrl, type MediaItem, type NarrationProgress, type NarrationRequest, type VoiceEngine } from "../../../api";
 import type { LandedTake } from "./takeFlow";
 
 /**
  * The Narrate tab's flow (.scratch/text-to-speech/spec.md, ADR 0019): from Generate to a Music Clip
  * marked Speech on the Timeline. The backend reads the script (app/narration.py); `NarrateFlow` starts
- * it, follows its events and lands the item through the same action that lands a Take, at the start
- * fixed when Generate was pressed. No React.
+ * it, follows its progress and lands the item through the same action that lands a Take, at the start
+ * fixed when Generate was pressed (the playhead then). It keeps the tab's draft (script, Voice, pause),
+ * so that a failure, a cancel or a tab switch never loses it. No React.
  *
- *   idle → making → idle (landed, or kept in the Media tab when the landing is refused)
- *             ↘ failed (its message; the script stays in the tab) → making (Generate again)
+ *   idle → making (progress; Cancel → idle) → idle (landed, or kept in the Media tab when refused)
+ *             ↘ failed (its message; the draft stays) → making (Generate again)
  */
 export type NarrateState =
   | { phase: "idle" }
-  // The backend reading the script; it lands at `start`.
-  | { phase: "making"; start: number }
+  // The backend reading the script, as far as `progress` (null until it first tells); it lands at `start`.
+  | { phase: "making"; start: number; progress: NarrationProgress | null }
   | { phase: "failed"; message: string };
+
+// What the owner has set in the tab: the script, the Voice (null: the engine's first) and the pause stop.
+export interface NarrateDraft {
+  script: string;
+  voice: string | null;
+  pause: number;
+}
 
 // The longest script the backend reads (app/narration.py's MAX_CHARS).
 export const MAX_SCRIPT_CHARS = 5000;
@@ -30,6 +38,18 @@ export const DEFAULT_PAUSE = 1;
 
 // Told when the Narration is made but can't land (a locked Music Track): it waits in the Media tab.
 export const NARRATION_IN_LIBRARY = "The Narration is in the Media tab: the Music Track is locked";
+// Told when a cancel came too late: the Narration was made, and waits in the Media tab, unlaid.
+export const NARRATION_MADE_BEFORE_CANCEL = "The Narration was made before the cancel: it is in the Media tab";
+// Why Generate is off with the playhead at the Clip's end.
+export const NARRATE_AT_END_HINT = "Move the playhead into the Clip to narrate: a Narration from its end would never be heard";
+
+// What a Narration's events stream tells (listenNarration).
+export interface NarrationListener {
+  progress: (progress: NarrationProgress) => void;
+  done: (item: MediaItem) => void;
+  failed: (message: string) => void;
+  cancelled: () => void;
+}
 
 /** How an engine is labelled in the tab: where its words go. */
 export const engineLabel = (engine: VoiceEngine) => (engine.local ? "On this Mac" : `${engine.service ?? engine.label} · cloud`);
@@ -39,7 +59,11 @@ export interface NarrateDeps {
   // Starts a Narration: its id, or rejects (busy, a script that can't be narrated) with the reason.
   start: (body: NarrationRequest) => Promise<string>;
   // Follows Narration `id` until its outcome; returns what stops following it.
-  listen: (id: string, on: { done: (item: MediaItem) => void; failed: (message: string) => void }) => () => void;
+  listen: (id: string, on: NarrationListener) => () => void;
+  // Cancels Narration `id`; rejects when it has ended already.
+  cancel: (id: string) => Promise<void>;
+  // Where the playhead is: the start Generate fixes.
+  playhead: () => number;
   // Lands the item as a Music Clip marked Speech (actions.ts' `landTake`); null when refused.
   land: (landed: LandedTake) => number | null;
   // The new item, listed in the Media Library's tabs.
@@ -47,11 +71,22 @@ export interface NarrateDeps {
   tell: (text: string) => void;
 }
 
-/** The Narrate tab's Generate: `subscribe` and `state` are for the tab (useSyncExternalStore). */
+// A Narration asked for: its id once the backend answers, and whether the owner cancelled it.
+interface Run {
+  id: string | null;
+  cancelled: boolean;
+}
+
+/** The Narrate tab's Generate and Cancel, and its draft: `subscribe`, `state` and `draft` are for the
+ * tab (useSyncExternalStore). */
 export class NarrateFlow {
   state: NarrateState = { phase: "idle" };
+  draft: NarrateDraft = { script: "", voice: null, pause: DEFAULT_PAUSE };
   private listeners = new Set<() => void>();
-  private stop: (() => void) | null = null;
+  // The run being made (null once it ends or is cancelled), and what stops following each run still
+  // followed: a cancelled one is followed to its end, for a cancel that came too late.
+  private run: Run | null = null;
+  private following = new Set<() => void>();
 
   constructor(private deps: NarrateDeps) {}
 
@@ -60,50 +95,100 @@ export class NarrateFlow {
     return () => void this.listeners.delete(listener);
   };
 
-  /** Reads `body` aloud, to land at `start` (the playhead when Generate was pressed). */
-  async generate(body: NarrationRequest, start: number): Promise<void> {
+  /** The owner changed the tab's script, Voice or pause. */
+  edit = (change: Partial<NarrateDraft>) => {
+    this.draft = { ...this.draft, ...change };
+    this.notify();
+  };
+
+  /** Reads `body` aloud, to land at `start`: the playhead now, whatever it does meanwhile. */
+  async generate(body: NarrationRequest, start = this.deps.playhead()): Promise<void> {
     if (this.state.phase === "making") return;
-    this.set({ phase: "making", start });
-    let id: string;
+    const run: Run = { id: null, cancelled: false };
+    this.run = run;
+    this.set({ phase: "making", start, progress: null });
     try {
-      id = await this.deps.start(body);
+      run.id = await this.deps.start(body);
     } catch (reason) {
+      if (this.run !== run) return;
+      this.run = null;
       this.set({ phase: "failed", message: reason instanceof Error ? reason.message : String(reason) });
       return;
     }
-    this.stop = this.deps.listen(id, {
+    const id = run.id;
+    if (run.cancelled) void this.deps.cancel(id).catch(() => {});
+    const current = () => this.run === run;
+    // Its stream is let go of at its end, which may come before `listen` returns (a replayed outcome).
+    let stop: (() => void) | null = null;
+    let ended = false;
+    const end = () => {
+      ended = true;
+      if (stop) {
+        stop();
+        this.following.delete(stop);
+      }
+      if (current()) this.run = null;
+    };
+    stop = this.deps.listen(id, {
+      progress: (progress) => {
+        if (current()) this.set({ phase: "making", start, progress });
+      },
       done: (item) => {
-        this.finish();
+        const landing = current();
+        end();
         this.deps.added(item);
-        if (this.deps.land({ media: item.id, start, secs: item.duration ?? 0 }) === null) this.deps.tell(NARRATION_IN_LIBRARY);
-        this.set({ phase: "idle" });
+        if (!landing) this.deps.tell(NARRATION_MADE_BEFORE_CANCEL);
+        else {
+          if (this.deps.land({ media: item.id, start, secs: item.duration ?? 0 }) === null) this.deps.tell(NARRATION_IN_LIBRARY);
+          this.set({ phase: "idle" });
+        }
       },
       failed: (message) => {
-        this.finish();
-        this.set({ phase: "failed", message });
+        const failing = current();
+        end();
+        if (failing) this.set({ phase: "failed", message });
       },
+      cancelled: end,
     });
+    if (ended) stop();
+    else this.following.add(stop);
   }
+
+  /** Stops the Narration being made: the backend discards it before its next sentence; the draft stays. */
+  cancel = () => {
+    const run = this.run;
+    if (!run || this.state.phase !== "making") return;
+    run.cancelled = true;
+    this.run = null;
+    if (run.id) void this.deps.cancel(run.id).catch(() => {});
+    this.set({ phase: "idle" });
+  };
 
   /** The editor lets go of the flow: a Narration being made is still added, unlaid. */
   dispose() {
-    this.finish();
-  }
-
-  private finish() {
-    this.stop?.();
-    this.stop = null;
+    for (const stop of this.following) stop();
+    this.following.clear();
+    this.run = null;
   }
 
   private set(state: NarrateState) {
     this.state = state;
+    this.notify();
+  }
+
+  private notify() {
     for (const listener of this.listeners) listener();
   }
 }
 
 /** Follows a Narration's events from the backend; EventSource reconnects by itself, and is told again. */
-export function listenNarration(id: string, on: { done: (item: MediaItem) => void; failed: (message: string) => void }): () => void {
+export function listenNarration(id: string, on: NarrationListener): () => void {
   const source = new EventSource(narrationEventsUrl(id));
+  source.addEventListener("progress", (event) => on.progress(JSON.parse((event as MessageEvent).data)));
+  source.addEventListener("cancelled", () => {
+    source.close();
+    on.cancelled();
+  });
   source.addEventListener("done", (event) => {
     source.close();
     on.done(JSON.parse((event as MessageEvent).data));

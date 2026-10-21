@@ -1,9 +1,11 @@
-"""A Narration read by a Voice (.scratch/text-to-speech/issues/01-narration-with-gemini.md, docs/adr/0019).
+"""A Narration read by a Voice (.scratch/text-to-speech/issues/01-narration-with-gemini.md and
+02-progress-cancel-and-failures.md, docs/adr/0019).
 Seam A: the HTTP API, MCP's dry run and the real ffmpeg, with FakeVoiceEngine (a second of tone per
 sentence) in place of the cloud."""
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from app.config import load_settings
 from app.main import create_app
+from app import narration
 from app.narration import sentences
 from app.ports import Ports
 from app.voices import GeminiSpeech, voice_engines
@@ -66,13 +69,25 @@ def outcome(client, narration_id: str) -> list[tuple[str, object]]:
         return list(events(response.iter_lines()))
 
 
+def ending(client, narration_id: str) -> list[tuple[str, object]]:
+    """The Narration's events but its progress: its outcome."""
+    return [(name, data) for name, data in outcome(client, narration_id) if name != "progress"]
+
+
 def narrated(client, text: str, **fields) -> dict:
     """The Media Library item a Narration of `text` made."""
     started = narrate(client, text, **fields)
     assert started.status_code == 202, started.text
-    [(name, data)] = outcome(client, started.json()["id"])
+    [(name, data)] = ending(client, started.json()["id"])
     assert name == "done", data
     return data
+
+
+def until(condition, timeout: float = 10) -> None:
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.01)
 
 
 def samples_of(client, settings, item: dict) -> np.ndarray:
@@ -173,7 +188,7 @@ def test_a_script_of_5000_characters_is_taken(client, engine):
     # Not read through: its first sentence fails it.
     engine.fail_with("stop")
     engine.release()
-    assert outcome(client, started.json()["id"]) == [("failed", {"message": "stop"})]
+    assert ending(client, started.json()["id"]) == [("failed", {"message": "stop"})]
 
 
 def test_a_second_narration_while_one_is_being_made_is_refused_as_busy(client, engine, quiet):
@@ -183,7 +198,7 @@ def test_a_second_narration_while_one_is_being_made_is_refused_as_busy(client, e
     busy = client.post("/api/narrations", json={"text": "Lagi.", "engine": "quiet", "voice": "ana"})
     assert busy.status_code == 409 and "Another Narration is being made" in busy.json()["detail"]
     engine.release()
-    [(name, _)] = outcome(client, first.json()["id"])
+    [(name, _)] = ending(client, first.json()["id"])
     assert name == "done"
     assert narrate(client, "Sekarang boleh.").status_code == 202
 
@@ -191,7 +206,7 @@ def test_a_second_narration_while_one_is_being_made_is_refused_as_busy(client, e
 def test_a_failed_read_ends_the_stream_with_its_message_and_adds_nothing(client, engine):
     engine.fail_with("Fake refused the key")
     started = narrate(client, "Halo. Apa kabar?")
-    assert outcome(client, started.json()["id"]) == [("failed", {"message": "Fake refused the key"})]
+    assert ending(client, started.json()["id"]) == [("failed", {"message": "Fake refused the key"})]
     assert client.get("/api/media").json() == []
     assert client.get("/api/narrations/nope/events").status_code == 404
 
@@ -240,3 +255,83 @@ async def test_a_narration_laid_as_speech_ducks_a_song_in_the_dry_run(mcp, clien
     sounds = {sound["id"]: sound for sound in plan["sounds"]}
     assert sounds["n"].get("speech") is True and "duck" not in sounds["n"]
     assert sounds["m"]["speech_spans"] == [[0.4, 1.0]]
+
+
+def test_the_events_stream_tells_the_stages_and_each_sentence_read_then_done(client):
+    started = narrate(client, "Satu. Dua. Tiga.")
+    told = outcome(client, started.json()["id"])
+    assert [(name, data) for name, data in told if name == "progress"] == [
+        ("progress", {"stage": "Loading the voice", "done": 0, "of": 3}),
+        ("progress", {"stage": "Reading", "done": 0, "of": 3}),
+        ("progress", {"stage": "Reading", "done": 1, "of": 3}),
+        ("progress", {"stage": "Reading", "done": 2, "of": 3}),
+        ("progress", {"stage": "Reading", "done": 3, "of": 3}),
+        ("progress", {"stage": "Levelling", "done": 3, "of": 3}),
+        ("progress", {"stage": "Saving", "done": 3, "of": 3}),
+    ]
+    name, item = told[-1]
+    assert name == "done" and item["name"].startswith("Narration Ana ")
+
+
+def test_a_cancel_mid_way_stops_before_the_next_sentence_and_leaves_no_item_nor_file(client, engine, settings):
+    # The first sentence is read, the second held while the cancel comes.
+    engine.hold(after=1)
+    started = narrate(client, "Satu. Dua. Tiga. Empat.")
+    narration_id = started.json()["id"]
+    until(lambda: len(engine.reads) == 2)
+    assert client.delete(f"/api/narrations/{narration_id}").status_code == 204
+    engine.release()
+    assert ending(client, narration_id) == [("cancelled", {})]
+    assert [read for read, _, _ in engine.reads] == ["Satu.", "Dua."]
+    assert client.get("/api/media").json() == []
+    until(lambda: not any((settings.data_dir / narration.NARRATIONS_DIR).iterdir()))
+    assert not [path for path in (settings.data_dir / "media").rglob("*") if path.is_file()]
+    # The runner is free again; a finished one can't be cancelled, an unknown one isn't found.
+    second = narrate(client, "Lagi.")
+    assert second.status_code == 202
+    ending(client, second.json()["id"])
+    assert client.delete(f"/api/narrations/{second.json()['id']}").status_code == 409
+    assert client.delete("/api/narrations/nope").status_code == 404
+
+
+def test_a_transient_failure_on_a_sentence_is_retried_once_and_succeeds(client, engine):
+    engine.fail_with("Fake is busy (429)", times=1, after=1, transient=True, retry_after=0.0)
+    item = narrated(client, "Satu. Dua. Tiga.")
+    assert [read for read, _, _ in engine.reads] == ["Satu.", "Dua.", "Dua.", "Tiga."]
+    assert item["duration"] == pytest.approx(3 * TONE_SECS + 2 * 0.3, abs=0.05)
+
+
+def test_without_a_retry_after_the_retry_comes_after_a_short_fixed_wait(client, engine, monkeypatch):
+    monkeypatch.setattr(narration, "RETRY_WAIT_SECS", 0.2)
+    engine.fail_with("Fake is busy (503)", times=1, transient=True, retry_after=None)
+    began = time.monotonic()
+    narrated(client, "Satu.")
+    assert time.monotonic() - began >= 0.2
+    assert len(engine.reads) == 2
+
+
+@pytest.mark.parametrize(
+    ("failure", "reads"),
+    [
+        ({"times": 2, "transient": True}, ["Satu.", "Dua.", "Dua."]),
+        ({"times": 1, "transient": False}, ["Satu.", "Dua."]),
+    ],
+)
+def test_a_second_failure_or_a_lasting_one_fails_with_the_engines_message_and_leaves_nothing(client, engine, settings, failure, reads):
+    engine.fail_with("Fake TTS failed (500): boom", after=1, retry_after=0.0, **failure)
+    started = narrate(client, "Satu. Dua. Tiga.")
+    assert ending(client, started.json()["id"]) == [("failed", {"message": "Fake TTS failed (500): boom"})]
+    assert [read for read, _, _ in engine.reads] == reads
+    assert client.get("/api/media").json() == []
+    until(lambda: not any((settings.data_dir / narration.NARRATIONS_DIR).iterdir()))
+
+
+def test_a_narration_whose_stream_nobody_reads_still_adds_its_item(client):
+    started = narrate(client, "Halo semua. Apa kabar?")
+    assert started.status_code == 202
+    until(lambda: len(client.get("/api/media").json()) == 1)
+    [item] = client.get("/api/media").json()
+    assert item["name"].startswith("Narration Ana ")
+    # Opened late, its stream still tells it.
+    [(name, told)] = ending(client, started.json()["id"])
+    assert (name, told["id"]) == ("done", item["id"])

@@ -122,7 +122,7 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - A run of blank lines counts as one break, and a sentence with no letters or digits is dropped.
 - **Reading.**
   - Each sentence is read alone.
-  - On a cloud 429 or 5xx it is retried once after the service's `Retry-After`, or after a short fixed wait.
+  - On a cloud 429, 5xx or network failure it is retried once after the service's `Retry-After`, or after a short fixed wait (2 s). A cancel during the wait stops it.
   - Any other failure, or the retry failing, fails the Narration.
 - **Joining.**
   - Sentences are resampled to 48 kHz mono and joined with silence of the pause length.
@@ -130,8 +130,8 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - No silence comes before the first sentence or after the last.
 - **Levelling.** The joined sound is levelled with ffmpeg `loudnorm` to a fixed target for speech (−16 LUFS integrated, −1.5 dBTP) before upload. No Audio Effect is added to the Music Clip.
 - **Output.** A WAV goes through the Media Library's normal add (AAC normalisation, Peaks). The runner reports the new item.
-- **Progress** is sentences done out of sentences, plus a stage: "Loading the voice", "Reading", "Levelling", "Saving".
-- **Cancel** stops before the next sentence and discards everything. So does a failure.
+- **Progress** is sentences done out of sentences, plus a stage: "Loading the voice", "Reading", "Levelling", "Saving". It is told as "Loading the voice" 0, "Reading" 0, then "Reading" after each sentence, then "Levelling" and "Saving".
+- **Cancel** stops before the next sentence (and before levelling and saving) and discards everything. So does a failure. A cancel after the item was added is refused: the Narration has been made.
 - **Leaving the page doesn't cancel.** The item is still added, unlaid.
 
 **HTTP API.**
@@ -141,8 +141,8 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - the default engine for a given Job language.
 - `POST /api/narrations` takes `{text, engine, voice, speed, pauses, style}` and returns a narration id.
   - It answers 409 when busy and 422 when the text is empty or too long, or the engine or Voice is unknown or not ready.
-- `GET /api/narrations/{id}/events` is an SSE stream of progress, then `done` with the Media item, or `failed` with the message. It follows the existing job events style.
-- `DELETE /api/narrations/{id}` cancels.
+- `GET /api/narrations/{id}/events` is an SSE stream of `progress` (`{stage, done, of}`), then `done` with the Media item, `failed` with the message, or `cancelled`. It follows the existing job events style, and opened late it replays everything.
+- `DELETE /api/narrations/{id}` cancels: 204, 404 for an unknown one, 409 for one that has ended.
 - `GET /api/voices/{engine}/{voice}/sample?lang=` returns the sample sound.
   - It is made on first request from a fixed sentence per language (Indonesian and English) and kept on this Mac per engine, Voice and language.
   - It is refused when the engine isn't ready. Samples share the one-at-a-time runner, so a sample is refused as busy while a Narration is being made.
@@ -170,6 +170,8 @@ A **Narrate** tab in the Advanced Edit's asset panel, on desktop and phone, turn
   - Speed, the pause slider, and the Style line (shown only when the engine takes one);
   - the script textarea, with an estimate "About m:ss · N characters" from a characters-per-second constant per language, scaled by Speed;
   - Generate, which shows progress and Cancel while running.
+- **The script, Voice and pause are kept by the editor's Narrate flow**, not the tab, so a failure, a busy refusal, a cancel or a tab switch keeps them.
+- **Cancel** frees the tab at once. If the Narration was made before the cancel reached it, the item is added to the Media tab, unlaid, and the tab says so.
 - **Opening the tab with a Text Layer or the hook picked** fills the script with its words (lines joined by spaces) and fixes the start at its start. With several picked, the earliest on the Timeline wins. Otherwise the start is the playhead.
 - **The start is fixed when Generate is pressed.** On `done`, the tab lands a Music Clip `{media, start, secs: duration, speech: true}` on a free lane through the same action `landTake` uses. It is Picked and is one undo step.
   - If the Music Track is locked, the tab says the Narration is in the Media tab instead.

@@ -606,6 +606,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       new NarrateFlow({
         start: api.startNarration,
         listen: listenNarration,
+        cancel: api.cancelNarration,
+        playhead: () => playback.time,
         land: (landed) => takeLatest.current.land(landed),
         added: (item) => takeLatest.current.added(item),
         tell: (text) => takeLatest.current.tell(text),
@@ -1467,7 +1469,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       transcript={job.transcript}
       near={edits.segments[0]}
       transitions={transitionPanel(true)}
-      narrate={<NarratePanel flow={narrateFlow} language={job.options.language} playhead={() => playback.time} />}
+      narrate={<NarratePanel flow={narrateFlow} language={job.options.language} atEnd={atEnd} />}
       filters={
         <LookPanel
           playback={playback}

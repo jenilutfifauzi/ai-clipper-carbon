@@ -13,14 +13,14 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Seam A: the events stream reports progress per sentence and the stages, then `done`.
-- [ ] Seam A: cancel mid-way leaves no item and no stray file.
-- [ ] Seam A: a transient failure on one sentence is retried once and succeeds; a second failure, or a non-transient one, fails with the engine's message and leaves no item.
-- [ ] Seam A: a Narration whose stream nobody reads still adds its item.
-- [ ] Gemini adapter: 429 with `Retry-After` and 5xx map to the transient error.
-- [ ] Vitest: progress and Cancel replace Generate while running; failure, busy and cancel keep the script.
-- [ ] Vitest: the start is fixed at Generate; moving the playhead meanwhile doesn't change it.
-- [ ] Vitest: a locked Music Track shows the "in the Media tab" message and lays nothing.
-- [ ] Vitest: Generate is off at the Clip's end and with an empty script.
+- [x] Seam A: the events stream reports progress per sentence and the stages, then `done`.
+- [x] Seam A: cancel mid-way leaves no item and no stray file.
+- [x] Seam A: a transient failure on one sentence is retried once and succeeds; a second failure, or a non-transient one, fails with the engine's message and leaves no item.
+- [x] Seam A: a Narration whose stream nobody reads still adds its item.
+- [x] Gemini adapter: 429 with `Retry-After` and 5xx map to the transient error.
+- [x] Vitest: progress and Cancel replace Generate while running; failure, busy and cancel keep the script.
+- [x] Vitest: the start is fixed at Generate; moving the playhead meanwhile doesn't change it.
+- [x] Vitest: a locked Music Track shows the "in the Media tab" message and lays nothing.
+- [x] Vitest: Generate is off at the Clip's end and with an empty script.

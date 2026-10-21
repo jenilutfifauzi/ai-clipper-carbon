@@ -335,6 +335,14 @@ export interface NarrationRequest {
   style?: string | null;
 }
 
+// How far a Narration being made has got: its stage ("Loading the voice", "Reading", "Levelling",
+// "Saving") and the sentences read, `done` of `of`.
+export interface NarrationProgress {
+  stage: string;
+  done: number;
+  of: number;
+}
+
 // A video's Media Words for a Job (backend/app/api.py's MediaWordsView): in its language (its own,
 // else the Job's), their status, the error of a failure, and the Words when ready. (Their status is
 // the item's, not a Segment's WordsStatus: a Segment of the video is "media" while they are "ready".)
@@ -1827,6 +1835,9 @@ export const api = {
   // while another is being made, a 422 for a script, engine or Voice that can't be narrated.
   startNarration: (body: NarrationRequest) =>
     request<{ id: string }>("/narrations", { method: "POST", body: JSON.stringify(body) }).then((answer) => answer.id),
+  // Cancels a Narration being made: it stops before its next sentence and leaves nothing. Rejects with a
+  // 409 when it has ended already.
+  cancelNarration: (id: string) => request<void>(`/narrations/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };
 
 export const logoUrl = (id: string) => `/api/logos/${encodeURIComponent(id)}`;
@@ -1906,7 +1917,8 @@ export function uploadJob(
 
 export const jobEventsUrl = (id: string) => `/api/jobs/${id}/events`;
 export const candidateEventsUrl = (id: string) => `/api/jobs/${id}/candidates/events`;
-// A Narration's outcome: `done` with its Media Library item, or `failed` with `{message}`.
+// A Narration's `progress` (NarrationProgress), then its outcome: `done` with its Media Library item,
+// `failed` with `{message}`, or `cancelled`.
 export const narrationEventsUrl = (id: string) => `/api/narrations/${encodeURIComponent(id)}/events`;
 
 /**

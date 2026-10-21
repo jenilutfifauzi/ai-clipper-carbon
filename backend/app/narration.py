@@ -6,8 +6,11 @@ thread of its own, and refuses a second while one runs (NarrationBusy). The scri
 sentences, each read alone by the engine (app/voices.py); they are resampled to 48 kHz mono, joined
 with the pause's silence (none before the first or after the last), levelled to a fixed loudness for
 speech with loudnorm's two passes, and the WAV is added through the Media Library's normal add, named
-"Narration <voice> <date time>". What the runner made of a Narration is told as events, the last
-`done` with the item or `failed` with the message; its work folder goes either way.
+"Narration <voice> <date time>". What the runner made of a Narration is told as events: `progress`
+(the stage, and sentences read out of sentences), then `done` with the item, `failed` with the message
+or `cancelled`; its work folder goes whichever. A cloud engine's passing failure (TransientSpeechError:
+a 429, a 5xx, the network) on a sentence is read again once, after the service's Retry-After or
+RETRY_WAIT_SECS. A cancel is heard between sentences, and before levelling and saving.
 """
 
 import asyncio
@@ -30,7 +33,7 @@ from fastapi.sse import ServerSentEvent
 
 from app.media import MediaItem, MediaStore
 from app.renderer import last_lines
-from app.voices import Pcm, SpeechError, Voice, VoiceEngine
+from app.voices import Pcm, SpeechError, TransientSpeechError, Voice, VoiceEngine
 
 # In DATA_DIR: a folder per Narration being made.
 NARRATIONS_DIR = "narrations"
@@ -46,6 +49,12 @@ LOUDNESS_RANGE = 11.0
 RATE = 48_000
 # How many finished Narrations are remembered, for a stream opened late.
 _KEPT = 20
+# The wait before a sentence's one retry when the service didn't say how long (Retry-After).
+RETRY_WAIT_SECS = 2.0
+# The stages progress tells, in order.
+LOADING, READING, LEVELLING, SAVING = "Loading the voice", "Reading", "Levelling", "Saving"
+# The events that end a Narration's stream.
+_ENDS = ("done", "failed", "cancelled")
 
 # A sentence ends at . ! ? or … (a run of them, as "?!" or "..."), followed by a space, or at a line's
 # end. A mark inside a word or number ("3.5", "example.com") doesn't end one.
@@ -61,6 +70,14 @@ class NarrationBusy(RuntimeError):
 
 
 class NarrationNotFound(LookupError):
+    pass
+
+
+class NarrationFinished(RuntimeError):
+    """The Narration has ended already: there is nothing to cancel."""
+
+
+class _Cancelled(Exception):
     pass
 
 
@@ -86,10 +103,12 @@ class _Narration:
     # Every event sent so far, in order: (name, data).
     sent: list[tuple[str, Any]] = field(default_factory=list)
     listeners: list[Callable[[tuple[str, Any]], None]] = field(default_factory=list)
+    # Set by a cancel; the reading stops at the next sentence.
+    cancelled: threading.Event = field(default_factory=threading.Event)
 
     @property
     def finished(self) -> bool:
-        return bool(self.sent) and self.sent[-1][0] in ("done", "failed")
+        return bool(self.sent) and self.sent[-1][0] in _ENDS
 
 
 class NarrationRunner:
@@ -147,7 +166,8 @@ class NarrationRunner:
         return narration.id
 
     async def events(self, narration_id: str) -> AsyncIterator[ServerSentEvent]:
-        """The Narration's events, those sent already and then as they come, until `done` or `failed`."""
+        """The Narration's events, those sent already and then as they come, until `done`, `failed` or
+        `cancelled`."""
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
 
@@ -166,11 +186,22 @@ class NarrationRunner:
             while True:
                 name, data = await queue.get()
                 yield ServerSentEvent(event=name, data=data)
-                if name in ("done", "failed"):
+                if name in _ENDS:
                     return
         finally:
             with self._lock:
                 narration.listeners.remove(heard)
+
+    def cancel(self, narration_id: str) -> None:
+        """Stop the Narration at its next sentence and discard it. NarrationNotFound for an unknown one,
+        NarrationFinished for one that has ended."""
+        with self._lock:
+            narration = self._narrations.get(narration_id)
+            if narration is None:
+                raise NarrationNotFound(narration_id)
+            if narration.finished:
+                raise NarrationFinished(f"The Narration has {'been made' if narration.sent[-1][0] == 'done' else 'ended'} already")
+            narration.cancelled.set()
 
     def exists(self, narration_id: str) -> bool:
         with self._lock:
@@ -185,15 +216,28 @@ class NarrationRunner:
 
     def _run(self, narration: _Narration, engine: VoiceEngine, voice: Voice, read: list[str], pauses: float, style: str | None) -> None:
         folder = self.work_dir / narration.id
+
+        def stage(name: str, done: int) -> None:
+            if narration.cancelled.is_set():
+                raise _Cancelled
+            self._send(narration, "progress", {"stage": name, "done": done, "of": len(read)})
+
         try:
             folder.mkdir(parents=True, exist_ok=True)
+            stage(LOADING, 0)
+            stage(READING, 0)
             parts = []
             for i, sentence in enumerate(read):
-                parts.append(_write_wav(folder / f"{i}.wav", engine.read(sentence, voice.id, style)))
+                parts.append(_write_wav(folder / f"{i}.wav", self._read(narration, engine, sentence, voice.id, style)))
+                stage(READING, i + 1)
+            stage(LEVELLING, len(read))
             narrated = self._join(parts, pauses, folder / "narration.wav")
+            stage(SAVING, len(read))
             name = f"Narration {voice.name} {self._now().strftime('%Y-%m-%d %H.%M.%S')}.wav"
             with narrated.open("rb") as file:
                 item = self.media.add(file, name)
+        except _Cancelled:
+            self._send(narration, "cancelled", {})
         except SpeechError as exc:
             self._send(narration, "failed", {"message": str(exc)})
         except Exception as exc:  # noqa: BLE001 - told to the owner, not lost in a thread
@@ -203,6 +247,17 @@ class NarrationRunner:
         finally:
             shutil.rmtree(folder, ignore_errors=True)
             self._busy.release()
+
+    def _read(self, narration: _Narration, engine: VoiceEngine, sentence: str, voice: str, style: str | None) -> Pcm:
+        """The sentence read, once more after a passing failure: after its Retry-After, or
+        RETRY_WAIT_SECS, unless a cancel comes meanwhile."""
+        try:
+            return engine.read(sentence, voice, style)
+        except TransientSpeechError as exc:
+            wait = RETRY_WAIT_SECS if exc.retry_after is None else exc.retry_after
+            if narration.cancelled.wait(wait):
+                raise _Cancelled from None
+            return engine.read(sentence, voice, style)
 
     def _join(self, parts: list[Path], pauses: float, out: Path) -> Path:
         """The sentences at 48 kHz mono, joined with `pauses` seconds of silence and levelled to LUFS."""

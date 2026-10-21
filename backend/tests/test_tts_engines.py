@@ -76,3 +76,28 @@ def test_an_answer_without_audio_fails_naming_gemini(settings):
     engine, _ = gemini(settings, httpx.Response(200, json={"candidates": [{"finishReason": "OTHER"}]}))
     with pytest.raises(SpeechError, match="Gemini TTS gave no audio for a sentence \\(OTHER\\)"):
         engine.read("Halo.", "Kore")
+
+
+@pytest.mark.parametrize(
+    ("answer", "retry_after"),
+    [
+        (error(429, "RESOURCE_EXHAUSTED", "Quota exceeded.", headers={"Retry-After": "7"}), 7.0),
+        (error(429, "RESOURCE_EXHAUSTED", "Quota exceeded."), None),
+        (error(500, "INTERNAL", "Internal error."), None),
+        (error(503, "UNAVAILABLE", "The model is overloaded.", headers={"Retry-After": "2"}), 2.0),
+    ],
+)
+def test_a_rate_limit_or_a_server_error_is_transient_with_its_retry_after(settings, answer, retry_after):
+    engine, _ = gemini(settings, answer)
+    with pytest.raises(TransientSpeechError, match=f"Gemini TTS is busy \\({answer.status_code}\\)") as raised:
+        engine.read("Halo.", "Kore")
+    assert raised.value.retry_after == retry_after
+
+
+def test_a_network_failure_is_transient(settings):
+    def handle(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    engine = GeminiSpeech(replace(settings, gemini_api_key="key"), httpx.Client(transport=httpx.MockTransport(handle)))
+    with pytest.raises(TransientSpeechError, match="Couldn't reach Gemini TTS"):
+        engine.read("Halo.", "Kore")

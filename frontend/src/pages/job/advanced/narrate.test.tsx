@@ -3,6 +3,8 @@
 // item lands through the action that lands a Take: one Music Clip marked Speech, not Ducked, on a free
 // lane, Picked, as one undo step; Undo keeps the item. The tab is in the desktop's asset tabs and the
 // phone's toolbar. No jsdom: the markup is checked with renderToStaticMarkup.
+// And 02-progress-cancel-and-failures.md: progress and Cancel in Generate's place, the draft kept
+// through a failure, a busy refusal or a cancel, and Generate off at the Clip's end.
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { MediaItem, MusicClip, NarrationRequest, VoicesList } from "../../../api";
@@ -11,7 +13,18 @@ import { AssetPanel } from "./AssetPanel";
 import { ASSET_TABS, AssetTabs, PHONE_ASSET_TABS } from "./Chrome";
 import { trackLanes, type AdvancedEdits } from "./edits";
 import type { MediaLibrary } from "./MediaLibrary";
-import { engineLabel, NARRATION_IN_LIBRARY, NarrateFlow, PAUSE_STOPS } from "./narrate";
+import {
+  DEFAULT_PAUSE,
+  engineLabel,
+  NARRATE_AT_END_HINT,
+  NARRATION_IN_LIBRARY,
+  NARRATION_MADE_BEFORE_CANCEL,
+  NarrateFlow,
+  PAUSE_STOPS,
+  type NarrateDraft,
+  type NarrateState,
+  type NarrationListener,
+} from "./narrate";
 import { NarrateFields } from "./NarratePanel";
 import { picked, type Pick } from "./pick";
 import { stepped, undone, type Steps } from "./useEditHistory";
@@ -56,10 +69,12 @@ function setUp() {
     pick: null as Pick,
     items: [] as MediaItem[],
     musicLocked: false,
+    playhead: 3,
   };
   const sent: NarrationRequest[] = [];
   const told: string[] = [];
-  let outcome: { done: (item: MediaItem) => void; failed: (message: string) => void } | null = null;
+  const cancelled: string[] = [];
+  let outcome: NarrationListener | null = null;
   let refuse: string | null = null;
   const flow = new NarrateFlow({
     start: async (body) => {
@@ -71,6 +86,8 @@ function setUp() {
       outcome = on;
       return () => (outcome = null);
     },
+    cancel: async (id) => void cancelled.push(id),
+    playhead: () => world.playhead,
     land: (landed) => {
       if (world.musicLocked) return null;
       const landedOutcome = landTake({ edits: world.steps.value }, landed, () => "landed");
@@ -87,10 +104,13 @@ function setUp() {
     flow,
     sent,
     told,
+    cancelled,
     settle,
     refuse: (message: string) => (refuse = message),
+    progress: (stage: string, done: number, of: number) => outcome?.progress({ stage, done, of }),
     done: () => outcome?.done(ITEM),
     failed: (message: string) => outcome?.failed(message),
+    listening: () => outcome !== null,
   };
 }
 
@@ -100,9 +120,9 @@ describe("Generate", () => {
   test("lands a Music Clip marked Speech at the playhead on a free lane, Picked, as one undo step; Undo keeps the item", async () => {
     const { world, flow, sent, settle, done } = setUp();
     // The playhead at 3 s when Generate is pressed.
-    await flow.generate(BODY, 3);
+    await flow.generate(BODY);
     expect(sent).toEqual([BODY]);
-    expect(flow.state).toEqual({ phase: "making", start: 3 });
+    expect(flow.state).toEqual({ phase: "making", start: 3, progress: null });
     done();
     await settle();
 
@@ -123,30 +143,103 @@ describe("Generate", () => {
   test("on a locked Music Track keeps the item in the Media tab and says so", async () => {
     const { world, flow, told, settle, done } = setUp();
     world.musicLocked = true;
-    await flow.generate(BODY, 3);
+    await flow.generate(BODY);
+    done();
+    await settle();
+    expect(world.steps.value.music).toEqual([song]);
+    expect(world.steps.past).toHaveLength(0);
+    expect(world.pick).toBeNull();
+    expect(world.items).toEqual([ITEM]);
+    expect(told).toEqual([NARRATION_IN_LIBRARY]);
+    expect(flow.state).toEqual({ phase: "idle" });
+  });
+
+  test("fixes the start when pressed: the playhead moving meanwhile doesn't move the landing", async () => {
+    const { world, flow, settle, done } = setUp();
+    world.playhead = 2.5;
+    await flow.generate(BODY);
+    world.playhead = 8;
+    done();
+    await settle();
+    expect(world.steps.value.music.find((clip) => clip.id === "landed")?.start).toBe(2.5);
+  });
+
+  test("tells the progress, stage by stage and sentence by sentence", async () => {
+    const { flow, progress } = setUp();
+    await flow.generate(BODY);
+    progress("Loading the voice", 0, 2);
+    expect(flow.state).toEqual({ phase: "making", start: 3, progress: { stage: "Loading the voice", done: 0, of: 2 } });
+    progress("Reading", 1, 2);
+    expect(flow.state).toEqual({ phase: "making", start: 3, progress: { stage: "Reading", done: 1, of: 2 } });
+  });
+
+  test("Cancel asks the backend to discard it, lands nothing and keeps the draft", async () => {
+    const { world, flow, cancelled, told, settle, progress, done, listening } = setUp();
+    flow.edit({ script: "Halo semua. Apa kabar?", voice: "Puck", pause: 2 });
+    await flow.generate(BODY);
+    progress("Reading", 1, 2);
+    flow.cancel();
+    expect(cancelled).toEqual(["n1"]);
+    expect(flow.state).toEqual({ phase: "idle" });
+    expect(flow.draft).toEqual({ script: "Halo semua. Apa kabar?", voice: "Puck", pause: 2 });
+    // Progress after the cancel isn't told; a cancel that came too late keeps the item, unlaid.
+    progress("Reading", 2, 2);
+    expect(flow.state).toEqual({ phase: "idle" });
     done();
     await settle();
     expect(world.steps.value.music).toEqual([song]);
     expect(world.items).toEqual([ITEM]);
-    expect(told).toEqual([NARRATION_IN_LIBRARY]);
+    expect(told).toEqual([NARRATION_MADE_BEFORE_CANCEL]);
+    expect(listening()).toBe(false);
+  });
+
+  test("Cancel before the backend answers cancels it once it does", async () => {
+    const { flow, cancelled } = setUp();
+    const generating = flow.generate(BODY);
+    flow.cancel();
+    expect(flow.state).toEqual({ phase: "idle" });
+    await generating;
+    expect(cancelled).toEqual(["n1"]);
+    expect(flow.state).toEqual({ phase: "idle" });
+  });
+
+  test("a failure or a busy refusal keeps the draft for Generate again", async () => {
+    const { flow, refuse, failed } = setUp();
+    const draft: NarrateDraft = { script: "Halo semua.", voice: "Puck", pause: 0 };
+    flow.edit(draft);
+    await flow.generate(BODY);
+    failed("Gemini TTS failed (500): boom");
+    expect(flow.state).toEqual({ phase: "failed", message: "Gemini TTS failed (500): boom" });
+    expect(flow.draft).toEqual(draft);
+    refuse("Another Narration is being made: wait for it to finish");
+    await flow.generate(BODY);
+    expect(flow.state).toEqual({ phase: "failed", message: "Another Narration is being made: wait for it to finish" });
+    expect(flow.draft).toEqual(draft);
   });
 
   test("tells a refusal or a failure, which leaves nothing laid", async () => {
     const { world, flow, refuse } = setUp();
     refuse("Another Narration is being made: wait for it to finish");
-    await flow.generate(BODY, 3);
+    await flow.generate(BODY);
     expect(flow.state).toEqual({ phase: "failed", message: "Another Narration is being made: wait for it to finish" });
 
     const second = setUp();
-    await second.flow.generate(BODY, 3);
+    await second.flow.generate(BODY);
     second.failed("Gemini TTS refused GEMINI_API_KEY");
     expect(second.flow.state).toEqual({ phase: "failed", message: "Gemini TTS refused GEMINI_API_KEY" });
     expect([world.steps.value.music, second.world.steps.value.music]).toEqual([[song], [song]]);
   });
 });
 
+const DRAFT: NarrateDraft = { script: "", voice: null, pause: DEFAULT_PAUSE };
+
+function Fields({ voices = VOICES, state = { phase: "idle" }, draft = DRAFT, atEnd = false }: { voices?: VoicesList; state?: NarrateState; draft?: NarrateDraft; atEnd?: boolean }) {
+  return <NarrateFields voices={voices} state={state} draft={draft} atEnd={atEnd} onDraft={() => {}} onGenerate={() => {}} onCancel={() => {}} />;
+}
+
 describe("the Narrate tab", () => {
-  const fields = (voices: VoicesList = VOICES) => renderToStaticMarkup(<NarrateFields voices={voices} state={{ phase: "idle" }} onGenerate={() => {}} />);
+  const fields = (voices: VoicesList = VOICES) => renderToStaticMarkup(<Fields voices={voices} />);
+  const generate = /<button type="button"[^>]*>(?:(?!<\/button>).)*Generate<\/button>/;
 
   test("lists the engine's Voices with their detail line, the pause and the script, Generate off without one", () => {
     const html = fields();
@@ -190,7 +283,7 @@ describe("the Narrate tab", () => {
         transitions={null}
         filters={null}
         effects={null}
-        narrate={<NarrateFields voices={VOICES} state={{ phase: "idle" }} onGenerate={() => {}} />}
+        narrate={<Fields />}
         onAddText={() => {}}
         onAddShape={() => {}}
         onAddMusic={() => {}}
@@ -200,5 +293,38 @@ describe("the Narrate tab", () => {
       />,
     );
     expect(panel).toContain("Firm · female");
+  });
+
+  test("shows the progress and Cancel in Generate's place while it is made", () => {
+    const making = { phase: "making", start: 3, progress: { stage: "Reading", done: 2, of: 5 } } as const;
+    const html = renderToStaticMarkup(<Fields state={making} draft={{ ...DRAFT, script: "Satu. Dua." }} />);
+    expect(html).not.toMatch(generate);
+    expect(html).toContain("Reading…");
+    expect(html).toContain("2 of 5 sentences");
+    expect(html).toMatch(/role="progressbar"[^>]*aria-valuenow="40"/);
+    expect(html).toMatch(/<button type="button"[^>]*>(?:(?!<\/button>).)*Cancel<\/button>/);
+    // Before the first progress, it is starting and the bar sweeps.
+    const starting = renderToStaticMarkup(<Fields state={{ phase: "making", start: 3, progress: null }} />);
+    expect(starting).toContain("Starting…");
+    expect(starting).not.toContain("aria-valuenow");
+  });
+
+  test("keeps the script, Voice and pause after a failure, with its message", () => {
+    const draft = { script: "Halo semua.", voice: "Puck", pause: 3 };
+    const html = renderToStaticMarkup(<Fields state={{ phase: "failed", message: "Gemini TTS failed (500): boom" }} draft={draft} />);
+    expect(html).toContain(">Halo semua.</textarea>");
+    expect(html).toMatch(/aria-checked="true"[^>]*>.*?Puck</);
+    expect(html).toContain(`>${PAUSE_STOPS[3].label}</output>`);
+    expect(html).toContain("Gemini TTS failed (500): boom");
+    expect(html).toMatch(generate);
+    expect(html.match(generate)![0]).not.toContain('disabled=""');
+  });
+
+  test("Generate is off at the Clip's end, with the hint, and with an empty script", () => {
+    const atEnd = renderToStaticMarkup(<Fields draft={{ ...DRAFT, script: "Halo semua." }} atEnd />);
+    expect(atEnd.match(generate)![0]).toContain('disabled=""');
+    expect(atEnd).toContain(`title="${NARRATE_AT_END_HINT}"`);
+    expect(renderToStaticMarkup(<Fields draft={{ ...DRAFT, script: "   " }} />).match(generate)![0]).toContain('disabled=""');
+    expect(renderToStaticMarkup(<Fields draft={{ ...DRAFT, script: "Halo semua." }} />).match(generate)![0]).not.toContain('disabled=""');
   });
 });

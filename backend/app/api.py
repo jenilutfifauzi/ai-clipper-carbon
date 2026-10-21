@@ -76,6 +76,7 @@ from app.narration import (
     DEFAULT_PAUSE_SECS,
     MAX_PAUSE_SECS,
     NarrationBusy,
+    NarrationFinished,
     NarrationNotFound,
     NarrationRefused,
     NarrationRequest,
@@ -1965,13 +1966,26 @@ def _narration(narration_id: str, narrations: Narrations) -> str:
 async def stream_narration_events(
     narration_id: Annotated[str, Depends(_narration)], narrations: Narrations
 ) -> AsyncIterator[ServerSentEvent]:
-    """The Narration's outcome: `done` with its Media Library item, or `failed` with the message; then
-    the stream ends. Opened late, it still tells it."""
+    """The Narration's progress (`progress`: its stage, "Loading the voice", "Reading", "Levelling" or
+    "Saving", and `done` sentences read of `of`), then its outcome: `done` with its Media Library item,
+    `failed` with the message, or `cancelled`; then the stream ends. Opened late, it still tells it all."""
     try:
         async for event in narrations.events(narration_id):
             yield event
     except NarrationNotFound:
         return
+
+
+@router.delete("/narrations/{narration_id}", status_code=204)
+def cancel_narration(narration_id: str, narrations: Narrations) -> None:
+    """Cancel the Narration being made: it stops before its next sentence and leaves nothing, no item and
+    no file. 404 for an unknown one, 409 for one that has ended."""
+    try:
+        narrations.cancel(narration_id)
+    except NarrationNotFound:
+        raise HTTPException(404, f"No Narration {narration_id}") from None
+    except NarrationFinished as exc:
+        raise HTTPException(409, str(exc)) from None
 
 
 def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:
