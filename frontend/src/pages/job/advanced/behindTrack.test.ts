@@ -11,6 +11,7 @@ import { Playback, playedFrom } from "../editor/playback";
 import { BehindOverlays, coversFrame } from "../editor/PreviewOverlays";
 import { remove, rippleRemove, setBehind, sharedBehind, splitAt, type PickContext } from "./actions";
 import { copy, paste } from "./clipboard";
+import { writeItemTransform } from "./keying";
 import { trackLanes, type AdvancedEdits } from "./edits";
 import { BehindSwitch, newOverlay } from "./Overlays";
 import { overlaysOn, picked, unlockedPick, type Pick } from "./pick";
@@ -239,6 +240,18 @@ describe("the Inspector's Behind the Main Track switch", () => {
     const markup = renderToStaticMarkup(createElement(BehindSwitch, { behind: true, onChange: () => {} }));
     expect(markup).toContain("Behind the Main Track");
     expect(markup).toContain('role="switch" class="peer sr-only" checked=""');
+  });
+});
+
+describe("on the stage", () => {
+  test("a Behind Overlay dragged there is moved, as an Overlay is; not on a locked Behind Track", () => {
+    const state = edits([behind("b", 2, 3)]);
+    const next = { ...state.overlays[0].transform, x: 700, rotation: 15 };
+    const moved = writeItemTransform({ edits: state, pick: null }, ref("b"), next, 3)!;
+    expect(moved.edits.overlays).toEqual([{ ...state.overlays[0], transform: next }]);
+    expect(writeItemTransform({ edits: state, pick: null, locked: ["behind"] }, ref("b"), next, 3)).toBeNull();
+    // The Overlay Track's lock leaves it be.
+    expect(writeItemTransform({ edits: state, pick: null, locked: ["overlay"] }, ref("b"), next, 3)).not.toBeNull();
   });
 });
 

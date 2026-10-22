@@ -507,19 +507,22 @@ export function useItemMatte(
  * A picture's video (`children`, a Media Library video's in a PicturePanel, `videoRef`) cut by
  * `matte` (`useItemMatte`) on a canvas in its place while the cut is shown (`CutGroup`), its edge
  * blurred by `feather` output pixels; as it is without one. Its elements stay the same either way, so
- * that switching Background removal never remounts the video its Matte follows.
+ * that switching Background removal never remounts the video its Matte follows. A `name` marks its
+ * canvas for a press on the stage to read (behindStage.ts' cutAlpha).
  */
 export function CutVideo({
   matte,
   feather,
   videoRef,
   playback,
+  name,
   children,
 }: {
   matte: DeckMatte | null;
   feather: number;
   videoRef: RefObject<HTMLVideoElement>;
   playback: Playback;
+  name?: string;
   children: ReactNode;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -533,7 +536,7 @@ export function CutVideo({
   return (
     <CutGroup mattes={matte ? [matte] : []} playback={playback} cutNow={() => !!matte} shownMatte={() => matte ?? undefined}>
       <div className="absolute inset-0 group-data-[cut]/cut:opacity-0">{children}</div>
-      <canvas ref={canvas} aria-hidden className="absolute inset-0 size-full opacity-0 group-data-[cut]/cut:opacity-100" />
+      <canvas ref={canvas} aria-hidden data-cut-picture={name} className="absolute inset-0 size-full opacity-0 group-data-[cut]/cut:opacity-100" />
     </CutGroup>
   );
 }

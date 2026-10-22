@@ -150,9 +150,9 @@ function roundHalfEven(value: number): number {
   return floor % 2 === 0 ? floor : floor + 1;
 }
 
-/** The plan's Overlays as drawn at `time`: each keyed one's picture sampled there (`pictureAt`). */
-export function overlaysAt(plan: RenderPlan, time: number): RenderPlan["overlays"] {
-  return plan.overlays.map((event) => (isKeyed(event.picture) ? { ...event, picture: pictureAt(event.picture, time) } : event));
+/** The plan's Overlays (or `events`, its Behind ones) as drawn at `time`: each keyed one's picture sampled there (`pictureAt`). */
+export function overlaysAt(plan: RenderPlan, time: number, events: RenderPlan["overlays"] = plan.overlays): RenderPlan["overlays"] {
+  return events.map((event) => (isKeyed(event.picture) ? { ...event, picture: pictureAt(event.picture, time) } : event));
 }
 
 /** The plan's Scenes as drawn at `time`: each keyed picture (a video Segment's or a Manual Scene's) sampled there (`pictureAt`). */
@@ -173,9 +173,9 @@ export const pictureLayers = (plan: RenderPlan): ShownLayer[] => [
   ...plan.texts.map((event): ShownLayer => ({ id: `text:${event.layer.id}`, event })),
 ];
 
-/** Whether any picture of the plan moves: an Overlay's, a Scene's or a picture layer's. */
+/** Whether any picture of the plan moves: an Overlay's (a Behind one's too), a Scene's or a picture layer's. */
 export const hasKeyedPictures = (plan: RenderPlan) =>
-  plan.overlays.some((event) => isKeyed(event.picture)) ||
+  [...plan.overlays, ...(plan.behind ?? [])].some((event) => isKeyed(event.picture)) ||
   plan.scenes.some((scene) => !!scene.picture && isKeyed(scene.picture)) ||
   pictureLayers(plan).some(({ event }) => isKeyed(event.picture));
 

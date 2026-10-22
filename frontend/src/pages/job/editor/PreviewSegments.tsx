@@ -169,7 +169,7 @@ export function MediaSegment({
               frame={FRAME}
               playback={playback}
               media={
-                <CutVideo matte={matte} feather={removal?.feather ?? 0} videoRef={main} playback={playback}>
+                <CutVideo matte={matte} feather={removal?.feather ?? 0} videoRef={main} playback={playback} name={`segment:${segment.id}`}>
                   <video ref={main} src={src} playsInline preload="auto" className="size-full object-fill" />
                 </CutVideo>
               }

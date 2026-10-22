@@ -13,6 +13,7 @@ import {
   type FontInfo,
   type HookEvent,
   type HookStyle,
+  type OverlayEvent,
   type Panel,
   type Picture,
   type PictureLayerEvent,
@@ -26,7 +27,7 @@ import { cssFontSize, fontFamily } from "../../../fonts";
 import { useLooks } from "../../../looks";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
-import { allStroke, BLUR_BRIGHTNESS, BLUR_SIGMA, filledStyle, FRAME, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
+import { BLUR_BRIGHTNESS, BLUR_SIGMA, filledStyle, FRAME, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewEffected } from "./PreviewEffected";
 import { PreviewMusic } from "./PreviewMusic";
 import { BehindOverlays, coversFrame, PreviewOverlays } from "./PreviewOverlays";
@@ -44,9 +45,11 @@ import { EyedropperLayer } from "./EyedropperLayer";
 import { pictureBox } from "./videoEffects";
 import { PreviewAdjusted } from "./PreviewAdjustments";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
-import { framePoint, type Size } from "./pictureGestures";
+import { framePoint, type Point, type Size } from "./pictureGestures";
+import { cutAlpha, segmentShows } from "./behindStage";
+import { behindId, stagePictures } from "./stagePictures";
 import { picturesAt, SAFE_BOTTOM, SAFE_TOP } from "./smartGuides";
-import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
+import { StageHandles, useStageEdit, type StageEdit, type StageItem } from "./StageEdit";
 import { drawnShadow, highlightShape } from "./styleShape";
 import { trackedWidth, trackedX, wordSpan } from "./tracking";
 import { cueLineMiddle, cueStageId, cueWordAt, cueWords } from "./cues";
@@ -189,15 +192,30 @@ export function ClipPreview({
   // Keyed pictures' handles and Grips go by their bounds at the playhead: drawn again at each new
   // time while paused, and left where they were while playing, which doesn't draw the stage again.
   const keyedAt = useKeyedTime(plan, playback);
+  // Whether the Segment's picture under the playhead shows at `point` (none while the Video Track is
+  // hidden): where it is cut out, by what its cut canvas keeps there. A press reaches a Behind
+  // Overlay only where it doesn't (behindStage.ts).
+  const segmentShowsAt = (point: Point) => {
+    if (!plan || blank) return false;
+    const time = playback.time;
+    const index = sceneAt(plan, time, playback.shownSegmentIndex);
+    const segment = plan.segments[segmentOfScene(plan, index)];
+    const cut = segment?.background_removal ? (segment.media ? `segment:${segment.id}` : "source") : null;
+    const source = { width: plan.source_width, height: plan.source_height };
+    return segmentShows(plan.scenes[index], point, time, source, (spot) => (cut ? cutAlpha(stage.current, cut, spot) : null));
+  };
   const pictures =
     plan && controls
       ? stagePictures(
-          keyedAt === null ? plan : { ...plan, overlays: overlaysAt(plan, keyedAt), scenes: scenesAt(plan, keyedAt), ...layersAt(plan, keyedAt) },
+          keyedAt === null
+            ? plan
+            : { ...plan, overlays: overlaysAt(plan, keyedAt), behind: plan.behind && overlaysAt(plan, keyedAt, plan.behind), scenes: scenesAt(plan, keyedAt), ...layersAt(plan, keyedAt) },
           controls,
           behind,
           sceneIndex,
           keyedAt ?? playback.time,
           startEditing,
+          { shows: segmentShowsAt, now: () => playback.time },
         )
       : [];
   // What is picked on the stage: moving one of several moves them all.
@@ -426,106 +444,15 @@ function useKeyedTime(plan: RenderPlan | null, playback: Playback): number | nul
   return keyed ? paused.current : null;
 }
 
-// The picture behind the Overlays, at the plan's Scene `scene`: another Scene's is another picture,
-// so that one held isn't drawn in the next Scene, nor saved to it.
-const behindId = (scene: number): StageId => `picture:${scene}`;
-
-/**
- * The pictures `controls` can pick and transform on the stage, in the order they are drawn: the
- * picture `behind` every Overlay (of the plan's Scene `scene`), then the Overlays, as they are at
- * `time`, then the Shapes and the Text Layers, by their areas (layerStage.ts) as they are at `time`,
- * each Text Layer retyped by `edit` when given.
- */
-function stagePictures(
-  plan: RenderPlan,
-  controls: StageControls,
-  behind: PictureTarget | null,
-  scene: number,
-  time: number,
-  edit: ((editing: Editing) => void) | undefined,
-): StagePicture[] {
-  const pictures: StagePicture[] = [];
-  const shown = plan.scenes[scene];
-  if (behind && shown) {
-    const picture = behind.transform ? shown.picture : null;
-    pictures.push({
-      id: behindId(scene),
-      label: shown.layout === "media" ? "Video" : shown.layout === "manual" ? "Scene, framed by hand" : "Scene",
-      start: shown.start,
-      end: shown.end,
-      picture,
-      transform: picture && behind.transform,
-      behind: true,
-      grips: behind.grips,
-      onTransform: behind.onTransform,
-      crop: picture && behind.crop,
-      onCrop: behind.onCrop,
-    });
-  }
-  const overlays = controls.overlays;
-  for (const event of overlays ? plan.overlays : []) {
-    const transform = overlays!.transformOf(event.id, time);
-    if (!transform) continue;
-    pictures.push({
-      id: `overlay:${event.id}`,
-      label: "Overlay",
-      start: event.start,
-      end: event.end,
-      picture: event.picture,
-      transform,
-      onTransform: (next, group) => overlays!.onTransform(event.id, next, group, time),
-      crop: overlays!.cropOf?.(event.id) ?? null,
-      onCrop: overlays!.onCrop && ((crop, next, group) => overlays!.onCrop!(event.id, crop, next, group)),
-    });
-  }
-  const shapes = controls.shapes;
-  for (const event of shapes ? plan.shapes : []) {
-    const { picture, fitted } = layerStagePicture(event);
-    const { id, style, keys } = event.layer;
-    const onResize = shapes!.onResize;
-    const ends = allStroke(style.kind);
-    pictures.push({
-      id: `shape:${id}`,
-      label: ends ? `Shape: ${style.kind}` : "Shape",
-      start: event.start,
-      end: event.end,
-      picture,
-      fitted,
-      transform: shapes!.transformOf(id, time) ?? event.layer.transform,
-      grips: !onResize ? "corners-rotate" : ends ? "ends" : "all",
-      onTransform: (next, group) => shapes!.onTransform(id, next, group, time),
-      // Its position keyed, an edge resizes it about its centre, as a Text Layer's box Grip does,
-      // so that a resize writes no Keyframe.
-      resize: onResize && { aboutCentre: !!(keys.x?.length || keys.y?.length), onResize: (box, next, group) => onResize(id, box, next, group, time) },
-    });
-  }
-  const texts = controls.texts;
-  for (const event of texts ? plan.texts : []) {
-    const { picture, fitted } = layerStagePicture(event);
-    pictures.push({
-      id: `text:${event.layer.id}`,
-      label: `Text: ${event.lines.join(" ")}`,
-      start: event.start,
-      end: event.end,
-      picture,
-      fitted,
-      transform: texts!.transformOf(event.layer.id, time) ?? event.layer.transform,
-      grips: "corners-rotate",
-      onTransform: (next, group) => texts!.onTransform(event.layer.id, next, group, time),
-      onBox: texts!.onBox && ((edge, length, group) => texts!.onBox!(event.layer.id, edge, length, group)),
-      onEdit: edit && (() => edit({ kind: "text", id: event.layer.id })),
-    });
-  }
-  return pictures;
-}
-
 // The plan with its Overlays, picture layers and the Scene `scene`'s picture drawn where the stage
 // holds them; a keyed picture layer held where the stage has it at `keyedAt` (useKeyedTime), still.
 function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number, keyedAt: number | null): RenderPlan {
-  const overlays = plan.overlays.map((event) => {
+  const shownOverlay = (event: OverlayEvent) => {
     const picture = edit.shownPicture(`overlay:${event.id}`, event.picture);
     return picture === event.picture ? event : { ...event, picture };
-  });
+  };
+  const overlays = plan.overlays.map(shownOverlay);
+  const behind = plan.behind?.map(shownOverlay);
   const scenes = plan.scenes.map((each, index) => {
     const picture = index === scene && each.picture ? edit.shownPicture(behindId(scene), each.picture) : each.picture;
     return picture === each.picture ? each : { ...each, picture };
@@ -539,7 +466,7 @@ function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number, keyedAt: nu
   };
   const shapes = plan.shapes.map((event) => held(event, `shape:${event.layer.id}`));
   const texts = plan.texts.map((event) => held(event, `text:${event.layer.id}`));
-  return { ...plan, overlays, scenes, shapes, texts };
+  return { ...plan, overlays, ...(behind && { behind }), scenes, shapes, texts };
 }
 
 // The largest 9:16 size that fits in `room`, in CSS pixels, while `on`.
@@ -1085,7 +1012,8 @@ function SlotVideo({
           className={cx("absolute max-w-none object-fill", matte && "group-data-[cut]/cut:opacity-0")}
           style={video}
         />
-        {matte && <canvas ref={canvas} aria-hidden className="absolute max-w-none opacity-0 group-data-[cut]/cut:opacity-100" style={video} />}
+        {/* The Source's frame cut, which a press on the stage reads (behindStage.ts' cutAlpha). */}
+        {matte && <canvas ref={canvas} aria-hidden data-cut-picture="source" className="absolute max-w-none opacity-0 group-data-[cut]/cut:opacity-100" style={video} />}
       </div>
     </div>
   );

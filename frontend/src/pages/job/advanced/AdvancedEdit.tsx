@@ -173,6 +173,7 @@ import {
   samePick,
   stageIdsOf,
   stageItem,
+  trackOf,
   unlockedPick,
   type ItemRef,
   type Pick,
@@ -1070,15 +1071,17 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (moved) history.set(moved.edits, group);
   }
 
-  // The Overlays on the preview, picked and transformed there; on a locked Track, only drawn. One
-  // of several picked moves them all. A keyed one is held where it is at the playhead, and its
-  // keyed fields are written there as Keyframes (auto-key, ADR 0008).
-  const overlayControls: StageControls["overlays"] = tracks.locked.includes("overlay")
+  // The Overlays on the preview (the Behind ones too, ADR 0015), picked and transformed there; on a
+  // locked Track (the Overlay Track, or the Behind Track), only drawn. One of several picked moves
+  // them all. A keyed one is held where it is at the playhead, and its keyed fields are written
+  // there as Keyframes (auto-key, ADR 0008).
+  const overlayControls: StageControls["overlays"] = tracks.locked.includes("overlay") && tracks.locked.includes("behind")
     ? undefined
     : {
         transformOf: (id, time) => {
           const overlay = edits.overlays.find((other) => other.id === id);
-          return overlay && heldTransform(overlay.transform, overlay.keys, overlay, time);
+          if (!overlay || tracks.locked.includes(trackOf("overlay", overlay))) return undefined;
+          return heldTransform(overlay.transform, overlay.keys, overlay, time);
         },
         onTransform: (id, transform, group, time) => {
           const overlay = edits.overlays.find((other) => other.id === id);
