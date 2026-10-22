@@ -255,7 +255,7 @@ async def test_the_candidates_framing_is_merged_field_by_field(mcp):
     merged = await call(mcp, "merge_candidate_items", **ids, framing={"background": {"kind": "colour", "colour": "#112233"}})
     framing = merged["framing"]
     assert (framing["transform"]["scale"], framing["transform"]["rotation"]) == (2, 90)
-    assert framing["background"] == {"kind": "colour", "colour": "#112233"}
+    assert framing["background"] == {"kind": "colour", "colour": "#112233", "image": None}
     # Only the Manual Layout has one.
     await call(mcp, "edit_candidate", **ids, changes={"layout": "blur"})
     assert "framing" in await fails(mcp, "merge_candidate_items", **ids, framing={"transform": {"scale": 2}})

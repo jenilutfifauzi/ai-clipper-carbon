@@ -40,7 +40,7 @@ import { filmstripLayer } from "./filmstrip";
 import { ItemCanvas } from "./ItemCanvas";
 import { MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
 import type { MediaCache } from "./mediaCache";
-import { clicked, isPicked, itemsOf, keyOf, listOf, picked, type ItemRef, type Pick } from "./pick";
+import { clicked, isPicked, itemsOf, keyOf, listOf, overlaysOn, picked, type ItemRef, type Pick } from "./pick";
 import { cueEditOf, shownCues, type CueDragStart } from "./cueEdits";
 import { useKeyTime } from "./KeyCluster";
 import { keyTime } from "./keying";
@@ -68,7 +68,7 @@ import { waveformLayer } from "./waveform";
 const HOOK_MAX_SECS = 30;
 
 // Where a Media Library item dropped on the timeline goes.
-export type DropTrack = "segment" | "overlay" | "music";
+export type DropTrack = "segment" | "overlay" | "behind" | "music";
 
 export interface TrackHandlers {
   onSelect: (pick: Pick) => void;
@@ -118,7 +118,8 @@ const CAPTION_SEEK_IN = 0.05;
 /**
  * The tracks, top to bottom: the Text Layers' lanes, the Shapes' lanes, the Adjustment Layers' lanes
  * (the Adjust Track), the Overlays' lanes, the
- * Main Track (its Segments as played over their Scenes, and the joins between them), the caption
+ * Main Track (its Segments as played over their Scenes, and the joins between them), the Behind
+ * Track's lanes (the Overlays Behind the Main Track, ADR 0015), the caption
  * lines, the hook, and the Music Clips' lanes. Each track takes what is dropped on it from the
  * asset panel.
  */
@@ -219,8 +220,82 @@ export function Tracks({
   const lookNames = new Map((looks ?? []).map((look) => [look.id, look.name]));
   const effects = useVideoEffects();
   const effectNames = new Map((effects ?? []).map((effect) => [effect.id, effect.name]));
-  const overlayLanes = lanes(edits.overlays, true);
   const musicLanes = lanes(edits.music, false);
+  // An Overlay Track's lanes: the Overlay Track's above the Video Track (its first lane next to it,
+  // later ones above), or the Behind Track's under it (ADR 0015; its first lane next to it, later ones below).
+  const overlayRows = (kind: "overlay" | "behind", upward: boolean) => {
+    const overlayLanes = lanes(overlaysOn(edits.overlays, kind), upward);
+    return overlayLanes.map((lane, i) => (
+      <TrackRow
+        key={`${kind}${upward ? overlayLanes.length - i : i + 1}`}
+        label={i === (upward ? overlayLanes.length - 1 : 0) ? label(kind) : ""}
+        dimmed={dimmed(kind)}
+        locked={locked(kind)}
+        drop={dropMedia(kind)}
+      >
+        {lane.map((overlay) => {
+          const selected = isPicked(pick, "overlay", overlay.id);
+          const item = mediaById.get(overlay.media);
+          const length = item?.duration ?? Infinity;
+          // A video at a Speed plays that many of its seconds in each of the Timeline's. In
+          // Reverse its left edge shows the end of its part of the video, and its right edge the
+          // start (its offset): trimmed, each reaches as far as the video goes that way, to where
+          // it would show the video's start or end.
+          const video = item?.duration != null;
+          const until = overlay.start + overlay.secs;
+          const time = overlayTime(overlay);
+          const reach = {
+            before: overlay.start + offsetAt(time, overlay.reverse ? length : 0),
+            after: overlay.start + offsetAt(time, overlay.reverse ? 0 : length),
+          };
+          return (
+            <TimelineItem
+              key={overlay.id}
+              geometry={geometry}
+              start={overlay.start}
+              end={Math.min(until, duration)}
+              max={duration}
+              minSecs={ITEM_MIN_SECS}
+              trimMin={video ? reach.before : undefined}
+              trimMax={video ? reach.after : undefined}
+              tone="overlay"
+              selected={selected}
+              changed={changed.has(overlay.id)}
+              label={`${kind === "behind" ? "Behind Overlay" : "Overlay"} ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s${retimingName(overlay)}${overlay.muted ? ", Muted" : ""}`}
+              pickKey={keyOf({ kind: "overlay", id: overlay.id })}
+              onSelect={choose({ kind: "overlay", id: overlay.id })}
+              onMenu={menu({ kind: "overlay", id: overlay.id })}
+              onChange={({ start, end, edge }, group) =>
+                layerChanged({ kind: "overlay", id: overlay.id }, overlay.start, { start, edge }, group, () =>
+                  handlers.onOverlay(
+                    retime(
+                      overlay,
+                      {
+                        ...overlay,
+                        start: round(start),
+                        secs: round(end - start),
+                        // Trimmed, a video shows the part of it its edges now reach.
+                        offset: edge !== "move" && video ? keptOffset(overlay, start - overlay.start, end - overlay.start) : overlay.offset,
+                      },
+                      edge,
+                      group,
+                    ),
+                    group,
+                  ),
+                )
+              }
+              onDelete={selected ? onDelete : undefined}
+            >
+              <img src={mediaThumbnailUrl(overlay.media)} alt="" className="h-6 w-auto shrink-0 rounded-sm" />
+              <span className="truncate font-medium">{item?.name ?? "Overlay"}</span>
+              <RetimingBadge retiming={overlay} />
+              {overlay.muted && <MutedBadge />}
+            </TimelineItem>
+          );
+        })}
+      </TrackRow>
+    ));
+  };
   return (
     <>
       {textLanes.map((lane, i) => (
@@ -348,76 +423,7 @@ export function Tracks({
           })}
         </TrackRow>
       ))}
-      {overlayLanes.map((lane, i) => (
-        <TrackRow
-          key={`overlay${overlayLanes.length - i}`}
-          label={i === overlayLanes.length - 1 ? label("overlay") : ""}
-          dimmed={dimmed("overlay")}
-          locked={locked("overlay")}
-          drop={dropMedia("overlay")}
-        >
-          {lane.map((overlay) => {
-            const selected = isPicked(pick, "overlay", overlay.id);
-            const item = mediaById.get(overlay.media);
-            const length = item?.duration ?? Infinity;
-            // A video at a Speed plays that many of its seconds in each of the Timeline's. In
-            // Reverse its left edge shows the end of its part of the video, and its right edge the
-            // start (its offset): trimmed, each reaches as far as the video goes that way, to where
-            // it would show the video's start or end.
-            const video = item?.duration != null;
-            const until = overlay.start + overlay.secs;
-            const time = overlayTime(overlay);
-            const reach = {
-              before: overlay.start + offsetAt(time, overlay.reverse ? length : 0),
-              after: overlay.start + offsetAt(time, overlay.reverse ? 0 : length),
-            };
-            return (
-              <TimelineItem
-                key={overlay.id}
-                geometry={geometry}
-                start={overlay.start}
-                end={Math.min(until, duration)}
-                max={duration}
-                minSecs={ITEM_MIN_SECS}
-                trimMin={video ? reach.before : undefined}
-                trimMax={video ? reach.after : undefined}
-                tone="overlay"
-                selected={selected}
-                changed={changed.has(overlay.id)}
-                label={`Overlay ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s${retimingName(overlay)}${overlay.muted ? ", Muted" : ""}`}
-                pickKey={keyOf({ kind: "overlay", id: overlay.id })}
-                onSelect={choose({ kind: "overlay", id: overlay.id })}
-                onMenu={menu({ kind: "overlay", id: overlay.id })}
-                onChange={({ start, end, edge }, group) =>
-                  layerChanged({ kind: "overlay", id: overlay.id }, overlay.start, { start, edge }, group, () =>
-                    handlers.onOverlay(
-                      retime(
-                        overlay,
-                        {
-                          ...overlay,
-                          start: round(start),
-                          secs: round(end - start),
-                          // Trimmed, a video shows the part of it its edges now reach.
-                          offset: edge !== "move" && video ? keptOffset(overlay, start - overlay.start, end - overlay.start) : overlay.offset,
-                        },
-                        edge,
-                        group,
-                      ),
-                      group,
-                    ),
-                  )
-                }
-                onDelete={selected ? onDelete : undefined}
-              >
-                <img src={mediaThumbnailUrl(overlay.media)} alt="" className="h-6 w-auto shrink-0 rounded-sm" />
-                <span className="truncate font-medium">{item?.name ?? "Overlay"}</span>
-                <RetimingBadge retiming={overlay} />
-                {overlay.muted && <MutedBadge />}
-              </TimelineItem>
-            );
-          })}
-        </TrackRow>
-      ))}
+      {overlayRows("overlay", true)}
       <TrackRow label={label("video")} height="h-14" dimmed={dimmed("video")} locked={locked("video")} drop={dropMedia("segment")}>
         {/* The Scenes' lane, under the Segments. */}
         <div aria-hidden className="pointer-events-none absolute inset-y-1 left-0 rounded-md bg-surface-raised" style={{ width: duration * pps }} />
@@ -580,6 +586,7 @@ export function Tracks({
           );
         })}
       </TrackRow>
+      {overlayRows("behind", false)}
       <TrackRow
         label={<TrackLabel kind="captions" tracks={tracks} onTrack={onTrack} onPick={() => onSelect({ kind: "captions" })} picked={pick?.kind === "captions"} />}
         height="h-8"

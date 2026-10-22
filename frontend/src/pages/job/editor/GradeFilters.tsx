@@ -1,5 +1,6 @@
 import { createContext, createElement, useContext, useLayoutEffect, useRef, type ReactNode } from "react";
 import type { Grade, VideoEffect } from "../../../api";
+import { cx } from "../../../format";
 import { useCanvas } from "./canvas";
 import { foldGrade, gradeFilter, gradeFilterId, hasGradeFilter, sharpenKernel, vignetteBackground } from "./grading";
 import type { Playback } from "./playback";
@@ -240,17 +241,20 @@ export function DecksGraded({
   grade,
   effects,
   start,
+  className,
   children,
 }: {
   grade: Grade | undefined;
   effects?: VideoEffect[];
   start?: number;
+  // Its own classes (a cut-out Segment's panels drop the black for their Background, MatteMask.tsx).
+  className?: string;
   children: ReactNode;
 }) {
   const filter = useFrameFilter(grade, effects, start);
   return (
     <>
-      <div className="absolute inset-0" style={filter ? { filter, background: "#000" } : undefined}>
+      <div className={cx("absolute inset-0", className)} style={filter ? { filter, background: "#000" } : undefined}>
         {children}
       </div>
       <GradeVignette grade={grade} />

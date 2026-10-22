@@ -30,6 +30,10 @@ chain times a video Overlay. Either way the effects come before the sampled scal
 their sizes are made those of the pixels they work on (`_effects_at`), so a keyed picture shows the
 effects of an unkeyed one at the same scale.
 
+A cut-out Overlay (Background removal, docs/adr/0015) is cut by its Matte before it is graded, as
+the still chain cuts it: an image's pixels once (`cut_image`), a video's frames in their decode
+(`VideoDecode`'s `matte`, its Matte read alongside, timed, cropped, scaled and flipped alike).
+
 `FrameFeed` writes one picture's frames to its pipe from a thread of its own, so that ffmpeg, reading
 every input as it needs it, never waits on another. A feed whose ffmpeg has gone (failed or stopped)
 stops at its next write.
@@ -42,6 +46,7 @@ import tempfile
 import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import NamedTuple
 
 import cv2
 import numpy as np
@@ -328,6 +333,34 @@ def graded_image(
     return graded_image
 
 
+def cut_image(image: np.ndarray, matte: Path, picture: Picture, feather: float) -> np.ndarray:
+    """`image` (RGBA, its whole size) cut out by its Matte (`matte`, a grayscale PNG of it, docs/adr/0015):
+    the Matte brought to its size, feathered by a blur of `feather` drawn pixels (in its own pixels,
+    as many as `picture` draws them in its crop), multiplying its alpha, as the still chain cuts it."""
+    found = cv2.imread(str(matte), cv2.IMREAD_GRAYSCALE)
+    if found is None:
+        raise RuntimeError(f"The Matte {matte.name} couldn't be read")
+    height, width = image.shape[:2]
+    mask = cv2.resize(found, (width, height), interpolation=cv2.INTER_LINEAR)
+    sigma = feather * min(picture.crop.width / max(picture.width, 1), picture.crop.height / max(picture.height, 1))
+    if sigma >= 0.1:
+        mask = cv2.GaussianBlur(mask, (0, 0), sigma)
+    cut = image.copy()
+    cut[..., 3] = (image[..., 3].astype(np.uint16) * mask // 255).astype(np.uint8)
+    return cut
+
+
+class KeyedMatte(NamedTuple):
+    """How a keyed cut-out Overlay's decode reads its Matte (docs/adr/0015): its input options, the
+    filters that bring its frames to the picture's own read from 0 (none for a copy or an image), its
+    `feather` in drawn pixels, and whether it multiplies the picture's own alpha (an image's)."""
+
+    inputs: list[str]
+    read: str
+    feather: float
+    own: bool
+
+
 # How much of its video a Freeze frame reads, of which it shows the first frame: a frame at any rate.
 _HELD_READ_SECS = 0.5
 
@@ -346,15 +379,19 @@ class VideoDecode:
     plan's `frame`, its Canvas at its own size), before
     the sampled scale, their time from the Overlay's start. With `looped`, `video` is an image, read
     as a stream of its one picture over the whole span (`shown` unused), so that an effect that
-    changes with time moves on it."""
+    changes with time moves on it. With `matte` (a cut-out one's, docs/adr/0015), each frame is cut by
+    its Matte's before it is graded: read alongside, timed, cropped, scaled and flipped as it is,
+    feathered."""
 
     def __init__(
         self, ffmpeg: Path, video: Path, picture: Picture, start: float, end: float, shown: SegmentTime, fps: float, graded: str = "",
-        effects: list[VideoEffect] | None = None, looped: bool = False, *, frame: tuple[int, int],
+        effects: list[VideoEffect] | None = None, looped: bool = False, matte: KeyedMatte | None = None, *,
+        frame: tuple[int, int],
     ) -> None:
         self.ffmpeg, self.video, self.picture, self.graded, self.effects = ffmpeg, video, picture, graded, effects or []
         self.frame = frame
         self.looped = looped
+        self.matte = matte
         self.start, self.end, self.shown, self.fps = start, end, shown, fps
         self.numbers = frame_numbers(start, end, fps)
         # As large as the picture is drawn at its largest, or its crop when it's drawn no smaller:
@@ -370,12 +407,16 @@ class VideoDecode:
         width, height = self.size
         still = self.shown.hold is not None and not self.looped
         speed = 1 if self.looped else self.shown.speed
-        steps = [
+        timed = [
             f"setpts=(PTS-STARTPTS)/{speed:.6g}+{self.start:.3f}/TB",
             f"fps={self.fps:.6g}:start_time={self.numbers.start / self.fps:.6f}:round=up",
+        ]
+        drawn = [
             f"crop={crop.width}:{crop.height}:{crop.x}:{crop.y}:exact=1",
             *([] if (width, height) == (crop.width, crop.height) else [f"scale={width}:{height}:flags=lanczos"]),
             *["hflip"] * self.picture.flip_h, *["vflip"] * self.picture.flip_v,
+        ]
+        finished = [
             *([self.graded] if self.graded else []),
             *_effects_at(self.picture, self.effects, self.size, Clock(self.start), frame=self.frame),
             "format=rgba",
@@ -384,9 +425,14 @@ class VideoDecode:
             read = ["-loop", "1", "-framerate", f"{self.fps:.6g}", "-t", f"{self.end - self.start:.3f}"]
         else:
             read = ["-ss", f"{self.shown.start:.3f}", "-t", f"{_HELD_READ_SECS if still else self.shown.span:.3f}"]
+        if self.matte is None:
+            graph = ["-vf", ",".join([*timed, *drawn, *finished])]
+        else:
+            graph = ["-filter_complex", self._cut(timed, drawn, finished), "-map", "[out]"]
         command = [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", *read, "-i", str(self.video),
-            "-an", "-sn", "-dn", "-vf", ",".join(steps), "-frames:v", str(1 if still else len(self.numbers)),
+            *(self.matte.inputs if self.matte is not None else []),
+            "-an", "-sn", "-dn", *graph, "-frames:v", str(1 if still else len(self.numbers)),
             # Its frames as the steps time them: a frame rate kept by the muxer would fill the time
             # before the first (from 0, when the video has sound) with copies of it.
             "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1",
@@ -413,6 +459,24 @@ class VideoDecode:
                     # It ended early: its last whole frame is held.
                     held = frames[(read - 1) % 2]
                 yield held
+
+    def _cut(self, timed: list[str], drawn: list[str], finished: list[str]) -> str:
+        """The graph of a cut-out one's frames: the picture `timed` and `drawn`, its Matte (input 1) timed
+        and drawn alike from its item's size, feathered in the pixels sent, joined as its alpha (or
+        multiplying its own), then `finished` (graded and effected) into [out]."""
+        matte = self.matte
+        assert matte is not None
+        width, height = self.picture.item_size
+        sigma = matte.feather * min(self.size[0] / max(self.picture.width, 1), self.size[1] / max(self.picture.height, 1))
+        feather = [f"gblur=sigma={sigma:.3f}"] if sigma >= 0.01 else []
+        read = [matte.read] if matte.read else []
+        cut = ",".join([*read, *timed, f"scale={width}:{height}", *drawn, "format=gray", *feather])
+        picture = ",".join([*timed, *drawn])
+        if matte.own:
+            joined = f"[0:v]{picture},format=rgba,split[x][o];[o]alphaextract[a];[1:v]{cut}[m];[a][m]blend=all_mode=multiply[k];[x][k]alphamerge"
+        else:
+            joined = f"[0:v]{picture}[x];[1:v]{cut}[m];[x][m]alphamerge"
+        return f"{joined},{','.join(finished)}[out]"
 
     def close(self) -> None:
         """End its ffmpeg, if it runs."""

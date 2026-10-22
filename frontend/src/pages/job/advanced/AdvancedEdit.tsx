@@ -57,6 +57,7 @@ import { useVideoEffects } from "../../../videoEffects";
 import { draftGrades } from "../editor/grading";
 import { failedSegments, pendingSpans, useReplanWhilePending } from "../editor/wordsStatus";
 import { styleControls, usePresets } from "../editor/useStyleDraft";
+import { LibraryImages } from "./TransformFields";
 import { eventCopy, segmentCopy, soundAsk, type RetimedAsk } from "../editor/retimedCopy";
 import {
   addAdjustmentLayer,
@@ -175,6 +176,7 @@ import {
   samePick,
   stageIdsOf,
   stageItem,
+  trackOf,
   unlockedPick,
   type ItemRef,
   type Pick,
@@ -316,6 +318,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [looping, setLooping] = useState(false);
   const library = useMediaLibrary();
   const mediaById = new Map((library.items ?? []).map((item) => [item.id, item]));
+  // The images a Background may show (ADR 0015), offered by the Inspector's Background pickers.
+  const libraryImages = useMemo(() => (library.items ?? []).filter((item) => item.kind === "image"), [library.items]);
   // The Timeline's Filmstrips, fetched and decoded for as long as this editor is open.
   const [mediaCache] = useState(() => new MediaCache());
   useEffect(() => () => mediaCache.clear(), [mediaCache]);
@@ -541,7 +545,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const canvas = useCanvasOf(preview?.plan, candidate.aspect);
   // What is picked of the edits as they are now: an undo or a change from elsewhere may have taken
   // some of it away (a Cue, once the plan has none of its key), and nothing on a locked Track is picked.
-  const pick = prunedCue(unlockedPick(prunedPick(pickState, edits), tracks.locked), preview?.plan ?? null);
+  const pick = prunedCue(unlockedPick(prunedPick(pickState, edits), tracks.locked, edits), preview?.plan ?? null);
   useEffect(() => {
     if (pick !== pickState) setPickState(pick);
   }, [pick, pickState]);
@@ -768,9 +772,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     change({ music: [...edits.music, clip] });
     added(picked({ kind: "music", id: clip.id }));
   }
-  function addOverlay(item: MediaItem, at = playback.time) {
-    if (refused("overlay")) return;
-    const overlay = newOverlay(item, at, duration, canvas);
+  // An Overlay of `item` at `at`: over the Main Track, or `behind` it on the Behind Track (ADR 0015).
+  function addOverlay(item: MediaItem, at = playback.time, behind = false) {
+    if (refused(behind ? "behind" : "overlay")) return;
+    const overlay = newOverlay(item, at, duration, canvas, behind);
     change({ overlays: [...edits.overlays, overlay] });
     added(picked({ kind: "overlay", id: overlay.id }));
   }
@@ -795,7 +800,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     const item = mediaById.get(media);
     if (!item) return;
     if (onto === "music" && item.has_audio) addMusic(item, time);
-    else if (onto === "overlay" && item.kind !== "audio") addOverlay(item, time);
+    else if ((onto === "overlay" || onto === "behind") && item.kind !== "audio") addOverlay(item, time, onto === "behind");
     else if (onto === "segment" && item.kind === "video") {
       addSegment(newMediaSegment(item, newId(), canvas), placeDropped(played, time));
     }
@@ -1103,15 +1108,17 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (moved) history.set(moved.edits, group);
   }
 
-  // The Overlays on the preview, picked and transformed there; on a locked Track, only drawn. One
-  // of several picked moves them all. A keyed one is held where it is at the playhead, and its
-  // keyed fields are written there as Keyframes (auto-key, ADR 0008).
-  const overlayControls: StageControls["overlays"] = tracks.locked.includes("overlay")
+  // The Overlays on the preview (the Behind ones too, ADR 0015), picked and transformed there; on a
+  // locked Track (the Overlay Track, or the Behind Track), only drawn. One of several picked moves
+  // them all. A keyed one is held where it is at the playhead, and its keyed fields are written
+  // there as Keyframes (auto-key, ADR 0008).
+  const overlayControls: StageControls["overlays"] = tracks.locked.includes("overlay") && tracks.locked.includes("behind")
     ? undefined
     : {
         transformOf: (id, time) => {
           const overlay = edits.overlays.find((other) => other.id === id);
-          return overlay && heldTransform(overlay.transform, overlay.keys, overlay, time, canvas);
+          if (!overlay || tracks.locked.includes(trackOf("overlay", overlay))) return undefined;
+          return heldTransform(overlay.transform, overlay.keys, overlay, time, canvas);
         },
         onTransform: (id, transform, group, time) => {
           const overlay = edits.overlays.find((other) => other.id === id);
@@ -1432,50 +1439,53 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const bottomTabContext: BottomTabContext = { timeline, keying, fps, mediaById };
   const inspector = (
     <KeyingContext.Provider value={keying}>
-      <Inspector
-        effectsPreparing={effectsPreparing}
-        effectsElsewhere={!wide}
-        videoEffectsShown={wide}
-        pick={pick}
-        edits={edits}
-        duration={duration}
-        preview={preview}
-        fonts={fonts}
-        captionStyle={captionStyle}
-        presetsError={presets.error}
-        actions={actions}
-        mediaById={mediaById}
-        sourceLength={sourceLength}
-        playback={playback}
-        transition={transitionPanel(!wide)}
-        onEdits={history.set}
-        onText={updateText}
-        onShape={updateShape}
-        onAdjustment={updateAdjustment}
-        onMusic={updateMusic}
-        onOverlay={updateOverlay}
-        onSegment={updateSegment}
-        onSpeed={setItemSpeed}
-        onReverse={setItemReverse}
-        copyOf={copyOf}
-        onHold={setFreezeHold}
-        cropMode={cropMode}
-        locked={tracks.locked}
-        onCue={applyCue}
-        captionsOf={(segment, item) => (
-          <MediaCaptionFields
-            segment={segment}
-            item={item}
-            job={job.options}
-            status={preview?.words_status[segment.id]}
-            error={preview?.words_errors?.[segment.id]}
-            onChange={updateSegment}
-            onLanguage={(language) => setMediaLanguage(item, language)}
-            onTranscribe={(again) => api.transcribeMediaWords(job.id, item.id, again).then(() => setReplan((n) => n + 1))}
-          />
-        )}
-        detaching={detaching}
-      />
+      <LibraryImages.Provider value={libraryImages}>
+        <Inspector
+          effectsPreparing={effectsPreparing}
+          effectsElsewhere={!wide}
+          videoEffectsShown={wide}
+          matte={here}
+          pick={pick}
+          edits={edits}
+          duration={duration}
+          preview={preview}
+          fonts={fonts}
+          captionStyle={captionStyle}
+          presetsError={presets.error}
+          actions={actions}
+          mediaById={mediaById}
+          sourceLength={sourceLength}
+          playback={playback}
+          transition={transitionPanel(!wide)}
+          onEdits={history.set}
+          onText={updateText}
+          onShape={updateShape}
+          onAdjustment={updateAdjustment}
+          onMusic={updateMusic}
+          onOverlay={updateOverlay}
+          onSegment={updateSegment}
+          onSpeed={setItemSpeed}
+          onReverse={setItemReverse}
+          copyOf={copyOf}
+          onHold={setFreezeHold}
+          cropMode={cropMode}
+          locked={tracks.locked}
+          onCue={applyCue}
+          captionsOf={(segment, item) => (
+            <MediaCaptionFields
+              segment={segment}
+              item={item}
+              job={job.options}
+              status={preview?.words_status[segment.id]}
+              error={preview?.words_errors?.[segment.id]}
+              onChange={updateSegment}
+              onLanguage={(language) => setMediaLanguage(item, language)}
+              onTranscribe={(again) => api.transcribeMediaWords(job.id, item.id, again).then(() => setReplan((n) => n + 1))}
+            />
+          )}
+          detaching={detaching}
+        />
+      </LibraryImages.Provider>
     </KeyingContext.Provider>
   );
   // The picture the Filters cards show at `time` (ADR 0013).

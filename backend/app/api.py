@@ -50,6 +50,7 @@ from app.candidates import (
     Transition,
     Volume,
     WordEdit,
+    backgrounds_of,
     grades_of,
 )
 from app.canvas import Aspect, canvas_for
@@ -66,6 +67,7 @@ from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, 
 from app.effected import EFFECTED_DIR, NoCopy, copies_used as effected_used, effected_copy, sweep as sweep_effected
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.kokoro import KokoroBusy, KokoroModel
+from app.person_model import PersonModel, PersonModelBusy
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app import audio_effects, video_effects
@@ -91,7 +93,8 @@ from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.renderer import AudioFormat, available_codecs
-from app.rendering import NothingToRender, has_media_words, media_language, ranked_clips, source_copies
+from app.matte import MATTES_DIR, MatteBusy, MatteRunner, MatteStatus, remove_mattes
+from app.rendering import NothingToRender, has_media_words, matte_wanted, media_language, media_mattes, ranked_clips, source_copies, source_mattes
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
@@ -202,6 +205,18 @@ def _kokoro(request: Request) -> KokoroModel:
     return model
 
 
+def _person_model(request: Request) -> PersonModel:
+    """The person model, or a 404 when this app doesn't offer it."""
+    model = request.app.state.person_model
+    if model is None:
+        raise HTTPException(404, "The person model isn't offered here")
+    return model
+
+
+def _mattes(request: Request) -> MatteRunner:
+    return request.app.state.mattes
+
+
 def _media_words(request: Request) -> MediaWordsStore:
     return request.app.state.media_words
 
@@ -219,13 +234,16 @@ def _edit(request: Request) -> Edit:
     return Edit.of(request.headers.get("X-Edit-Source"), request.headers.get("X-Edit-Tab"))
 
 
-def _after_save(request: Request, background: BackgroundTasks) -> Callable[[str, float], None]:
-    """What runs once a save of a Job's Candidates is sent: removing the Job's Effected copies none of
-    its Candidates uses, made before the save started (`sweep_unused_effected`)."""
+def _after_save(request: Request, background: BackgroundTasks) -> Callable[[str, float, Candidate], None]:
+    """What runs once a save of a Job's Candidate is sent: removing the Job's Effected copies none of
+    its Candidates uses, made before the save started (`sweep_unused_effected`); and asking for the
+    Matte pieces the saved Candidate's cut-out Segments lack (`ask_mattes`), as switching Background
+    removal on or changing a range needs."""
     state = request.app.state
 
-    def after(job_id: str, started: float) -> None:
+    def after(job_id: str, started: float, saved: Candidate) -> None:
         background.add_task(sweep_unused_effected, state.store, state.settings, state.presets, state.logos, state.media, job_id, started)
+        background.add_task(ask_mattes, state.store, state.mattes, job_id, saved, state.media)
 
     return after
 
@@ -251,10 +269,12 @@ Media = Annotated[MediaStore, Depends(_media)]
 MediaWordsDep = Annotated[MediaWordsStore, Depends(_media_words)]
 Narrations = Annotated[NarrationRunner, Depends(_narrations)]
 Kokoro = Annotated[KokoroModel, Depends(_kokoro)]
+PersonModelDep = Annotated[PersonModel, Depends(_person_model)]
 FaceRegistry = Annotated[Faces, Depends(_faces)]
 ImportedLookStore = Annotated[ImportedLooks, Depends(_imported_looks)]
 EditBy = Annotated[Edit, Depends(_edit)]
-AfterSave = Annotated[Callable[[str, float], None], Depends(_after_save)]
+AfterSave = Annotated[Callable[[str, float, Candidate], None], Depends(_after_save)]
+MatteMaker = Annotated[MatteRunner, Depends(_mattes)]
 ExistingJob = Annotated[Job, Depends(_job)]
 
 
@@ -747,15 +767,15 @@ def list_jobs(
 
 
 @router.get("/jobs/{job_id}")
-def get_job(job_id: str, store: Store, library: Media, background: BackgroundTasks) -> JobDetail:
-    """The Job, as the editors open it; then, once it is sent, its unused Retimed copies and picture
-    layers' pictures are swept (`sweep_unused`)."""
+def get_job(job_id: str, store: Store, library: Media, mattes: MatteMaker, background: BackgroundTasks) -> JobDetail:
+    """The Job, as the editors open it; then, once it is sent, its unused Retimed copies, picture
+    layers' pictures and Matte pieces are swept (`sweep_unused`)."""
     try:
         job = store.get(job_id)
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
     candidates = store.load_candidates(job_id)
-    background.add_task(sweep_unused, store, library, job_id)
+    background.add_task(sweep_unused, store, library, mattes, job_id)
     return JobDetail(
         **vars(job),
         transcript=store.load_transcript(job_id),
@@ -1006,12 +1026,22 @@ def candidate_preview_plan(
     logos: Logos,
     library: Media,
     media_words: MediaWordsDep,
+    mattes: MatteMaker,
+    background: BackgroundTasks,
     body: CandidateUpdate | None = None,
 ) -> PreviewPlan:
     """The Candidate's Preview Plan (app/editor.py): its Render Plan, or that of `body`, a draft of
-    edits applied as an update would apply them but not saved. 422 for a draft that isn't a valid
-    edit; 409 for a Job without Candidates."""
-    return _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, media_words, body)
+    edits applied as an update would apply them but not saved, with the Matte pieces its cut-out
+    Segments read. A draft asks for the pieces its cut-out items lack (`ask_mattes`), as a save does,
+    so that switching Background removal on or changing a range starts its Matte before the save.
+    422 for a draft that isn't a valid edit; 409 for a Job without Candidates."""
+
+    def ask(draft: Candidate) -> None:
+        background.add_task(ask_mattes, store, mattes, job_id, draft, library)
+
+    return _draft_plan(
+        job_id, candidate_id, store, settings, presets, logos, library, media_words, body, matte_version=mattes.version, drafted=ask,
+    )
 
 
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/frame")
@@ -1026,6 +1056,7 @@ def save_candidate_frame(
     logos: Logos,
     library: Media,
     media_words: MediaWordsDep,
+    mattes: MatteMaker,
 ) -> SavedExport:
     """Save the frame at `at` (Timeline time) of the Candidate, or of `draft` (as the Preview Plan
     plans it: from cached analysis only), drawn as its render would draw it at the Export Preset's
@@ -1036,7 +1067,7 @@ def save_candidate_frame(
     planned = _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, media_words, body.draft, export.fps)
     job, job_dir = store.get(job_id), store.job_dir(job_id)
     try:
-        path = save_frame(job, job_dir, candidate_id, planned.plan, body.at, export, settings, library, logos)
+        path = save_frame(job, job_dir, candidate_id, planned.plan, body.at, export, settings, library, logos, mattes)
     except RuntimeError as exc:
         raise HTTPException(500, str(exc)) from None
     return saved_export(job_id, job_dir, path)
@@ -1054,6 +1085,7 @@ def compare_frame(
     logos: Logos,
     library: Media,
     media_words: MediaWordsDep,
+    mattes: MatteMaker,
 ) -> Response:
     """Compare render (GLOSSARY): the frame at `at` (Timeline time) of the Candidate, or of `draft` (as
     the Preview Plan plans it), drawn by the render path as save_frame draws it, on its Canvas (1080 on its short side) at the
@@ -1067,7 +1099,7 @@ def compare_frame(
     with tempfile.TemporaryDirectory(prefix="compare-") as folder:
         path = Path(folder) / "frame.png"
         try:
-            draw_frame(job, job_dir, planned.plan, body.at, path, export, settings, library, logos)
+            draw_frame(job, job_dir, planned.plan, body.at, path, export, settings, library, logos, mattes)
         except RuntimeError as exc:
             raise HTTPException(500, str(exc)) from None
         png = path.read_bytes()
@@ -1085,12 +1117,19 @@ def _draft_plan(
     media_words: MediaWordsStore,
     body: CandidateUpdate | None,
     fps: float | None = None,
+    matte_version: str | None = None,
+    drafted: Callable[[Candidate], None] | None = None,
 ) -> PreviewPlan:
-    """The Preview Plan of the Candidate, or of `body`, a draft of edits not saved, at `fps` (the
-    Source's when None)."""
+    """The Preview Plan of the Candidate, or of `body`, a draft of edits not saved (given to `drafted`
+    once it is made), at `fps` (the Source's when None), listing the Matte pieces made by
+    `matte_version` that it reads."""
     job, transcript, candidate = _drafted(job_id, candidate_id, body, store, settings, presets, library)
+    if body is not None and drafted is not None:
+        drafted(candidate)
     try:
-        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, media_words, fps)
+        return preview_plan(
+            job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, media_words, fps, matte_version
+        )
     except InvalidEdit as exc:
         raise HTTPException(422, str(exc)) from None
     except InvalidStyle as exc:
@@ -1362,10 +1401,10 @@ def _review(
     job_id: str,
     change: Callable[[list[Candidate], Episode], tuple[list[Candidate], Candidate]],
     edit: Edit,
-    after_save: Callable[[str, float], None],
+    after_save: Callable[[str, float, Candidate], None],
 ) -> Candidate:
     """Save the Candidates `change` makes, then `after_save` (every save of a Candidate sweeps the
-    Job's unused Effected copies; one made since the save started survives)."""
+    Job's unused Effected copies, one made since the save started surviving, and asks for its Matte)."""
     started = time.time()
 
     def changed(job: Job, candidates: list[Candidate]) -> tuple[list[Candidate], Candidate]:
@@ -1386,7 +1425,7 @@ def _review(
     except StaleRevision as exc:
         message = f"{exc}: it changed since this edit was made; merge the edit into it and save again"
         raise HTTPException(409, {"message": message, "candidate": _CANDIDATE.dump_python(exc.candidate, mode="json")}) from None
-    after_save(job_id, started)
+    after_save(job_id, started, saved)
     return saved
 
 
@@ -1912,6 +1951,20 @@ def media_retimed_file(media_id: str, name: str, library: Media) -> FileResponse
     return FileResponse(file, media_type="video/mp4", headers=_DERIVED)
 
 
+@router.get("/media/{media_id}/mattes/{name:path}")
+def media_matte_file(media_id: str, name: str, library: Media) -> FileResponse:
+    """A video's or an image's Matte piece (docs/adr/0015), or a reversed copy of it, by the name the
+    Preview Plan gives (app/matte.py's); 404 until it is made."""
+    try:
+        folder = library.mattes(media_id).folder
+    except MediaNotFound:
+        raise HTTPException(404, f"No video or image {media_id}") from None
+    file = (folder / name).resolve()
+    if not file.is_relative_to(folder.resolve()) or file.suffix not in (".mp4", ".png") or file.name.startswith(".") or not file.is_file():
+        raise HTTPException(404, f"No Matte {name} of {media_id}")
+    return FileResponse(file, media_type="image/png" if file.suffix == ".png" else "video/mp4", headers=_DERIVED)
+
+
 def _ask_retimed(
     copies: Copies, duration: float, what: str, body: RetimedRequest, folder: str, settings: Settings, worker: Worker
 ) -> RetimedCopy:
@@ -2055,6 +2108,118 @@ def remove_kokoro(kokoro: Kokoro, narrations: Narrations) -> None:
         raise HTTPException(409, str(exc)) from None
 
 
+class PersonModelInfo(BaseModel):
+    """The person model on this Mac (app/person_model.py), as KokoroInfo, with its `name` and `licence`
+    for the Inspector ("Person model (15 MB, GPL-3.0)")."""
+
+    state: Literal["absent", "downloading", "ready", "failed"]
+    done: int
+    total: int
+    message: str | None
+    name: str
+    licence: str
+
+
+@router.get("/models/person")
+def person_model_state(model: PersonModelDep) -> PersonModelInfo:
+    """The person model's state: polled while it downloads."""
+    return PersonModelInfo(**model.state())
+
+
+@router.post("/models/person/download", status_code=202)
+def download_person_model(model: PersonModelDep) -> PersonModelInfo:
+    """Start downloading the person model (about 15 MB), in the background, taken up from what an
+    earlier download left; nothing when it is installed or being downloaded. 409 while a cancelled
+    download is still stopping."""
+    try:
+        model.download()
+    except PersonModelBusy as exc:
+        raise HTTPException(409, str(exc)) from None
+    return PersonModelInfo(**model.state())
+
+
+@router.delete("/models/person/download", status_code=204)
+def cancel_person_model_download(model: PersonModelDep) -> None:
+    """Cancel the download: it is told absent at once and stops at its next chunk, what it fetched kept
+    for the next download (which is refused, 409, until it has stopped)."""
+    model.cancel()
+
+
+@router.delete("/models/person", status_code=204)
+def remove_person_model(model: PersonModelDep, mattes: MatteMaker, store: Store, library: Media) -> None:
+    """Remove the person model from this Mac, and with it every Matte (every Job's MATTES_DIR, and
+    every Media Library item's). 409 while a Matte is being made, or the model is being downloaded."""
+    try:
+        with mattes.idle("A Matte is being made: remove the person model once it is done"):
+            model.remove()
+            remove_mattes([*store.root.glob(f"*/{MATTES_DIR}"), *library.folder.glob("*.mattes")])
+    except (MatteBusy, PersonModelBusy) as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+class MattePart(BaseModel):
+    """How a Matte is coming along (app/matte.py's MatteStatus): `state` ready, making, waiting (for
+    the person model), failed (with its `error`, until a Retry) or missing; `progress` 0..1."""
+
+    state: Literal["ready", "making", "waiting", "failed", "missing"]
+    progress: float
+    error: str | None = None
+
+
+class CandidateMatte(MattePart):
+    """The Matte of a Candidate's cut-out items together, and each one's by its id: its Segments' (of
+    the Source or a video) and its Overlays' (none: nothing is cut out)."""
+
+    segments: dict[str, MattePart]
+    overlays: dict[str, MattePart] = {}
+
+
+class MatteRequest(BaseModel):
+    # Forget the pieces' failures and make them again.
+    retry: bool = False
+
+
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/matte")
+def candidate_matte(
+    job_id: str, candidate_id: str, store: Store, mattes: MatteMaker, library: Media, body: MatteRequest | None = None
+) -> CandidateMatte:
+    """How the Matte of the saved Candidate's cut-out Segments and Overlays is coming along (\"Finding the subject…
+    N%\"), polled by the Inspector and the agent; the pieces missing are asked for now (as once the person
+    model is downloaded), latest first. With `retry`, their failures are forgotten and they are made
+    again. 404 for an unknown Job or Candidate."""
+    try:
+        job = store.get(job_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    candidate = next((c for c in store.load_candidates(job_id) or [] if c.id == candidate_id), None)
+    if candidate is None or job.source is None:
+        raise HTTPException(404, f"Job {job_id} has no Candidate {candidate_id}")
+    wanted = matte_wanted(candidate, source_mattes(store.job_dir(job_id), job.source), media_mattes(library))
+    pieces = [piece for item in wanted.values() for piece in item]
+    (mattes.retry if body is not None and body.retry else mattes.ask)(pieces)
+
+    def part(status: MatteStatus) -> dict:
+        return {"state": status.state, "progress": status.progress, "error": status.error}
+
+    overlays = {overlay.id for overlay in candidate.overlays}
+    return CandidateMatte(
+        **part(mattes.status(pieces)),
+        segments={id: MattePart(**part(mattes.status(item))) for id, item in wanted.items() if id not in overlays},
+        overlays={id: MattePart(**part(mattes.status(item))) for id, item in wanted.items() if id in overlays},
+    )
+
+
+def ask_mattes(store: JobStore, mattes: MatteRunner, job_id: str, candidate: Candidate, library: MediaStore | None = None) -> None:
+    """Ask for the Matte pieces the saved `candidate`'s cut-out Segments and Overlays lack (`MatteRunner.ask`)."""
+    try:
+        job = store.get(job_id)
+    except JobNotFound:
+        return
+    if job.source is not None:
+        wanted = matte_wanted(candidate, source_mattes(store.job_dir(job_id), job.source), media_mattes(library))
+        mattes.ask([piece for item in wanted.values() for piece in item])
+
+
 @router.get("/voices/{engine}/{voice}/sample", response_class=FileResponse)
 def voice_sample(engine: str, voice: str, narrations: Narrations, lang: Language | None = None) -> FileResponse:
     """The Voice reading a fixed sentence in `lang` (English for a language with none), as WAV: made the
@@ -2123,11 +2288,13 @@ def cancel_narration(narration_id: str, narrations: Narrations) -> None:
         raise HTTPException(409, str(exc)) from None
 
 
-def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:
+def sweep_unused(store: JobStore, library: MediaStore, mattes: MatteRunner, job_id: str) -> None:
     """Remove the Retimed copies (app/retimed.py) of the Job's Source, and of the videos and songs no
     other Job's Candidates use (`media_uses`), that none of its Candidates nor any state in their Revision
-    History plays from; and the Job's picture layers' pictures (app/layer_pictures.py) none of them
-    shows, and the folder they were kept in before (OLD_PICTURES_DIR), whole."""
+    History plays from; the Job's picture layers' pictures (app/layer_pictures.py) none of them shows,
+    and the folder they were kept in before (OLD_PICTURES_DIR), whole; and the Matte pieces (app/matte.py)
+    none of them reads (`MatteRunner.sweep`), of the Source and of every video and image no other
+    Job's Candidates use, whether this Job uses it or not."""
     states = []
     for candidate in store.load_candidates(job_id) or []:
         states += [candidate, *(entry.candidate for entry in store.revision_history(job_id, candidate.id))]
@@ -2139,6 +2306,30 @@ def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:
             sweep(library.retimed(media_id).folder, used.get(media_id, []))
     sweep_pictures(store.job_dir(job_id) / PICTURES_DIR, pictures_used(states))
     shutil.rmtree(store.job_dir(job_id) / OLD_PICTURES_DIR, ignore_errors=True)
+    try:
+        job = store.get(job_id)
+    except JobNotFound:
+        return
+    if job.source is not None:
+        source = source_mattes(store.job_dir(job_id), job.source)
+        read = {
+            pieces.path(subject, mattes.version, piece)
+            for state in states
+            for wanted in matte_wanted(state, source, media_mattes(library)).values()
+            for pieces, subject, piece in wanted
+        }
+        mattes.sweep(source.folder, read)
+        # Every video's and image's, but those another Job's Candidates use: those this Job's states
+        # read are kept, and an item none of them uses any more (or ever did) loses its pieces.
+        elsewhere = {
+            media_id
+            for other in store.all() if other.id != job_id
+            for candidate in store.load_candidates(other.id) or []
+            for media_id in candidate.media_ids()
+        }
+        for item in library.all():
+            if item.kind is not MediaKind.AUDIO and item.id not in elsewhere and (folder := library.mattes(item.id).folder).is_dir():
+                mattes.sweep(folder, read)
 
 
 def sweep_unused_effected(
@@ -2170,7 +2361,7 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
     """422 for an edit naming Media Library items that aren't there, or can't be used so: music must
     be a song or a video with sound, within its length at its Speed, a Segment a video, within its
     length, and an Overlay within its video's at its Speed, an image's having no Speed, Reverse nor
-    Audio Effects.
+    Audio Effects; a Background's image (docs/adr/0015) must be an image, even one not shown.
     (Music of the Source is kept within it by `review.update`.)"""
     for clip in body.music or []:
         if clip.media is None:
@@ -2203,6 +2394,12 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
             raise HTTPException(422, f"Overlay {overlay.id} is an image: it has no Speed, pitch or Reverse")
         if overlay.audio_effects and item.kind is not MediaKind.VIDEO:
             raise HTTPException(422, f"Overlay {overlay.id} is an image, which has no sound: it has no audio effects")
+    for what, background in backgrounds_of(body.framing, body.layout_overrides or [], body.segments or []):
+        if background.image is None:
+            continue
+        item = library.find(background.image)
+        if item is None or item.kind is not MediaKind.IMAGE:
+            raise HTTPException(422, f"{what}: no image {background.image} in the Media Library")
 
 
 def _check_looks_of(body: CandidateUpdate) -> None:

@@ -1,13 +1,13 @@
 import { Crop as CropIcon, FlipHorizontal2, FlipVertical2 } from "lucide-react";
-import { useContext, useId, useState, type ReactNode } from "react";
-import type { Background, Crop, Keys, Shape, TextLayer, Transform } from "../../../api";
+import { createContext, useContext, useId, useState, type ReactNode } from "react";
+import { mediaThumbnailUrl, type Background, type Crop, type Keys, type MediaItem, type Shape, type TextLayer, type Transform } from "../../../api";
 import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
 import { croppedSize, NO_CROP, tidyCrop } from "../editor/cropGestures";
-import { Group } from "../editor/StyleFields";
+import { Group, Mixed } from "../editor/StyleFields";
 import { PICTURE_KEYS, type PictureKey } from "../editor/keyframes";
 import { centreOf, useCanvas } from "../editor/canvas";
 import { clamp, fillScale, SCALE_RANGE, STRETCH_RANGE } from "../editor/picture";
@@ -290,25 +290,102 @@ function KeyedLayerTransform<T extends TextLayer | Shape>({
   return <TransformFields {...fields} onReset={() => onChange(resetTextLayer(layer), `${kind}:${layer.id}:transform.reset`)} />;
 }
 
-const BACKGROUNDS = [
-  { value: "blur", label: "Blur" },
-  { value: "colour", label: "Colour" },
-] as const;
+/** The Media Library's images, which an image Background (ADR 0015) is picked from: given by the Inspector's host. */
+export const LibraryImages = createContext<MediaItem[]>([]);
 
 /**
- * A Framing's Background (ADR 0007): the picture itself blurred, or a colour, which shows wherever
- * the picture doesn't cover the frame. Each change is one `group` of the history, named after its field.
+ * `background` as `kind`: its colour kept, so that changing back restores it; an image only while
+ * it is an image (the first of `images` when it had none), as a Background's image counts as used.
+ * Null for an image without any image to show.
+ */
+export function backgroundOfKind(background: Background, kind: Background["kind"], images: MediaItem[]): Background | null {
+  if (kind !== "image") return { kind, colour: background.colour };
+  const image = background.image ?? images[0]?.id;
+  return image ? { kind, colour: background.colour, image } : null;
+}
+
+/**
+ * What shows behind a picture (ADR 0007, 0015), without its section: the picture itself blurred, a
+ * colour, or an image of the Media Library (`LibraryImages`) covering the frame, picked from their
+ * thumbnails. Image is offered once there is an image to pick. `mixed` marks the kind when the
+ * picked items' differ. Each change is one `field` ("kind", "colour" or "image").
+ */
+export function BackgroundPicker({
+  background,
+  onChange,
+  legend = "Behind the picture",
+  mixed = false,
+}: {
+  background: Background;
+  onChange: (background: Background, field: string) => void;
+  legend?: string;
+  mixed?: boolean;
+}) {
+  const images = useContext(LibraryImages);
+  const options: { value: Background["kind"]; label: string }[] = [
+    { value: "blur", label: "Blur" },
+    { value: "colour", label: "Colour" },
+    ...(images.length || background.kind === "image" ? [{ value: "image" as const, label: "Image" }] : []),
+  ];
+  const name = useId();
+  return (
+    <>
+      <Segmented
+        legend={legend}
+        options={options}
+        value={background.kind}
+        marker={mixed ? <Mixed /> : undefined}
+        onChange={(kind: Background["kind"]) => {
+          const changed = backgroundOfKind(background, kind, images);
+          if (changed) onChange(changed, "kind");
+        }}
+      />
+      {background.kind === "colour" && <ColorField label="Colour" value={background.colour} onChange={(colour) => onChange({ ...background, colour }, "colour")} />}
+      {background.kind === "image" && (
+        <fieldset className="flex min-w-0 flex-col gap-1.5">
+          <legend className="mb-1.5 text-sm font-medium">Image</legend>
+          {background.image && !images.some((image) => image.id === background.image) && <p className="text-sm text-muted">Its image isn't in the Media Library.</p>}
+          <div className="grid grid-cols-4 gap-2">
+            {images.map((image) => (
+              <label key={image.id} className="relative flex aspect-square min-w-0 cursor-pointer" title={image.name}>
+                <input
+                  type="radio"
+                  name={name}
+                  value={image.id}
+                  checked={background.image === image.id}
+                  onChange={() => onChange({ ...background, image: image.id }, "image")}
+                  aria-label={image.name}
+                  className="peer sr-only"
+                />
+                <img
+                  src={mediaThumbnailUrl(image.id)}
+                  alt=""
+                  loading="lazy"
+                  className={cx(
+                    "size-full rounded-[10px] border border-border bg-fill object-cover",
+                    "peer-checked:outline-2 peer-checked:outline-offset-2 peer-checked:outline-accent",
+                    "peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-focus",
+                  )}
+                />
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+      {!images.length && background.kind !== "image" && <p className="text-xs text-pretty text-muted">Add an image to the Media Library to show it here.</p>}
+    </>
+  );
+}
+
+/**
+ * A Framing's Background (ADR 0007): the picture itself blurred, a colour, or a Media Library image
+ * covering the frame (ADR 0015), which shows wherever the picture doesn't cover the frame. Each change
+ * is one `group` of the history, named after its field.
  */
 export function BackgroundFields({ background, onChange }: { background: Background; onChange: (background: Background, field: string) => void }) {
   return (
     <Group title="Background">
-      <Segmented
-        legend="Behind the picture"
-        options={BACKGROUNDS}
-        value={background.kind}
-        onChange={(kind: Background["kind"]) => onChange({ ...background, kind }, "kind")}
-      />
-      {background.kind === "colour" && <ColorField label="Colour" value={background.colour} onChange={(colour) => onChange({ ...background, colour }, "colour")} />}
+      <BackgroundPicker background={background} onChange={onChange} />
     </Group>
   );
 }

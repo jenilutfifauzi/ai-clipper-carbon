@@ -7,20 +7,19 @@ import hashlib
 import io
 import os
 import tarfile
-import threading
 import time
 from collections.abc import Iterator
-from dataclasses import dataclass, field
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.kokoro import KOKORO_BYTES, KOKORO_FOLDER, KOKORO_SHA256, KOKORO_URL, KokoroBusy, KokoroModel, KokoroSource
+from app.kokoro import KOKORO_BYTES, KOKORO_FOLDER, KOKORO_SHA256, KOKORO_URL, KokoroBusy, KokoroModel
+from app.model_download import ModelSource
 from app.main import create_app
 from app.ports import Ports, real_ports
 from fakes import FakeVoiceEngine
+from model_server import Served, serve
 
 ROOT = KOKORO_FOLDER
 
@@ -54,77 +53,15 @@ GOOD = archive(
 )
 
 
-@dataclass
-class Served:
-    """What the local server serves at /kokoro.tar.bz2, and what it was asked."""
-
-    body: bytes
-    # Each request's Range header (None without one).
-    ranges: list[str | None] = field(default_factory=list)
-    # Close the connection after this many bytes of the next answer (then serve whole again).
-    cut_at: int | None = None
-    # Wait for `go` after this many bytes of each answer.
-    pause_at: int | None = None
-    go: threading.Event = field(default_factory=threading.Event)
-    # Answer every request whole, as a server that doesn't take Range.
-    ignore_range: bool = False
-
-
 @pytest.fixture
 def served() -> Iterator[tuple[Served, str]]:
     """A local server for an archive, honouring Range; its state and its URL."""
-    state = Served(GOOD)
-
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args) -> None:
-            pass
-
-        def do_GET(self) -> None:
-            if self.path != "/kokoro.tar.bz2":
-                self.send_error(404)
-                return
-            asked = self.headers.get("Range")
-            state.ranges.append(asked)
-            body, start = state.body, 0
-            if asked and not state.ignore_range:
-                start = int(asked.removeprefix("bytes=").removesuffix("-"))
-                if start >= len(body):
-                    self.send_response(416)
-                    self.send_header("Content-Range", f"bytes */{len(body)}")
-                    self.end_headers()
-                    return
-                self.send_response(206)
-                self.send_header("Content-Range", f"bytes {start}-{len(body) - 1}/{len(body)}")
-            else:
-                self.send_response(200)
-            rest = body[start:]
-            self.send_header("Content-Length", str(len(rest)))
-            self.end_headers()
-            cut, state.cut_at = state.cut_at, None
-            if cut is not None:
-                self.wfile.write(rest[:cut])
-                self.wfile.flush()
-                self.close_connection = True
-                return
-            if state.pause_at is not None:
-                self.wfile.write(rest[: state.pause_at])
-                self.wfile.flush()
-                state.go.wait(10)
-                rest = rest[state.pause_at :]
-            self.wfile.write(rest)
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        yield state, f"http://127.0.0.1:{server.server_port}/kokoro.tar.bz2"
-    finally:
-        state.go.set()
-        server.shutdown()
-        server.server_close()
+    with serve(GOOD, "/kokoro.tar.bz2") as served:
+        yield served
 
 
-def source(url: str, body: bytes = GOOD) -> KokoroSource:
-    return KokoroSource(url, hashlib.sha256(body).hexdigest(), len(body))
+def source(url: str, body: bytes = GOOD) -> ModelSource:
+    return ModelSource(url, hashlib.sha256(body).hexdigest(), len(body))
 
 
 def settle(model: KokoroModel) -> dict:
@@ -138,7 +75,7 @@ def test_the_pinned_source_is_sherpa_onnxs_kokoro_int8_multi_language_archive():
     assert len(KOKORO_SHA256) == 64 and int(KOKORO_SHA256, 16)
     assert KOKORO_BYTES == 132_303_094
     model = KokoroModel(Path("/nowhere"))
-    assert model.source == KokoroSource(KOKORO_URL, KOKORO_SHA256, KOKORO_BYTES)
+    assert model.source == ModelSource(KOKORO_URL, KOKORO_SHA256, KOKORO_BYTES)
 
 
 def test_a_good_archive_is_fetched_checked_unpacked_and_reported_ready(served, tmp_path):
@@ -164,7 +101,7 @@ def test_a_good_archive_is_fetched_checked_unpacked_and_reported_ready(served, t
 def test_a_wrong_digest_deletes_the_file_and_reports_failed(served, tmp_path):
     _, url = served
     models = tmp_path / "models"
-    model = KokoroModel(models, KokoroSource(url, "0" * 64, len(GOOD)))
+    model = KokoroModel(models, ModelSource(url, "0" * 64, len(GOOD)))
     model.download()
     state = settle(model)
     assert state["state"] == "failed" and "checksum" in state["message"]

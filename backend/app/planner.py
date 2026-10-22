@@ -121,6 +121,7 @@ from app.candidates import (
     AdjustmentLayer,
     PICTURE_KEYS,
     Background,
+    BackgroundRemoval,
     BackgroundKind,
     BlendMode,
     Border,
@@ -155,6 +156,7 @@ from app.ducking import Span, duck_at, ducked_stretches, heard_words, speech_spa
 from app.emoji import IMAGE_SET, clusters, image_of, is_emoji
 from app.fonts import DEFAULT_FONT, FALLBACK_FACE, on_change, registry
 from app.keyframes import value_at
+from app.matte import matte_pieces
 from app.line_breaks import broken_lines
 from app.pictures import cover_scale, drawn_size, fitted, kept, turned_size
 from app.segment_time import SegmentTime, overlay_time, transition_overlap
@@ -327,6 +329,10 @@ class SegmentInput:
     audio_effects: list[AudioEffect] = field(default_factory=list)
     # Its frame's Video Effects (docs/adr/0014), checked, in order; the plan keeps the enabled ones.
     video_effects: list[VideoEffect] = field(default_factory=list)
+    # Its Background removal (docs/adr/0015), as given: its feather at the picture's fitted size; and
+    # a Source Segment's own Background, used only with it (None: the picture blurred).
+    background_removal: BackgroundRemoval | None = None
+    background: Background | None = None
 
     @property
     def time(self) -> SegmentTime:
@@ -411,11 +417,13 @@ class ScenePlan:
     # none for a colour.
     panels: list[Panel]
     # A media Segment's or a Manual Scene's: its one picture, drawn over its panels, or over `colour`
-    # without any.
+    # without any, or over `image` (a Media Library image's id, covering the frame, docs/adr/0015).
     picture: "Picture | None" = None
     colour: str | None = None
     # The Framing that draws its first frame (`_first_framing`): what a switch to Manual starts from.
     framing: Framing | None = None
+    # A Framing's image Background (docs/adr/0015): the Media Library image's id, covering the frame.
+    image: str | None = None
     # A Manual Scene of a Layout Override's: where its Keyframes count from (`_keyed_manual`), in
     # seconds into the Clip (before the Scene, where it is shown from part way into its shot), and
     # those of them past its shot's end, which it never reaches, in seconds into the Clip too.
@@ -582,6 +590,21 @@ class AudioEvent:
 
 
 @dataclass(frozen=True)
+class MatteRead:
+    """What a picture with Background removal reads of its item's Matte (docs/adr/0015, app/matte.py):
+    its `pieces`, by their starts in seconds (an image's one, 0); and the renderer's (`matted`): their
+    `files`, in the render's `files`, its picture's first frame `at` seconds into them joined, and a
+    reversed one's reversed copy (`copy`, its file, played forwards from `copy_at` seconds, as its
+    picture is from its Retimed copy)."""
+
+    pieces: list[int] = field(default_factory=list)
+    files: list[str] = field(default_factory=list)
+    at: float = 0.0
+    copy: str | None = None
+    copy_at: float = 0.0
+
+
+@dataclass(frozen=True)
 class SegmentPlan:
     """A Segment as played: the Source (or the Media Library video `media`) from `source_start` to
     `source_end`, at `speed`, forwards or in `reverse`, or its frame at `source_start` held for
@@ -624,6 +647,16 @@ class SegmentPlan:
     # Its frame's enabled Video Effects (docs/adr/0014), in order, drawn after its Grade and before the
     # joins; their sizes in the Canvas's pixels (scale 1).
     video_effects: list[VideoEffect] = field(default_factory=list)
+    # Its Background removal (docs/adr/0015): its picture (its Scenes' panels and pictures, Blur's
+    # fill left out; a video's picture) cut by its item's Matte, the feather times its picture's scale
+    # (as drawn), then graded and drawn through its Video Effects, laid over its `background` (a
+    # Source Segment's Background in force: the picture blurred unless it has one of its own; a
+    # video's is its Scene's, its Framing's, and this None), before the joins. `matte` is what it
+    # reads of its item's Matte: a Source Segment's pieces, as planned; the rest (a video's pieces
+    # too) filled in by the renderer's `matted`. None without Background removal.
+    background_removal: BackgroundRemoval | None = None
+    background: Background | None = None
+    matte: MatteRead | None = None
 
     @property
     def time(self) -> SegmentTime:
@@ -754,6 +787,12 @@ class OverlayEvent:
     # (`overlay_scale`), as drawn.
     video_effects: list[VideoEffect] = field(default_factory=list)
     blend: BlendMode = BlendMode.NORMAL
+    # Its Background removal (docs/adr/0015), its feather times its scale (`overlay_scale`), as drawn:
+    # its picture cut by its item's Matte after its crop, scale and flips, before its Grade and Video
+    # Effects (whose Chroma or Luma key multiplies the alpha). What it reads of its item's Matte
+    # (`matte`) is the renderer's, filled in by `matted`, as SegmentPlan's.
+    background_removal: BackgroundRemoval | None = None
+    matte: MatteRead | None = None
 
     @property
     def time(self) -> SegmentTime:
@@ -974,6 +1013,9 @@ class RenderPlan:
     segments: list[SegmentPlan] = field(default_factory=list)
     # Laid over the Segments, in drawing order.
     overlays: list[OverlayEvent] = field(default_factory=list)
+    # The Overlays Behind the Main Track (docs/adr/0015), in drawing order: over each Segment's
+    # Background and under its picture, before the joins, so under the Candidate's Grade.
+    behind: list[OverlayEvent] = field(default_factory=list)
     # Between Segments, in order.
     transitions: list[TransitionEvent] = field(default_factory=list)
     # The Shapes that show, in drawing order, under the Text Layers.
@@ -1062,7 +1104,8 @@ def plan_render(
     `media_info` says of its songs (and `source` of the Source, for its Music Clips of the Source).
 
     `overlays` are laid over it as `overlay_events` places them, given what `media_info` says of
-    their items (whose videos' sound, when turned up, joins the music).
+    their items (whose videos' sound, when turned up, joins the music); those Behind the Main Track
+    are listed apart (`behind`, docs/adr/0015).
 
     `cue_edits` change single Cues (`_captions`). Unlike the other times, theirs are on their own
     timelines: the Source's, or with `media` that item's. Each applies in every Segment that shows
@@ -1131,12 +1174,14 @@ def plan_render(
                 moved = [keyed_scene(scene, placed.transform, given.keys, at, rate, canvas) for scene in moved]
             plans.extend(moved)
             fade_in, fade_out = fades_within(given.fade_in, given.fade_out, length)
+            cut = _segment_removal(given, framed[0], source.duration, source.fps)
             segments.append(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
                     given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, hold, given.pitch,
                     fade_in=fade_in, fade_out=fade_out, muted=given.muted, grade=given.grade,
                     audio_effects=enabled_effects(given.audio_effects), video_effects=enabled_video_effects(given.video_effects),
+                    **cut,
                 )
             )
             at, before = round(at + length, 3), length
@@ -1181,7 +1226,8 @@ def plan_render(
         audio=_ducked(audio, heard, music_words or {}, ducking),
         source_volume=source_volume,
         segments=segments,
-        overlays=overlay_events(overlays or [], duration, media_info or {}, canvas),
+        overlays=overlay_events([overlay for overlay in overlays or [] if not overlay.behind], duration, media_info or {}, canvas),
+        behind=overlay_events([overlay for overlay in overlays or [] if overlay.behind], duration, media_info or {}, canvas),
         transitions=transitions,
         shapes=[event for shape in shapes or [] if (event := shape_event(shape, duration)) is not None],
         unused_cue_edits=[edit for i, edit in enumerate(cue_edits or []) if i not in used],
@@ -1189,6 +1235,30 @@ def plan_render(
         grade=grade,
         adjustment_layers=[event for layer in adjustment_layers or [] if (event := adjustment_event(layer, duration)) is not None],
     )
+
+
+def _segment_removal(given: SegmentInput, shown: ScenePlan, duration: float, fps: float) -> dict:
+    """A Segment's Background removal as its SegmentPlan carries it (docs/adr/0015): its feather times
+    its picture's scale in `shown`, the first of its Scenes (`overlay_scale` of the Framing a video's
+    or a Manual Scene's picture is placed by: a video's own, a Manual Layout Override's or a Manual
+    Candidate's; 1 in Track, Split and Blur, whose pictures fill their panels, even in a Manual
+    Candidate). A Source Segment's also has the Background in force (its own, else the picture
+    blurred) and the pieces of the Source's Matte (`duration` long, at `fps`) its range reads; a
+    video's Background is its Framing's, in its Scene, and its pieces are its item's, found by the
+    renderer. Nothing without one."""
+    removal = given.background_removal
+    if removal is None:
+        return {}
+    placed = shown.layout in (SceneLayout.MANUAL, SceneLayout.MEDIA)
+    scale = overlay_scale(shown.framing.transform) if placed and shown.framing is not None else 1.0
+    if given.media is not None:
+        return {"background_removal": removal.scaled(scale)}
+    end = given.start if given.hold is not None else given.end
+    return {
+        "background_removal": removal.scaled(scale),
+        "background": given.background or Background(),
+        "matte": MatteRead(matte_pieces(given.start, end, duration, fps)),
+    }
 
 
 def edit_shown(edit: "TimelineKeyed", media: str | None, start: float, end: float) -> bool:
@@ -1538,11 +1608,14 @@ def framed_scene(
     """A Scene from `start` to `end` of a `width` x `height` picture (a media Segment's video, or the
     Source in a Manual Scene) placed on `canvas` by its `framing`, which it carries: the
     picture (`picture_of`) over its Background, which is the largest crop of the Canvas's shape from
-    the middle of what its Crop keeps, blurred, filling the frame (as Blur's background is), or its colour."""
+    the middle of what its Crop keeps, blurred, filling the frame (as Blur's background is), its
+    colour, or its image covering the Canvas."""
     picture = picture_of(width, height, framing.transform, framing.crop, canvas=canvas)
     if framing.background.kind is BackgroundKind.COLOUR:
         return ScenePlan(start, end, layout, [], picture, framing.background.colour, framing)
-    cropped, cover = picture.crop, _filled(picture.crop.width, picture.crop.height, start, canvas)
+    if framing.background.kind is BackgroundKind.IMAGE:
+        return ScenePlan(start, end, layout, [], picture, framing=framing, image=framing.background.image)
+    cropped, cover = picture.crop, filled(picture.crop.width, picture.crop.height, start, canvas.size)
     point = replace(cover.path[0], x=cover.path[0].x + cropped.x, y=cover.path[0].y + cropped.y)
     return ScenePlan(start, end, layout, [replace(cover, path=[point], blur=True)], picture, framing=framing)
 
@@ -1559,7 +1632,7 @@ def keyed_scene(scene: ScenePlan, transform: Transform, keys: Keys, start: float
         return scene
     count = math.ceil((scene.end - scene.start) * fps - 1e-6)
     if all(covers(picture_at(picture, scene.start + n / fps, canvas.size), canvas) for n in range(count)):
-        return replace(scene, picture=picture, panels=[], colour=None)
+        return replace(scene, picture=picture, panels=[], colour=None, image=None)
     return replace(scene, picture=picture)
 
 
@@ -1788,10 +1861,13 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     # and shadow are in output pixels, so they don't.
     radius = round(overlay.radius * min(picture.width, picture.height), 2)
     picture = replace(picture, radius=radius, border=overlay.border, shadow=overlay.shadow)
+    scale = overlay_scale(overlay.transform)
+    removal = overlay.background_removal
     return OverlayEvent(
         overlay.media, picture, start, end, offset, item.duration is None, overlay.id, overlay.speed, overlay.pitch, overlay.reverse,
         overlay.animation_in, overlay.animation_out, overlay.animation_ms, overlay.grade,
-        scaled_effects(enabled_video_effects(overlay.video_effects), overlay_scale(overlay.transform)), overlay.blend,
+        scaled_effects(enabled_video_effects(overlay.video_effects), scale), overlay.blend,
+        None if removal is None else removal.scaled(scale),
     )
 
 
@@ -3009,7 +3085,7 @@ def _track(
     """A crop of the Canvas's shape, of the frame's full height (or its full width, on a Canvas wider
     than the Source), that follows the speaker's face through the Scene from `start` to `end`; in the
     middle of the frame while no face is known."""
-    panel = _filled(source.width, source.height, start, canvas)
+    panel = filled(source.width, source.height, start, canvas.size)
     if not faces:
         return panel
     tracked = _track_faces(faces, source.width, source.height, camera)
@@ -3060,7 +3136,7 @@ def _split(
 def _blur(start: float, source: SourceMetadata, canvas: Canvas) -> list[Panel]:
     """The whole frame as large as fits on `canvas`, centred over the largest crop of the Canvas's
     shape from its middle, blurred, which fills it."""
-    background = replace(_filled(source.width, source.height, start, canvas), blur=True)
+    background = replace(filled(source.width, source.height, start, canvas.size), blur=True)
     return [background, _fitted(source.width, source.height, start, canvas)]
 
 
@@ -3236,16 +3312,19 @@ def _spring(position: float, speed: float, goal: float, rate: float, step: float
     return goal + moved, speed
 
 
-def _filled(width: int, height: int, start: float, canvas: Canvas) -> Panel:
-    """The largest crop of the Canvas's shape from the middle of a frame of any shape, filling `canvas`."""
-    if width * canvas.height >= height * canvas.width:
+def filled(width: int, height: int, start: float, frame: tuple[int, int]) -> Panel:
+    """The largest crop of `frame`'s shape (a Canvas's size, or a plan's drawn at an export's) from
+    the middle of a frame of any shape, filling `frame`: also what the picture blurred (a
+    Background's) covers the Canvas with."""
+    frame_width, frame_height = frame
+    if width * frame_height >= height * frame_width:
         crop_height = _even_floor(height)
-        crop_width = min(_even(crop_height * canvas.width / canvas.height), _even_floor(width))
+        crop_width = min(_even(crop_height * frame_width / frame_height), _even_floor(width))
     else:
         crop_width = _even_floor(width)
-        crop_height = min(_even(crop_width * canvas.height / canvas.width), _even_floor(height))
+        crop_height = min(_even(crop_width * frame_height / frame_width), _even_floor(height))
     x, y = _centred(width, crop_width), _centred(height, crop_height)
-    return Panel(Box(0, 0, *canvas.size), crop_width, crop_height, [CropPoint(start, x, y)])
+    return Panel(Box(0, 0, frame_width, frame_height), crop_width, crop_height, [CropPoint(start, x, y)])
 
 
 def _fitted(width: int, height: int, start: float, canvas: Canvas) -> Panel:

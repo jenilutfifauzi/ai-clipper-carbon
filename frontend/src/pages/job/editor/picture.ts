@@ -1,6 +1,11 @@
-import type { Background, Box, MediaItem, Panel, Picture, PictureLayerEvent, RenderPlan, ScenePlan, ShapeKind, Transform } from "../../../api";
+import type { CSSProperties } from "react";
+import { mediaItemUrl, type Background, type Box, type MediaItem, type Panel, type Picture, type PictureLayerEvent, type RenderPlan, type ScenePlan, type ShapeKind, type Transform } from "../../../api";
 import { centreOf, PORTRAIT } from "./canvas";
 import { keyRange, valueAt, type PictureKey } from "./keyframes";
+
+// Blur's background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
+export const BLUR_SIGMA = 40;
+export const BLUR_BRIGHTNESS = 0.9;
 
 /**
  * Pictures as the preview draws them (ADR 0007): a Picture of the plan as CSS, and the fitted-size
@@ -149,9 +154,9 @@ function roundHalfEven(value: number): number {
   return floor % 2 === 0 ? floor : floor + 1;
 }
 
-/** The plan's Overlays as drawn at `time`: each keyed one's picture sampled there (`pictureAt`). */
-export function overlaysAt(plan: RenderPlan, time: number): RenderPlan["overlays"] {
-  return plan.overlays.map((event) => (isKeyed(event.picture) ? { ...event, picture: pictureAt(event.picture, time, plan) } : event));
+/** The plan's Overlays (or `events`, its Behind ones) as drawn at `time`: each keyed one's picture sampled there (`pictureAt`). */
+export function overlaysAt(plan: RenderPlan, time: number, events: RenderPlan["overlays"] = plan.overlays): RenderPlan["overlays"] {
+  return events.map((event) => (isKeyed(event.picture) ? { ...event, picture: pictureAt(event.picture, time, plan) } : event));
 }
 
 /** The plan's Scenes as drawn at `time`: each keyed picture (a video Segment's or a Manual Scene's) sampled there (`pictureAt`). */
@@ -172,9 +177,9 @@ export const pictureLayers = (plan: RenderPlan): ShownLayer[] => [
   ...plan.texts.map((event): ShownLayer => ({ id: `text:${event.layer.id}`, event })),
 ];
 
-/** Whether any picture of the plan moves: an Overlay's, a Scene's or a picture layer's. */
+/** Whether any picture of the plan moves: an Overlay's (a Behind one's too), a Scene's or a picture layer's. */
 export const hasKeyedPictures = (plan: RenderPlan) =>
-  plan.overlays.some((event) => isKeyed(event.picture)) ||
+  [...plan.overlays, ...(plan.behind ?? [])].some((event) => isKeyed(event.picture)) ||
   plan.scenes.some((scene) => !!scene.picture && isKeyed(scene.picture)) ||
   pictureLayers(plan).some(({ event }) => isKeyed(event.picture));
 
@@ -207,16 +212,30 @@ export interface SlotView {
   panel: Panel | null;
   picture: Picture | null;
   colour: string | null;
+  image?: string | null;
 }
 
 /**
  * What a deck's video `slot` shows in `scene` (docs/adr/0006): the Scene's panel for the slot; but in
- * a Manual Scene (ADR 0007) the first shows its Background (the blurred cover panel, or its colour)
- * and the second its picture, so that the Source is drawn from the decks as every other Scene is.
+ * a Manual Scene (ADR 0007) the first shows its Background (the blurred cover panel, its colour, or
+ * its image) and the second its picture, so that the Source is drawn from the decks as every other Scene is.
  */
 export function slotView(scene: ScenePlan | undefined, slot: number): SlotView {
   if (scene?.layout !== "manual") return { panel: scene?.panels[slot] ?? null, picture: null, colour: null };
-  return slot === 0 ? { panel: scene.panels[0] ?? null, picture: null, colour: scene.colour } : { panel: null, picture: scene.picture, colour: null };
+  return slot === 0
+    ? { panel: scene.panels[0] ?? null, picture: null, colour: scene.colour, ...(scene.image ? { image: scene.image } : {}) }
+    : { panel: null, picture: scene.picture, colour: null };
+}
+
+/**
+ * A box filled with a Background of a colour, or of a Media Library image (ADR 0015) covering it and
+ * centred, as the render's `_plain` draws one over the frame.
+ */
+export function filledStyle(colour: string | null, image?: string | null): CSSProperties {
+  return {
+    backgroundColor: colour ?? undefined,
+    ...(image ? { backgroundImage: `url("${mediaItemUrl(image)}")`, backgroundSize: "cover", backgroundPosition: "center" } : {}),
+  };
 }
 
 // The Background of the picture itself, blurred (the colour is kept for when it is switched to one).

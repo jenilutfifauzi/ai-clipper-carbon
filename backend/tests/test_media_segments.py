@@ -19,7 +19,7 @@ from app.migration import migrated_candidate, migrated_clip, migrated_segment
 from app.pictures import cover_scale
 from app.canvas import PORTRAIT
 from app.planner import (
-    Picture, SceneLayout, SegmentInput, _filled, _fitted, framed_scene, on_frame, plan_render,
+    Picture, SceneLayout, SegmentInput, _fitted, filled as filled_crop, framed_scene, on_frame, plan_render,
 )
 from app.rendering import candidate_plan
 from app.styles import PresetStore
@@ -93,7 +93,7 @@ def test_an_old_filled_or_fitted_segment_becomes_a_framing_that_shows_the_same_b
         )
         # Filled, it was the largest 9:16 crop from the middle of the video, filling the frame: so
         # is the part of its picture on the frame now.
-        was = _filled(*size, 0.0, PORTRAIT)
+        was = filled_crop(*size, 0.0, PORTRAIT.size)
         shown = on_frame(filled_scene.picture, frame=PORTRAIT.size)
         assert (shown.width, shown.height) == (PORTRAIT.width, PORTRAIT.height), size
         assert within_a_pixel(box(shown.crop), (was.path[0].x, was.path[0].y, was.crop_width, was.crop_height)), size
@@ -168,7 +168,7 @@ def test_media_segments_are_validated(client, clips):
     assert saved["segments"][0]["framing"] == {
         "transform": {"x": 540, "y": 960, "scale": 2, "stretch_x": 1, "stretch_y": 1, "rotation": 0, "flip_h": False, "flip_v": False, "opacity": 1},
         "crop": {"left": 0, "top": 0, "right": 0, "bottom": 0},
-        "background": {"kind": "colour", "colour": "#12ABEF"},
+        "background": {"kind": "colour", "colour": "#12ABEF", "image": None},
     }
     assert saved["segments"][1]["framing"] is None
     assert (saved["start"], saved["end"]) == (saved["segments"][1]["start"], saved["segments"][1]["end"])
@@ -287,7 +287,7 @@ def test_a_job_saved_with_filled_and_fitted_segments_reads_them_as_framings_that
     assert all("fit" not in segment for segment in read["segments"]) and read["revision"] == candidate["revision"]
     planned = preview(client, job, read)["plan"]
     [filled, *_, fitted] = (_PICTURE.validate_python(scene["picture"]) if scene["picture"] else None for scene in planned["scenes"])
-    was = _filled(640, 360, 0.0, PORTRAIT)
+    was = filled_crop(640, 360, 0.0, PORTRAIT.size)
     shown = on_frame(filled, frame=PORTRAIT.size)
     assert (shown.width, shown.height) == (PORTRAIT.width, PORTRAIT.height)
     assert within_a_pixel(box(shown.crop), (was.path[0].x, was.path[0].y, was.crop_width, was.crop_height))

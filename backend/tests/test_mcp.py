@@ -67,7 +67,13 @@ KITA_SOAL = (1.6, 2.6)
 # gives the Canvas's size (88_010).
 # Raised for Narrations (text-to-speech/09): generate_speech, and list_assets' kind "voices" and
 # `language`; how to lay one is in the server's instructions (89_232 with both).
-TOOLS_BUDGET_BYTES = 89_700
+# Raised for Background removal's model (background-removal/01): download_person_model.
+# Raised for Background removal (background-removal/02): `segments[].background_removal` in
+# edit_candidate's and merge_candidate_items' schemas, and wait_for_matte; what it does is in
+# the server's instructions.
+# Raised for a Segment's Background (background-removal/04): `segments[].background` and
+# the image kind of every Background in edit_candidate's and merge_candidate_items' schemas (92_962 with all).
+TOOLS_BUDGET_BYTES = 93_500
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -809,7 +815,7 @@ async def test_a_video_segments_framing_is_merged_field_by_field(mcp, tmp_path):
     merged = await call(mcp, "merge_candidate_items", **ids, segments=[{"id": "v", "framing": {"background": {"kind": "colour", "colour": "#112233"}}}])
     framing = merged["segments"][1]["framing"]
     assert (framing["transform"]["scale"], framing["transform"]["rotation"]) == (0.5, 90)
-    assert framing["background"] == {"kind": "colour", "colour": "#112233"}
+    assert framing["background"] == {"kind": "colour", "colour": "#112233", "image": None}
     assert "framing" in await fails(mcp, "merge_candidate_items", **ids, segments=[{"id": "e", "framing": {"transform": {"scale": 2}}}])
 
     # The dry run gives the video's Scene its picture as resolved, as an Overlay's: 540x304 turned a quarter.

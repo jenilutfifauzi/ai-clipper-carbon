@@ -61,7 +61,7 @@ const down = (box: Box) => [box.y, box.y + box.height / 2, box.y + box.height];
 /**
  * The pictures shown at the playhead (`time`), by their ids on the stage: the picture of the plan's
  * Scene `scene` ("picture:<n>"; none for an automatic Scene's, or with `scene` null, as while the
- * Video Track is hidden), then the Overlays showing ("overlay:<id>"), then the Shapes showing
+ * Video Track is hidden), then the Overlays showing, the Behind ones first ("overlay:<id>"), then the Shapes showing
  * ("shape:<id>", by their area, as their Grips are); each keyed one where its Keyframes have it then
  * (`pictureAt`, `layerEventAt`).
  */
@@ -70,7 +70,7 @@ export function picturesAt(plan: RenderPlan, time: number, scene: number | null)
   const showing = <T extends { start: number; end: number }>(events: T[]) => events.filter((event) => event.start <= time && time < event.end);
   return [
     ...(behind ? [{ id: `picture:${scene}`, picture: pictureAt(behind, time, plan) }] : []),
-    ...showing(plan.overlays).map((event) => ({ id: `overlay:${event.id}`, picture: pictureAt(event.picture, time, plan) })),
+    ...showing([...(plan.behind ?? []), ...plan.overlays]).map((event) => ({ id: `overlay:${event.id}`, picture: pictureAt(event.picture, time, plan) })),
     ...showing(plan.shapes).map((event) => ({ id: `shape:${event.layer.id}`, picture: layerStagePicture(layerEventAt(event, time, plan)).picture })),
   ];
 }

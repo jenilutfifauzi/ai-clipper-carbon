@@ -14,6 +14,7 @@ import {
   type FontInfo,
   type HookEvent,
   type HookStyle,
+  type OverlayEvent,
   type Panel,
   type Picture,
   type PictureLayerEvent,
@@ -28,10 +29,10 @@ import { useLooks } from "../../../looks";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
 import { CanvasContext, CAPTION_HEIGHT, fittedStage, useCanvas, useCanvasOf } from "./canvas";
-import { allStroke, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
+import { BLUR_BRIGHTNESS, BLUR_SIGMA, filledStyle, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewEffected } from "./PreviewEffected";
 import { PreviewMusic } from "./PreviewMusic";
-import { PreviewOverlays } from "./PreviewOverlays";
+import { BehindOverlays, coversFrame, PreviewOverlays } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
 import { InlineText, type Editing, type Retype } from "./InlineText";
 import { hookEnds, hookLook } from "./animation";
@@ -40,13 +41,17 @@ import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./lay
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
 import { DecksGraded, EffectFilters, EffectsClock, GradeFilters } from "./GradeFilters";
+import { backdropView, maskSlot, MaskBackdrop, MaskGroup, DeckMatte, PreviewMattes } from "./MatteMask";
+import { itemPieces } from "./matteTime";
 import { EyedropperLayer } from "./EyedropperLayer";
 import { pictureBox } from "./videoEffects";
 import { PreviewAdjusted } from "./PreviewAdjustments";
 import { sceneAt, segmentOfScene } from "./ScenesTrack";
-import { framePoint, type Size } from "./pictureGestures";
+import { framePoint, type Point, type Size } from "./pictureGestures";
+import { maskAlpha, segmentShows } from "./behindStage";
+import { behindId, stagePictures } from "./stagePictures";
 import { picturesAt } from "./smartGuides";
-import { StageHandles, useStageEdit, type StageEdit, type StageItem, type StagePicture } from "./StageEdit";
+import { StageHandles, useStageEdit, type StageEdit, type StageItem } from "./StageEdit";
 import { drawnShadow, highlightShape } from "./styleShape";
 import { trackedWidth, trackedX, wordSpan } from "./tracking";
 import { cueLineMiddle, cueStageId, cueWordAt, cueWords } from "./cues";
@@ -64,9 +69,7 @@ const QUOTE_DOTS = [
   [35, 58.8],
   [65, 58.8],
 ];
-// Blur's background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
-export const BLUR_SIGMA = 40;
-export const BLUR_BRIGHTNESS = 0.9;
+export { BLUR_BRIGHTNESS, BLUR_SIGMA } from "./picture";
 // How far an arrow key nudges the Watermark, in output pixels (with Shift, five times as far).
 const NUDGE_PX = 8;
 // How much of the ending "Play ending" plays.
@@ -155,6 +158,19 @@ export function ClipPreview({
   }, [playback, decks]);
   const shownDeck = usePlayback(playback, (_, p) => p.shownDeck);
   const shownSegment = usePlayback(playback, (_, p) => p.shownSegmentIndex);
+  // Each deck's Matte (ADR 0015), following its master, for the cut-out Segments' pieces of the Source;
+  // every item's, for the pictures of Media Library items (MatteMask.tsx's `useItemMatte`).
+  const mattes = useMemo(() => [new DeckMatte(), new DeckMatte()], []);
+  const pieces = useMemo(() => itemPieces(preview?.mattes), [preview?.mattes]);
+  const itemMattes = useMemo(() => ({ pieces: preview?.mattes, copies: preview?.matte_copies }), [preview?.mattes, preview?.matte_copies]);
+  useEffect(() => {
+    for (const matte of mattes) matte.setPieces(pieces);
+  }, [mattes, pieces]);
+  useEffect(() => {
+    mattes.forEach((matte, slot) => matte.attachMaster(decks[slot][0].current));
+    return () => mattes.forEach((matte) => matte.dispose());
+  }, [mattes, decks]);
+  const masking = !!pieces?.length;
 
   useEffect(() => {
     const element = stage.current;
@@ -182,15 +198,30 @@ export function ClipPreview({
   // Keyed pictures' handles and Grips go by their bounds at the playhead: drawn again at each new
   // time while paused, and left where they were while playing, which doesn't draw the stage again.
   const keyedAt = useKeyedTime(plan, playback);
+  // Whether the Segment's picture under the playhead shows at `point` (none while the Video Track is
+  // hidden): where it is cut out, by what its cut canvas keeps there. A press reaches a Behind
+  // Overlay only where it doesn't (behindStage.ts).
+  const segmentShowsAt = (point: Point) => {
+    if (!plan || blank) return false;
+    const time = playback.time;
+    const index = sceneAt(plan, time, playback.shownSegmentIndex);
+    const segment = plan.segments[segmentOfScene(plan, index)];
+    const masked = segment?.background_removal ? (segment.media ? `segment:${segment.id}` : "source") : null;
+    const source = { width: plan.source_width, height: plan.source_height };
+    return segmentShows(plan.scenes[index], point, time, source, (spot) => (masked ? maskAlpha(stage.current, masked, spot) : null), plan);
+  };
   const pictures =
     plan && controls
       ? stagePictures(
-          keyedAt === null ? plan : { ...plan, overlays: overlaysAt(plan, keyedAt), scenes: scenesAt(plan, keyedAt), ...layersAt(plan, keyedAt) },
+          keyedAt === null
+            ? plan
+            : { ...plan, overlays: overlaysAt(plan, keyedAt), behind: plan.behind && overlaysAt(plan, keyedAt, plan.behind), scenes: scenesAt(plan, keyedAt), ...layersAt(plan, keyedAt) },
           controls,
           behind,
           sceneIndex,
           keyedAt ?? playback.time,
           startEditing,
+          { shows: segmentShowsAt, now: () => playback.time },
         )
       : [];
   // What is picked on the stage: moving one of several moves them all.
@@ -215,6 +246,22 @@ export function ClipPreview({
   const [dropOver, setDropOver] = useState(false);
   const takes = (data: DataTransfer) => !!controls?.drop && controls.drop.types.some((type) => data.types.includes(type));
   const scene = drawn?.scenes[sceneIndex];
+
+  // A deck's slot: each deck's first slots are drawn, then the Behind Overlays over a Manual Scene's
+  // Background its picture doesn't cover (not cut out: MaskGroup draws them then), then the other slots.
+  const deckPanel = (ref: React.RefObject<HTMLVideoElement>, deck: number, slot: number) => (
+    <PanelView
+      key={`${deck}:${slot}`}
+      videoRef={ref}
+      src={src}
+      plan={drawn}
+      {...slotView(scene, slot)}
+      playback={playback}
+      muted={deck > 0 || slot > 0}
+      hidden={deck !== shownDeck}
+      mask={masking ? { matte: mattes[deck], feather: drawn?.segments[shownSegment]?.background_removal?.feather ?? 0 } : null}
+    />
+  );
 
   // As large as fits the player, or as wide as it may be, at the Canvas's aspect.
   const size: CSSProperties = fit ? { width: fitted.width, height: fitted.height } : { aspectRatio: `${canvas.width} / ${canvas.height}` };
@@ -245,12 +292,12 @@ export function ClipPreview({
         controls?.drop?.onDrop(event.dataTransfer, framePoint(event.currentTarget.getBoundingClientRect(), event, plan));
       }}
     >
-      {drawn && <GradeFilters grades={[...drawn.segments, ...drawn.overlays, drawn].map((item) => item.grade)} />}
+      {drawn && <GradeFilters grades={[...drawn.segments, ...drawn.overlays, ...(drawn.behind ?? []), drawn].map((item) => item.grade)} />}
       {drawn && (
         <EffectFilters
           items={[
             ...drawn.segments.map((segment) => ({ effects: segment.video_effects, box: canvas, start: segment.start })),
-            ...drawn.overlays.map((event) => ({ effects: event.video_effects, box: pictureBox(event.picture), start: event.start })),
+            ...[...drawn.overlays, ...(drawn.behind ?? [])].map((event) => ({ effects: event.video_effects, box: pictureBox(event.picture), start: event.start })),
           ]}
         />
       )}
@@ -262,30 +309,42 @@ export function ClipPreview({
           <DecksGraded grade={drawn?.grade}>
             {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
             <div ref={incoming} className="absolute inset-0">
-              {/* The decks' panels in the shown Segment's Grade and Video Effects (ADR 0013, 0014): its whole frame, black included. */}
-              <DecksGraded
-                grade={drawn?.segments[shownSegment]?.grade}
-                effects={drawn?.segments[shownSegment]?.video_effects}
-                start={drawn?.segments[shownSegment]?.start}
+              {/* A cut-out Segment's picture over its Background (ADR 0015), shown while the shown deck's is cut. */}
+              <MaskGroup
+                mattes={masking ? mattes : []}
+                playback={playback}
+                maskNow={() => !!drawn?.segments[playback.shownSegmentIndex]?.background_removal}
+                shownMatte={() => mattes[playback.shownDeck]}
               >
-                {decks.map((refs, deck) =>
-                  refs.map((ref, slot) => (
-                    <PanelView
-                      key={`${deck}:${slot}`}
-                      videoRef={ref}
-                      src={src}
-                      plan={drawn}
-                      {...slotView(scene, slot)}
-                      playback={playback}
-                      muted={deck > 0 || slot > 0}
-                      hidden={deck !== shownDeck}
-                    />
-                  )),
+                {masking && drawn && scene && drawn.segments[shownSegment]?.background_removal && (
+                  <MaskBackdrop
+                    plan={drawn}
+                    view={backdropView(drawn, scene.layout === "manual" ? slotView(scene, 0) : null, drawn.segments[shownSegment].background)}
+                    masters={masters}
+                    master={() => decks[playback.shownDeck][0].current}
+                    playback={playback}
+                  />
                 )}
-              </DecksGraded>
-              <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
+                {/* The Overlays Behind the Main Track (ADR 0015): over the Background, under the cut picture. */}
+                {masking && drawn && <BehindOverlays plan={drawn} playback={playback} className="invisible group-data-[masked]/mask:visible" />}
+                {/* The decks' panels in the shown Segment's Grade and Video Effects (ADR 0013, 0014): its whole frame, black included
+                    (but for a cut-out Segment's Background). */}
+                <DecksGraded
+                  grade={drawn?.segments[shownSegment]?.grade}
+                  effects={drawn?.segments[shownSegment]?.video_effects}
+                  start={drawn?.segments[shownSegment]?.start}
+                  className="group-data-[masked]/mask:!bg-transparent"
+                >
+                  {decks.map((refs, deck) => deckPanel(refs[0], deck, 0))}
+                  {drawn && scene?.layout === "manual" && !coversFrame(scene.picture, drawn) && (
+                    <BehindOverlays plan={drawn} playback={playback} className="group-data-[masked]/mask:invisible" />
+                  )}
+                  {decks.flatMap((refs, deck) => refs.slice(1).map((ref, slot) => deckPanel(ref, deck, slot + 1)))}
+                </DecksGraded>
+              </MaskGroup>
+              <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} mattes={pieces} matteCopies={preview?.matte_copies} />
             </div>
-            <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} incoming={incoming} />
+            <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} incoming={incoming} mattes={pieces} />
           </DecksGraded>
         </div>
         <PreviewOverlays
@@ -361,7 +420,9 @@ export function ClipPreview({
   // Drawn on the plan's Canvas, which what is drawn in it takes (useCanvas).
   const frame = (
     <CanvasContext.Provider value={canvas}>
-      <EffectsClock playback={playback}>{stageFrame}</EffectsClock>
+      <PreviewMattes.Provider value={itemMattes}>
+        <EffectsClock playback={playback}>{stageFrame}</EffectsClock>
+      </PreviewMattes.Provider>
     </CanvasContext.Provider>
   );
   if (fit) {
@@ -394,106 +455,15 @@ function useKeyedTime(plan: RenderPlan | null, playback: Playback): number | nul
   return keyed ? paused.current : null;
 }
 
-// The picture behind the Overlays, at the plan's Scene `scene`: another Scene's is another picture,
-// so that one held isn't drawn in the next Scene, nor saved to it.
-const behindId = (scene: number): StageId => `picture:${scene}`;
-
-/**
- * The pictures `controls` can pick and transform on the stage, in the order they are drawn: the
- * picture `behind` every Overlay (of the plan's Scene `scene`), then the Overlays, as they are at
- * `time`, then the Shapes and the Text Layers, by their areas (layerStage.ts) as they are at `time`,
- * each Text Layer retyped by `edit` when given.
- */
-function stagePictures(
-  plan: RenderPlan,
-  controls: StageControls,
-  behind: PictureTarget | null,
-  scene: number,
-  time: number,
-  edit: ((editing: Editing) => void) | undefined,
-): StagePicture[] {
-  const pictures: StagePicture[] = [];
-  const shown = plan.scenes[scene];
-  if (behind && shown) {
-    const picture = behind.transform ? shown.picture : null;
-    pictures.push({
-      id: behindId(scene),
-      label: shown.layout === "media" ? "Video" : shown.layout === "manual" ? "Scene, framed by hand" : "Scene",
-      start: shown.start,
-      end: shown.end,
-      picture,
-      transform: picture && behind.transform,
-      behind: true,
-      grips: behind.grips,
-      onTransform: behind.onTransform,
-      crop: picture && behind.crop,
-      onCrop: behind.onCrop,
-    });
-  }
-  const overlays = controls.overlays;
-  for (const event of overlays ? plan.overlays : []) {
-    const transform = overlays!.transformOf(event.id, time);
-    if (!transform) continue;
-    pictures.push({
-      id: `overlay:${event.id}`,
-      label: "Overlay",
-      start: event.start,
-      end: event.end,
-      picture: event.picture,
-      transform,
-      onTransform: (next, group) => overlays!.onTransform(event.id, next, group, time),
-      crop: overlays!.cropOf?.(event.id) ?? null,
-      onCrop: overlays!.onCrop && ((crop, next, group) => overlays!.onCrop!(event.id, crop, next, group)),
-    });
-  }
-  const shapes = controls.shapes;
-  for (const event of shapes ? plan.shapes : []) {
-    const { picture, fitted } = layerStagePicture(event);
-    const { id, style, keys } = event.layer;
-    const onResize = shapes!.onResize;
-    const ends = allStroke(style.kind);
-    pictures.push({
-      id: `shape:${id}`,
-      label: ends ? `Shape: ${style.kind}` : "Shape",
-      start: event.start,
-      end: event.end,
-      picture,
-      fitted,
-      transform: shapes!.transformOf(id, time) ?? event.layer.transform,
-      grips: !onResize ? "corners-rotate" : ends ? "ends" : "all",
-      onTransform: (next, group) => shapes!.onTransform(id, next, group, time),
-      // Its position keyed, an edge resizes it about its centre, as a Text Layer's box Grip does,
-      // so that a resize writes no Keyframe.
-      resize: onResize && { aboutCentre: !!(keys.x?.length || keys.y?.length), onResize: (box, next, group) => onResize(id, box, next, group, time) },
-    });
-  }
-  const texts = controls.texts;
-  for (const event of texts ? plan.texts : []) {
-    const { picture, fitted } = layerStagePicture(event);
-    pictures.push({
-      id: `text:${event.layer.id}`,
-      label: `Text: ${event.lines.join(" ")}`,
-      start: event.start,
-      end: event.end,
-      picture,
-      fitted,
-      transform: texts!.transformOf(event.layer.id, time) ?? event.layer.transform,
-      grips: "corners-rotate",
-      onTransform: (next, group) => texts!.onTransform(event.layer.id, next, group, time),
-      onBox: texts!.onBox && ((edge, length, group) => texts!.onBox!(event.layer.id, edge, length, group)),
-      onEdit: edit && (() => edit({ kind: "text", id: event.layer.id })),
-    });
-  }
-  return pictures;
-}
-
 // The plan with its Overlays, picture layers and the Scene `scene`'s picture drawn where the stage
 // holds them; a keyed picture layer held where the stage has it at `keyedAt` (useKeyedTime), still.
 function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number, keyedAt: number | null): RenderPlan {
-  const overlays = plan.overlays.map((event) => {
+  const shownOverlay = (event: OverlayEvent) => {
     const picture = edit.shownPicture(`overlay:${event.id}`, event.picture);
     return picture === event.picture ? event : { ...event, picture };
-  });
+  };
+  const overlays = plan.overlays.map(shownOverlay);
+  const behind = plan.behind?.map(shownOverlay);
   const scenes = plan.scenes.map((each, index) => {
     const picture = index === scene && each.picture ? edit.shownPicture(behindId(scene), each.picture) : each.picture;
     return picture === each.picture ? each : { ...each, picture };
@@ -507,7 +477,7 @@ function drawnPlan(plan: RenderPlan, edit: StageEdit, scene: number, keyedAt: nu
   };
   const shapes = plan.shapes.map((event) => held(event, `shape:${event.layer.id}`));
   const texts = plan.texts.map((event) => held(event, `text:${event.layer.id}`));
-  return { ...plan, overlays, scenes, shapes, texts };
+  return { ...plan, overlays, ...(behind && { behind }), scenes, shapes, texts };
 }
 
 // The largest size of the `canvas`'s aspect that fits in `room`, in CSS pixels, while `on`.
@@ -892,9 +862,12 @@ function Watermark({ plan, event, font }: { plan: RenderPlan; event: WatermarkEv
  * One panel slot: its <video>, always mounted (so that it keeps playing across Scenes), shown in the
  * current Scene's panel for the slot (hidden when the Scene has none), cropped at the path's point;
  * or, in a Manual Scene (`slotView`), its picture placed as PicturePanel places one, or its
- * Background's colour. A `hidden` one (its deck parked) is still drawn, transparent, so that its
+ * Background's colour or image. A `hidden` one (its deck parked) is still drawn, transparent, so that its
  * frame is ready. A keyed Manual picture (ADR 0008) moves as PicturePanel moves one: sampled at the
  * time shown on every frame of the playback's clock, its box and opacity written to it directly.
+ * With `mask` (a plan with cut-out Segments, ADR 0015), a picture's video has a canvas beside it that
+ * draws it cut by its deck's Matte (MatteMask.tsx), shown in its place while the cut is (`MaskGroup`);
+ * a fill (Blur's blurred panel, a Manual Scene's Background) gives way to the cut-out Background then.
  */
 export function PanelView({
   videoRef,
@@ -903,9 +876,11 @@ export function PanelView({
   panel,
   picture = null,
   colour = null,
+  image = null,
   playback,
   muted,
   hidden = false,
+  mask = null,
 }: {
   videoRef: React.RefObject<HTMLVideoElement>;
   src: string;
@@ -913,9 +888,12 @@ export function PanelView({
   panel: Panel | null;
   picture?: Picture | null;
   colour?: string | null;
+  // A Manual Scene's image Background (ADR 0015), covering the frame.
+  image?: string | null;
   playback: Playback;
   muted: boolean;
   hidden?: boolean;
+  mask?: SlotMask | null;
 }) {
   const pointIndex = useShown(playback, (time) => {
     if (!panel) return 0;
@@ -949,15 +927,26 @@ export function PanelView({
         video={inner}
         boxRef={boxRef}
         layerRef={layerRef}
+        mask={mask}
       />
     );
   }
   const point = panel?.path[Math.min(pointIndex, panel.path.length - 1)];
   const whole: CSSProperties = { inset: 0, width: "100%", height: "100%" };
   if (!plan || !panel || !point) {
-    // A colour shows where the video doesn't.
-    const box: CSSProperties = colour ? { inset: 0, background: colour } : { inset: 0, visibility: "hidden" };
-    return <SlotVideo videoRef={videoRef} src={src} muted={muted} box={{ ...box, ...parked }} video={colour ? { ...whole, visibility: "hidden" } : whole} />;
+    // A colour or an image shows where the video doesn't.
+    const filled = !!colour || !!image;
+    const box: CSSProperties = filled ? { inset: 0, ...filledStyle(colour, image) } : { inset: 0, visibility: "hidden" };
+    return (
+      <SlotVideo
+        videoRef={videoRef}
+        src={src}
+        muted={muted}
+        box={{ ...box, ...parked }}
+        video={filled ? { ...whole, visibility: "hidden" } : whole}
+        fill={!!mask && filled}
+      />
+    );
   }
   const box: CSSProperties = {
     left: percent(panel.area.x / plan.width),
@@ -973,13 +962,20 @@ export function PanelView({
     height: percent(plan.source_height / panel.crop_height),
     filter: panel.blur ? `blur(calc(${BLUR_SIGMA}px * var(--scale))) brightness(${BLUR_BRIGHTNESS})` : undefined,
   };
-  return <SlotVideo videoRef={videoRef} src={src} muted={muted} box={{ ...box, ...parked }} video={video} />;
+  return <SlotVideo videoRef={videoRef} src={src} muted={muted} box={{ ...box, ...parked }} video={video} mask={panel.blur ? null : mask} fill={!!mask && panel.blur} />;
+}
+
+/** A slot's mask (ADR 0015): its deck's Matte, and the feather of the Segment shown, in output pixels. */
+export interface SlotMask {
+  matte: DeckMatte;
+  feather: number;
 }
 
 /**
  * A slot's video in its `box`, inside a `layer` (a picture's: clipped to it, at its opacity), as
  * `video` sizes and moves it: always the same elements, so that the video plays on whatever its
- * slot shows.
+ * slot shows. With `mask`, a canvas sized and moved as the video draws it cut (`maskSlot`), shown in
+ * its place while the cut is; a `fill` is hidden then.
  */
 function SlotVideo({
   videoRef,
@@ -990,6 +986,8 @@ function SlotVideo({
   video,
   boxRef,
   layerRef,
+  mask = null,
+  fill = false,
 }: {
   videoRef: React.RefObject<HTMLVideoElement>;
   src: string;
@@ -999,11 +997,32 @@ function SlotVideo({
   video: CSSProperties;
   boxRef?: React.RefObject<HTMLDivElement>;
   layerRef?: React.RefObject<HTMLDivElement>;
+  mask?: SlotMask | null;
+  fill?: boolean;
 }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const feather = useRef(0);
+  feather.current = mask?.feather ?? 0;
+  const matte = mask?.matte;
+  useEffect(() => {
+    const picture = videoRef.current;
+    if (!matte || !picture || !canvas.current) return;
+    return maskSlot(matte, picture, canvas.current, () => feather.current);
+  }, [matte, videoRef]);
   return (
-    <div ref={boxRef} className="absolute" style={box}>
+    <div ref={boxRef} className={cx("absolute", fill && "group-data-[masked]/mask:invisible")} style={box}>
       <div ref={layerRef} className="absolute inset-0" style={layer}>
-        <video ref={videoRef} src={src} muted={muted} playsInline preload="auto" className="absolute max-w-none object-fill" style={video} />
+        <video
+          ref={videoRef}
+          src={src}
+          muted={muted}
+          playsInline
+          preload="auto"
+          className={cx("absolute max-w-none object-fill", matte && "group-data-[masked]/mask:opacity-0")}
+          style={video}
+        />
+        {/* The Source's frame cut, which a press on the stage reads (behindStage.ts' maskAlpha). */}
+        {matte && <canvas ref={canvas} aria-hidden data-mask-picture="source" className="absolute max-w-none opacity-0 group-data-[masked]/mask:opacity-100" style={video} />}
       </div>
     </div>
   );

@@ -259,7 +259,7 @@ def read_from_copies(
     plan: RenderPlan, files: dict[str, Path], copy_of: Callable[[str | None, SegmentTime], Copy]
 ) -> tuple[RenderPlan, dict[str, Path]]:
     """The Render Plan as the renderer reads it, and its files: each reversed Segment, each reversed
-    Overlay's picture and sound, and each reversed Music Clip, played forwards from the full-size copy
+    Overlay's picture and sound (one Behind the Main Track's too), and each reversed Music Clip, played forwards from the full-size copy
     `copy_of` gives for its item (None: the Source) and range, at its Speed. The copy is in `files` under its own path: a
     media Segment's or an Overlay's stands in for its video; a Source Segment's is its `read_from`,
     still a Segment of the Source (its Scenes' panels, the Clip's own volume)."""
@@ -286,7 +286,7 @@ def read_from_copies(
         return replace(event, media=path, offset=played.start, reverse=False)
 
     overlays, audio = [forwards(event) for event in plan.overlays], [forwards(event) for event in plan.audio]
-    return replace(plan, segments=segments, overlays=overlays, audio=audio), files
+    return replace(plan, segments=segments, overlays=overlays, behind=[forwards(event) for event in plan.behind], audio=audio), files
 
 
 def preview_copy(start: float, end: float, speed: float = 1.0, reverse: bool = False, pitch: bool = False) -> Retime | None:
@@ -369,6 +369,7 @@ def _reverse_in_pieces(
     progress: Callable[[float], None],
     threads: int,
     nice: bool,
+    encode: list[str] | None = None,
 ) -> None:
     """Write the copy of `video` that `retime` says to `target`: its range cut into pieces of about
     `piece` seconds, each reversed (when `retime.reverse`) and played at its Speed, then joined last to
@@ -376,7 +377,8 @@ def _reverse_in_pieces(
     brought back to `fps` frames a second, as a render's is (every 8th frame at 8×, each frame 8
     times at 0.125×), and each piece's sound, made by the render's filters, is cut or padded to the
     piece's length (`atempo` drops a little of a sound's end), so that the joins keep in step. A
-    song's copy (no `fps`) is its sound alone."""
+    song's copy (no `fps`) is its sound alone. Its picture is encoded as its `size`'s, or as `encode`
+    says (a Matte's reversed copy, app/matte.py)."""
     span = retime.end - retime.start
     count = max(1, math.ceil(span / piece - 1e-9))
     length = span / count
@@ -404,7 +406,7 @@ def _reverse_in_pieces(
         pieces = []
         for i in range(count):
             out = work / f"{i}.mov"
-            shown = ["-map", "0:v:0", "-vf", ",".join(picture), *_ENCODE[size]] if fps else []
+            shown = ["-map", "0:v:0", "-vf", ",".join(picture), *(encode or _ENCODE[size])] if fps else []
             command = [
                 *run, *base, "-ss", f"{retime.start + i * length:.6f}", "-t", f"{length:.6f}", "-i", str(video),
                 *shown, "-map", "0:a:0?", *(["-af", ",".join(sound)] if sound else []),

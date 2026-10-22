@@ -745,11 +745,20 @@ class Overlay:
     # How it is laid over what is under it, after its opacity (docs/adr/0014). Normal in one saved
     # before Blend Modes.
     blend: BlendMode = BlendMode.NORMAL
+    # Behind the Main Track (docs/adr/0015): on the Behind Track, drawn over each Segment's Background
+    # and under its picture, so it shows only where that picture doesn't cover the frame or is cut
+    # out. Over the Main Track in one saved before it.
+    behind: bool = False
+    # Its Background removal (docs/adr/0015): only its subject kept by its item's Matte, after its crop,
+    # scale and flips and before its Grade and Video Effects (a Chroma or Luma key's alpha multiplying
+    # it), so that what is under it shows elsewhere. None (off) in one saved before it.
+    background_removal: "BackgroundRemoval | None" = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))
         object.__setattr__(self, "audio_effects", checked_effects(self.audio_effects, f"Overlay {self.id}"))
         object.__setattr__(self, "video_effects", checked_video_effects(self.video_effects, f"Overlay {self.id}", keyed=True))
+        checked_background_removal(self.background_removal, f"Overlay {self.id}")
 
 
 @dataclass(frozen=True)
@@ -782,19 +791,60 @@ class AdjustmentLayer:
 
 class BackgroundKind(StrEnum):
     """What shows behind a Framing's picture: the picture itself, covering the frame, blurred and
-    darkened (as the Blur Layout's background is), or a colour."""
+    darkened (as the Blur Layout's background is), a colour, or an image of the Media Library filling
+    the frame (docs/adr/0015)."""
 
     BLUR = "blur"
     COLOUR = "colour"
+    IMAGE = "image"
 
 
 @dataclass(frozen=True)
 class Background:
     """What shows wherever a Framing's picture doesn't cover the frame, and behind it below its full
-    opacity: its `kind`, and its `colour` when that is a colour."""
+    opacity (or where Background removal takes it away): its `kind`, its `colour` when that is a
+    colour, and its `image` (a Media Library image's id) when that is an image, which covers its
+    Candidate's Canvas (docs/adr/0022), centred, with no Transform. The colour is kept when the kind changes, so that
+    changing back restores it; an image given at all is used (it can't be deleted), so the editor
+    drops it with its kind."""
 
     kind: BackgroundKind = BackgroundKind.BLUR
     colour: Colour = "#000000"
+    image: MediaId | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind is BackgroundKind.IMAGE and self.image is None:
+            raise ValueError("An image Background needs its image: the id of an image in the Media Library")
+
+
+class Subject(StrEnum):
+    """What Background removal keeps (docs/adr/0015): a person, the only one for now."""
+
+    PERSON = "person"
+
+
+# The softest edge Background removal's feather gives, in output pixels at the picture's fitted size.
+FEATHER_MAX = 40.0
+
+
+@dataclass(frozen=True)
+class BackgroundRemoval:
+    """An item's Background removal (GLOSSARY; docs/adr/0015): only its `subject` kept, by its Matte,
+    the edge softened by `feather` output pixels at the picture's fitted size (0..FEATHER_MAX). Checked
+    by the item that has it (`checked_background_removal`), so that a refusal names the item."""
+
+    subject: Subject = Subject.PERSON
+    feather: Annotated[FiniteFloat, WithJsonSchema({"type": "number", "minimum": 0, "maximum": FEATHER_MAX})] = 4.0
+
+    def scaled(self, scale: float) -> "BackgroundRemoval":
+        """It as drawn by a picture `scale` times its fitted size: its feather times `scale`, to a thousandth."""
+        return replace(self, feather=round(self.feather * scale, 3))
+
+
+def checked_background_removal(removal: BackgroundRemoval | None, item: str) -> None:
+    """ValueError, naming `item`, unless `removal` (if any) has a feather within 0..FEATHER_MAX."""
+    if removal is not None and not 0 <= removal.feather <= FEATHER_MAX:
+        raise ValueError(f"{item}'s background_removal feather is {removal.feather:g}; it is 0 to {FEATHER_MAX:g}")
 
 
 @dataclass(frozen=True)
@@ -880,8 +930,17 @@ class Segment:
     # so that a Transition blends pictures that carry them; sizes at the Canvas's. Empty in
     # one saved before them. A Freeze frame takes them too.
     video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
+    # Its Background removal (docs/adr/0015): only its subject kept by its Matte, after its crop, scale
+    # and flips and before its Grade and Video Effects, over its Background. None (off) in one saved before it.
+    background_removal: BackgroundRemoval | None = None
+    # A Segment of the Source's own Background (docs/adr/0015), shown where its Background removal
+    # takes the picture away, in any Layout (in Blur in place of its fill); unused while that is off.
+    # None: the picture blurred. A video's Segment has its Framing's.
+    background: Background | None = None
 
     def __post_init__(self) -> None:
+        if self.media is not None and self.background is not None:
+            raise ValueError(f"Segment {self.id} shows a video, whose Background is its framing's: only a Segment of the episode has its own")
         if self.media is None and (framed := next((name for name, keys in self.keys.items() if keys and name not in SOUND_KEYS), None)):
             raise ValueError(f"Segment {self.id} shows the episode, whose Layouts frame it: it has no {framed} Keyframes, only volume ones")
         if self.media is None and self.captions is not None:
@@ -892,6 +951,7 @@ class Segment:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Segment {self.id}", PICTURE_KEYS + SOUND_KEYS, length))
         object.__setattr__(self, "audio_effects", checked_effects(self.audio_effects, f"Segment {self.id}"))
         object.__setattr__(self, "video_effects", checked_video_effects(self.video_effects, f"Segment {self.id}"))
+        checked_background_removal(self.background_removal, f"Segment {self.id}")
 
 
 def _check_held(segment: Segment) -> None:
@@ -1040,12 +1100,18 @@ class Candidate:
         return timeline_length(self.main_track(), self.transitions)
 
     def media_ids(self) -> set[str]:
-        """The Media Library items it uses."""
+        """The Media Library items it uses, its Backgrounds' images among them."""
         return (
             {clip.media for clip in self.music if clip.media}
             | {segment.media for segment in self.segments if segment.media}
             | {overlay.media for overlay in self.overlays}
+            | {image for _, background in self.backgrounds() if (image := background.image)}
         )
+
+    def backgrounds(self) -> Iterator[tuple[str, Background]]:
+        """Each Background it has (docs/adr/0007, 0015), with the part it is: its Framing's, its Layout
+        Overrides' and its Segments' (a video's Framing's, or the Source's own)."""
+        return backgrounds_of(self.framing, self.layout_overrides, self.segments)
 
     def grades(self) -> Iterator[tuple[str, Grade]]:
         """Each of its Grades, with the part it is."""
@@ -1089,6 +1155,22 @@ def grades_of(
         yield f"Overlay {overlay.id}", overlay.grade
     for layer in adjustment_layers:
         yield f"Adjustment Layer {layer.id}", layer.grade
+
+
+def backgrounds_of(
+    framing: Framing | None, overrides: Iterable[LayoutOverride], segments: Iterable[Segment]
+) -> Iterator[tuple[str, Background]]:
+    """Each Background of these parts of a Candidate (its own `framing`'s when given), with the part it is."""
+    if framing is not None:
+        yield "Its framing's background", framing.background
+    for override in overrides:
+        if override.framing is not None:
+            yield f"The Layout Override at {override.at:g} s's background", override.framing.background
+    for segment in segments:
+        if segment.framing is not None:
+            yield f"Segment {segment.id}'s framing's background", segment.framing.background
+        if segment.background is not None:
+            yield f"Segment {segment.id}'s background", segment.background
 
 
 def on_canvas(candidate: Candidate) -> Candidate:

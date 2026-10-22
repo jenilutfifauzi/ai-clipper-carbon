@@ -76,10 +76,12 @@ def test_speed_and_pitch_are_saved_and_one_past_its_video_or_on_an_image_is_refu
     sped = {"id": "o", "media": video["id"], "start": 0.5, "secs": 4, "offset": 1, "speed": 2, "pitch": True}
     saved = patch(client, job, candidate, overlays=[sped])
     assert (saved["overlays"][0]["speed"], saved["overlays"][0]["pitch"]) == (2, True)
-    assert preview(client, job, saved)["plan"]["overlays"][0] | {"picture": None, "grade": None} == {
-        "id": "o", "media": video["id"], "picture": None, "grade": None, "start": 0.5, "end": 4.5, "offset": 1, "image": False, "speed": 2, "pitch": True, "reverse": False,
+    expected = {
+        "id": "o", "media": video["id"], "start": 0.5, "end": 4.5, "offset": 1, "image": False, "speed": 2, "pitch": True, "reverse": False,
         "animation_in": "none", "animation_out": "none", "animation_ms": 300,
     }
+    shown = preview(client, job, saved)["plan"]["overlays"][0]
+    assert {key: shown[key] for key in expected} == expected
 
     still = {"id": "i", "media": image["id"], "start": 0, "secs": 1}
     for overlays, message in (

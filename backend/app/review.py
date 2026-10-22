@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from app.candidates import (
     DEFAULT_DUCK,
+    PICTURE_KEYS,
     AdjustmentLayer,
     Candidate,
     CueEdit,
@@ -267,14 +268,16 @@ def update(
         episode.check_length(segments, transitions)
         # The hull of the Source they play, snapped to Words; one Segment of it played as it was
         # filmed is a plain range (one at a Speed, faded, Muted, graded, with Audio or Video Effects
-        # (even all off, which are kept), or at a volume or Keyframes of its own, is kept as its Segment).
+        # (even all off, which are kept), cut out or with a Background, or at a volume or Keyframes of
+        # its own, is kept as its Segment).
         shown = [segment for segment in segments if segment.media is None and segment.hold is None]
         start, end = min(s.start for s in shown), max(s.end for s in shown)
         [first, *more] = segments
         as_filmed = segment_time(first) == SegmentTime(start, end)
         plain = (
             first.volume == 1 and not first.keys and not (first.fade_in or first.fade_out) and not first.muted and first.grade.neutral
-            and not first.audio_effects and not first.video_effects
+            and not first.audio_effects and not first.video_effects and first.background_removal is None
+            and first.background is None
         )
         if not more and as_filmed and plain:
             segments = []
@@ -336,6 +339,8 @@ def update(
     )
     # What it owns stays on its Canvas (docs/adr/0022).
     new = on_canvas(new)
+    if change.segments is not None or change.layout_overrides is not None:
+        _check_removal_keyframes(new)
     if change.text_layers is not None or change.shapes is not None:
         _check_inside(new, old)
     if change.music is not None:
@@ -452,6 +457,29 @@ def _check_framing(what: str, layout: Layout, framing: Framing | None) -> None:
         raise InvalidEdit(f"{what} needs its framing: the transform, crop and background it frames the episode by")
     if layout is not Layout.MANUAL and framing is not None:
         raise InvalidEdit(f"{what} has no framing: only the Manual Layout frames the episode by hand")
+
+
+def _check_removal_keyframes(candidate: Candidate) -> None:
+    """InvalidEdit for a cut-out Segment (docs/adr/0015) whose picture has Keyframes: a video's own,
+    or those of a Manual Layout Override that frames a Scene of its range (a Freeze frame holds one
+    unkeyed). The render can't cut out a keyed picture yet (its frames are drawn by a frame process),
+    so the preview, which could, would show a cut the render wouldn't: refused when it is saved or
+    drafted, naming the Segment, rather than when the Clip is rendered."""
+    for segment in candidate.segments:
+        if segment.background_removal is None:
+            continue
+        if segment.media is not None:
+            keyed = any(keys for prop, keys in segment.keys.items() if prop in PICTURE_KEYS)
+        else:
+            keyed = segment.hold is None and any(
+                override.layout is Layout.MANUAL and any(override.keys.values()) and segment.start <= override.at <= segment.end
+                for override in candidate.layout_overrides
+            )
+        if keyed:
+            raise InvalidEdit(
+                f"Segment {segment.id} is cut out (Background removal) but its picture has Keyframes, which Background removal "
+                "can't draw yet: remove its Keyframes or switch Background removal off"
+            )
 
 
 def _check_detached(music: list[MusicClip], old: list[MusicClip], segments: list[Segment]) -> None:

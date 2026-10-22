@@ -95,6 +95,9 @@ WAIT_MAX_SECS = 600
 # How long `get_media_words` waits by default for a video's Media Words, and how often it looks.
 MEDIA_WORDS_WAIT_SECS = 120
 MEDIA_WORDS_POLL_SECS = 0.25
+# How long `download_person_model` waits by default for the download, and how often it looks.
+MODEL_WAIT_SECS = 120
+MODEL_POLL_SECS = 0.25
 # How often merge_candidate_items and remove_candidate_items make their change again when another
 # edit saves first.
 STALE_RETRIES = 5
@@ -383,6 +386,17 @@ Edits:
   sizes are as given. A lone Segment of the episode with a stack (even all off) stays a Segment.
   merge_candidate_items replaces its stack as a whole; the dry run lists its enabled ones under
   `segments`.
+- A Segment's or an Overlay's `background_removal` {{subject "person", feather 0-40 px, default 4}}
+  keeps only the speaker (null: off): an episode's Segment over its own picture blurred, in any Layout;
+  a video's over its framing's Background; an Overlay over what is under it (times a key's alpha). Its Matte is
+  made in the background (the person model first: download_person_model); a render makes what is
+  missing, and fails on a failed one. wait_for_matte follows it. The dry run lists it, feather as drawn.
+  Its `background` {{kind "blur"|"colour"|"image", colour, image (a Media Library image id)}} shows
+  behind it while cut out (null: its picture blurred; in Blur it replaces the fill); listed so too.
+  A Framing's `background` takes the image kind too, covering the frame. A used image can't be deleted.
+- An Overlay's `behind` (default false) puts it Behind the Main Track: over each Segment's Background,
+  under its picture, so it shows only where a Segment is cut out or doesn't cover the frame; under the
+  Candidate's Grade and Adjustment Layers. The dry run lists these under `behind`.
 - An Adjustment Layer's `video_effects`: the same stack over what its Grade covers, after it, mixed
   by its strength and fades (its grade may be neutral); sizes as a Segment's. Merged and listed as
   a Segment's. A keyed Overlay shows the effects it would unkeyed at the same scale.
@@ -1041,6 +1055,34 @@ def build_mcp(app: FastAPI) -> MCPServer:
                     raise ToolError("The Narration was cancelled")
         raise ToolError("The Narration ended without an item")
 
+    @tool()
+    async def download_person_model(ctx: Context, timeout_secs: int = Field(MODEL_WAIT_SECS, ge=1, le=WAIT_MAX_SECS)) -> dict:
+        """Download the person model Background removal needs (RVM, 15 MB, GPL-3.0), resuming a cut one.
+        Gives its state: ready, failed (message), or downloading (done of total bytes) on timeout: call again."""
+        state = await api("POST", "/models/person/download")
+        deadline = asyncio.get_running_loop().time() + timeout_secs
+        while state["state"] == "downloading" and asyncio.get_running_loop().time() < deadline:
+            await ctx.report_progress(state["done"], state["total"], "Downloading the person model")
+            await asyncio.sleep(MODEL_POLL_SECS)
+            state = await api("GET", "/models/person")
+        return state
+
+    @tool()
+    async def wait_for_matte(
+        ctx: Context, job_id: str, candidate_id: str, retry: bool = False, timeout_secs: int = Field(MODEL_WAIT_SECS, ge=1, le=WAIT_MAX_SECS)
+    ) -> dict:
+        """Wait for the Matte of a Candidate's cut-out Segments and Overlays (`retry`: a failed one). Gives
+        its state (ready; making on timeout: call again; waiting for the person model; failed, error),
+        progress 0..1 and each Segment's and Overlay's."""
+        path = f"/jobs/{job_id}/candidates/{candidate_id}/matte"
+        matte = await api("POST", path, json={"retry": retry})
+        deadline = asyncio.get_running_loop().time() + timeout_secs
+        while matte["state"] == "making" and asyncio.get_running_loop().time() < deadline:
+            await ctx.report_progress(matte["progress"], 1, "Finding the subject")
+            await asyncio.sleep(MODEL_POLL_SECS)
+            matte = await api("POST", path)
+        return matte
+
     @tool(destructive=True)
     async def delete_asset(kind: Literal["logo", "media", "font", "look"], asset_id: str) -> dict:
         """Delete a Logo, or a Media Library item, an imported font's Face or an Imported Look that
@@ -1210,6 +1252,24 @@ def _clip_view(job_dir: Path, clip: dict) -> dict:
     return _compact(view)
 
 
+def _overlay_view(event: dict, frame: tuple[int, int], copied: Callable[[dict], bool]) -> dict:
+    """An Overlay as the dry run lists it (one Behind the Main Track too): its item, times and picture,
+    its corners, border and shadow, Grade, Video Effects and Blend Mode where set, what a video reads,
+    its Keyframes and its animations."""
+    return {
+        "id": event["id"], "media": event["media"], **_times(event, "start", "end"), **_picture_view(event["picture"]),
+        **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
+        **_compact({
+            "grade": _grade_view(event["grade"]), "video_effects": _effects_view(event.get("video_effects", [])),
+            "blend": None if event.get("blend", "normal") == "normal" else event["blend"],
+            "background_removal": event.get("background_removal"),
+        }),
+        **({} if event["image"] else _video_read(event, copied)),
+        **_motion_view(event["picture"], frame),
+        **_animation_view(event),
+    }
+
+
 def _picture_view(picture: dict) -> dict:
     """Where a picture is drawn: its box once turned, in output pixels, its rotation, what its crop
     keeps, in its item's pixels, and its opacity."""
@@ -1298,6 +1358,8 @@ def _plan_view(
                 "audio_effects": _effects_view(segment.get("audio_effects", [])),
                 "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
                 "grade": _grade_view(segment["grade"]), "video_effects": _effects_view(segment.get("video_effects", [])),
+                "background_removal": segment.get("background_removal"),
+                "background": _background_view(segment.get("background")),
                 "words_status": preview["words_status"].get(segment["id"]), "words_error": preview["words_errors"].get(segment["id"]),
             })
             for segment in plan["segments"]
@@ -1314,20 +1376,9 @@ def _plan_view(
         },
         "shapes": [_layer_view(shape, _SHAPE, frame, picture_url) for shape in plan["shapes"]],
         "text_layers": [_layer_view(text, _TEXT, frame, picture_url, "lines") for text in plan["texts"]],
-        "overlays": [
-            {
-                "id": event["id"], "media": event["media"], **_times(event, "start", "end"), **_picture_view(event["picture"]),
-                **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
-                **_compact({
-                    "grade": _grade_view(event["grade"]), "video_effects": _effects_view(event.get("video_effects", [])),
-                    "blend": None if event.get("blend", "normal") == "normal" else event["blend"],
-                }),
-                **({} if event["image"] else _video_read(event, copied)),
-                **_motion_view(event["picture"], frame),
-                **_animation_view(event),
-            }
-            for event in plan["overlays"]
-        ],
+        "overlays": [_overlay_view(event, frame, copied) for event in plan["overlays"]],
+        # Behind the Main Track: over each Segment's Background, under its picture; left out when none.
+        **_compact({"behind": [_overlay_view(event, frame, copied) for event in plan.get("behind", [])]}),
         # Over the Main Track and the Overlays, in the order applied; a field at its default left out.
         "adjustment_layers": [
             {
@@ -1368,6 +1419,13 @@ def _effects_view(stack: list[dict]) -> list[dict] | None:
     """An item's planned Audio or Video Effects as an agent reads them, in order, each its id and
     settings (the plan's are the enabled ones, a Video Effect's sizes as drawn); None for none."""
     return [{"id": applied["id"], "params": applied["params"]} for applied in stack] or None
+
+
+def _background_view(background: dict | None) -> dict | None:
+    """A cut-out Segment's Background in force, as the dry run lists it: its kind and what it shows."""
+    if background is None:
+        return None
+    return {"kind": background["kind"], **({"colour": background["colour"]} if background["kind"] == "colour" else {}), **_compact({"image": background.get("image")})}
 
 
 def _grade_view(grade: dict) -> dict | None:
