@@ -985,12 +985,13 @@ def candidate_preview_plan(
     logos: Logos,
     library: Media,
     media_words: MediaWordsDep,
+    mattes: MatteMaker,
     body: CandidateUpdate | None = None,
 ) -> PreviewPlan:
     """The Candidate's Preview Plan (app/editor.py): its Render Plan, or that of `body`, a draft of
-    edits applied as an update would apply them but not saved. 422 for a draft that isn't a valid
-    edit; 409 for a Job without Candidates."""
-    return _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, media_words, body)
+    edits applied as an update would apply them but not saved, with the Matte pieces its cut-out
+    Segments read. 422 for a draft that isn't a valid edit; 409 for a Job without Candidates."""
+    return _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, media_words, body, matte_version=mattes.version)
 
 
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/frame")
@@ -1066,12 +1067,15 @@ def _draft_plan(
     media_words: MediaWordsStore,
     body: CandidateUpdate | None,
     fps: float | None = None,
+    matte_version: str | None = None,
 ) -> PreviewPlan:
     """The Preview Plan of the Candidate, or of `body`, a draft of edits not saved, at `fps` (the
-    Source's when None)."""
+    Source's when None), listing the Matte pieces made by `matte_version` that it reads."""
     job, transcript, candidate = _drafted(job_id, candidate_id, body, store, settings, presets, library)
     try:
-        return preview_plan(job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, media_words, fps)
+        return preview_plan(
+            job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, media_words, fps, matte_version
+        )
     except InvalidEdit as exc:
         raise HTTPException(422, str(exc)) from None
     except InvalidStyle as exc:

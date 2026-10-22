@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, type RefObject } from "react";
-import type { RenderPlan, TransitionEvent } from "../../../api";
+import type { MattePiece, RenderPlan, TransitionEvent } from "../../../api";
 import { PanelView } from "./ClipPreview";
 import { DecksGraded } from "./GradeFilters";
+import { backdropView, CutBackdrop, CutGroup, DeckMatte } from "./MatteCut";
 import { MAX_DRIFT_SECS } from "./follow";
 import { slotView } from "./picture";
 import { onOwnVideos, Playback, usePlayback, useShown } from "./playback";
@@ -25,7 +26,8 @@ const UNSTYLED: TransitionLook = { outgoing: {}, incoming: {}, veil: {} };
  * time. The kind's look (transitions.ts) styles the ghost, the `incoming` Segments' picture layer
  * under it and a veil over both; the ghost's sound (times its own fades) gives way to the incoming
  * one's along the Transition's sound (transitionSound.ts, the incoming side's in PreviewMusic and
- * PreviewSegments). Near the render's look, not the same.
+ * PreviewSegments). Near the render's look, not the same. A cut-out Segment's ghost is cut by its own
+ * Matte (`mattes`, the Preview Plan's pieces; MatteCut.tsx), over its own Background.
  */
 export function PreviewTransitions({
   plan,
@@ -33,6 +35,7 @@ export function PreviewTransitions({
   src,
   jobId,
   incoming,
+  mattes,
 }: {
   plan: RenderPlan | null;
   playback: Playback;
@@ -40,6 +43,7 @@ export function PreviewTransitions({
   jobId: string;
   // The Segments' picture layer: never the Overlays, captions, Picture layers, hook or Watermark over it.
   incoming: RefObject<HTMLDivElement>;
+  mattes?: MattePiece[];
 }) {
   const transitions = plan?.transitions ?? [];
   const near = useShown(playback, (time) => transitions.findIndex((t) => time >= t.start - READY_SECS && time < t.end));
@@ -58,6 +62,7 @@ export function PreviewTransitions({
       src={src}
       jobId={jobId}
       incoming={incoming}
+      mattes={mattes}
     />
   );
 }
@@ -70,6 +75,7 @@ function Ghost({
   src,
   jobId,
   incoming,
+  mattes,
 }: {
   plan: RenderPlan;
   transition: TransitionEvent;
@@ -78,6 +84,7 @@ function Ghost({
   src: string;
   jobId: string;
   incoming: RefObject<HTMLDivElement>;
+  mattes?: MattePiece[];
 }) {
   const layer = useRef<HTMLDivElement>(null);
   const veil = useRef<HTMLDivElement>(null);
@@ -95,6 +102,17 @@ function Ghost({
     ghost.attachDeck(0, master.current);
     return () => ghost.attachDeck(0, null);
   }, [ghost, own]);
+
+  // A cut-out Segment's Matte, following the ghost's master.
+  const removal = own ? null : segment.background_removal;
+  const matte = useMemo(() => new DeckMatte(), []);
+  const masters = useMemo(() => [master], []);
+  const sourceFps = plan.source_fps || plan.fps;
+  useEffect(() => matte.setPieces(removal ? mattes : [], sourceFps), [matte, removal, mattes, sourceFps]);
+  useEffect(() => {
+    matte.attachMaster(master.current);
+    return () => matte.dispose();
+  }, [matte]);
 
   useEffect(() => {
     const sync = () => {
@@ -156,12 +174,33 @@ function Ghost({
         ) : own ? (
           <CopiedSourceSegment plan={plan} index={index} end={segment.end} playback={playback} src={src} jobId={jobId} fade={transition} />
         ) : (
-          // In its Segment's Grade and Video Effects, as the decks draw it (MediaSegment and CopiedSourceSegment draw their own).
-          <DecksGraded grade={segment.grade} effects={segment.video_effects} start={segment.start}>
-            {[master, follower].map((ref, slot) => (
-              <PanelView key={slot} videoRef={ref} src={src} plan={plan} {...slotView(scene, slot)} playback={ghost} muted={slot > 0} />
-            ))}
-          </DecksGraded>
+          // In its Segment's Grade and Video Effects, as the decks draw it (MediaSegment and CopiedSourceSegment
+          // draw their own); cut out, over its Background.
+          <CutGroup mattes={removal ? [matte] : []} playback={ghost} cutNow={() => !!removal} shownMatte={() => matte}>
+            {removal && scene && (
+              <CutBackdrop
+                plan={plan}
+                view={backdropView(plan, scene.layout === "manual" ? slotView(scene, 0) : null, segment.background)}
+                masters={masters}
+                master={() => master.current}
+                playback={ghost}
+              />
+            )}
+            <DecksGraded grade={segment.grade} effects={segment.video_effects} start={segment.start} className="group-data-[cut]/cut:!bg-transparent">
+              {[master, follower].map((ref, slot) => (
+                <PanelView
+                  key={slot}
+                  videoRef={ref}
+                  src={src}
+                  plan={plan}
+                  {...slotView(scene, slot)}
+                  playback={ghost}
+                  muted={slot > 0}
+                  cut={removal ? { matte, feather: removal.feather } : null}
+                />
+              ))}
+            </DecksGraded>
+          </CutGroup>
         )}
       </div>
       <div ref={veil} aria-hidden className="pointer-events-none absolute inset-0" style={{ opacity: 0 }} />

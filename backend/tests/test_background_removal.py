@@ -240,6 +240,27 @@ def test_a_piece_is_a_grey_video_one_frame_per_source_frame_white_where_the_subj
     assert frames[100, 180, 320] > 240 and frames[100, 20, 20] < 15 and frames[100, 180, 450] < 15
 
 
+def test_the_preview_plan_says_where_the_pieces_its_cut_out_segments_read_are_served(client, settings):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    [first] = ranges(job, ("halo", "kabar"))
+
+    def mattes(body: dict | None = None) -> list[dict]:
+        response = client.post(f"/api/jobs/{job['id']}/candidates/{candidate['id']}/preview-plan", json=body)
+        assert response.status_code == 200, response.text
+        return response.json()["mattes"]
+
+    # Nothing cut out: none.
+    assert mattes() == []
+    # A draft cutting it out lists its piece before it is made; the preview draws the picture whole until it is served.
+    url = f"/media/{job['id']}/{MATTES_DIR}/person-fake-1-0.mp4"
+    assert mattes({"segments": [cut_out(first)]}) == [{"start": 0, "url": url}]
+    settled(client, job, patch(client, job, candidate, segments=[cut_out(first)]))
+    assert mattes() == [{"start": 0, "url": url}]
+    served = client.get(url)
+    assert served.status_code == 200 and served.content[4:8] == b"ftyp"
+
+
 def patch_mean(frame: np.ndarray, y: int, x: int, size: int = 40) -> np.ndarray:
     return frame[y : y + size, x : x + size].reshape(-1, 3).mean(axis=0)
 

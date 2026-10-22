@@ -118,6 +118,22 @@ def matte_pieces(start: float, end: float, duration: float) -> list[int]:
     return [piece for piece in range(first, math.ceil(round(end, 6)), PIECE_SECS) if piece < duration]
 
 
+def matte_frame(source: float, fps: float) -> tuple[int, int]:
+    """Which piece of a Matte (its start) holds the item's frame at `source` seconds, `fps` frames a
+    second, and which of the piece's frames it is: the item's frame `round(source × fps)` (a half
+    rounded up), in the piece whose first frame is `round(piece × fps)`, as `Mattes.frames` counts a
+    piece's. The preview finds a Matte frame by the same rule (frontend/src/pages/job/editor/
+    matteTime.ts); both are tested on tests/fixtures/matte_frames.json."""
+    index = math.floor(source * fps + 0.5)
+    piece = int(index / fps // PIECE_SECS) * PIECE_SECS
+    # A piece's first frame is rounded, so a frame near its start may be the piece before's or after's.
+    while piece > 0 and index < round(piece * fps):
+        piece -= PIECE_SECS
+    while index >= round((piece + PIECE_SECS) * fps):
+        piece += PIECE_SECS
+    return piece, index - round(piece * fps)
+
+
 class Mattes:
     """The Matte pieces of one item (the Source), in `folder`, made from its `video`, whose picture is
     `frame` (width, height, frames a second), `duration` seconds long."""

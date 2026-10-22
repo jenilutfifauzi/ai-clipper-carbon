@@ -7,7 +7,7 @@ range, and otherwise the episode Transcript's Words and a single Scene. A video'
 item's Media Words once they are saved (app/media_words.py), and none until then.
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 
@@ -15,6 +15,7 @@ from app.candidates import Candidate, WordEdit
 from app.config import BLAZE_FACE_MODEL, Settings
 from app.jobs import Job
 from app.layer_pictures import PICTURES_DIR, make_pictures
+from app.matte import MATTES_DIR
 from app.logos import LogoStore
 from app.media import MediaStore
 from app.media_words import MediaWordsStatus, MediaWordsStore
@@ -82,6 +83,15 @@ class PreviewWord:
 
 
 @dataclass(frozen=True)
+class MattePiece:
+    """A piece of the Source's Matte a cut-out Segment reads (app/matte.py), by its `start` in seconds,
+    and where the preview reads it: served once it is made, missing until then."""
+
+    start: int
+    url: str
+
+
+@dataclass(frozen=True)
 class PreviewPlan:
     plan: RenderPlan
     # Those whose middle is in the Clip.
@@ -93,6 +103,9 @@ class PreviewPlan:
     words_errors: dict[str, str]
     # Whether the Scenes and faces are the Clip's own: False while it is one Scene, unanalysed.
     analysed: bool
+    # The Matte pieces its cut-out Segments read (docs/adr/0015), in order: the preview draws the cut
+    # from them, and each Segment's picture whole where its piece isn't served yet.
+    mattes: list[MattePiece] = field(default_factory=list)
 
 
 def captions_pending(preview: PreviewPlan) -> bool:
@@ -113,6 +126,7 @@ def preview_plan(
     media: MediaStore | None = None,
     media_words: MediaWordsStore | None = None,
     fps: float | None = None,
+    matte_version: str | None = None,
 ) -> PreviewPlan:
     """The Candidate's Preview Plan, `job_dir` being its Job's directory. Each of its Segments is
     planned from what is saved for its range: its Words are the Clip's own only when every Source
@@ -120,7 +134,8 @@ def preview_plan(
     its item's Media Words in `media_words`, pending while they are queued there, its item is queued
     for the Job, or its Candidate is being prepared; failed, with the error, until a Retry; off when
     its Captions switch is. It is planned at the Source's frame rate, or at `fps` (a saved frame's,
-    at its Export Preset's)."""
+    at its Export Preset's). With `matte_version` (the Matte runner's), it lists the Matte pieces its
+    cut-out Segments read (`preview_mattes`)."""
     assert job.source is not None
     source = job.source.metadata
     segments = candidate.main_track()
@@ -196,4 +211,16 @@ def preview_plan(
         ]
         at += played.length
     analysed = all(analysis is not None for analysis, wanted in zip(analyses, needed) if wanted is not Analysis.NONE)
-    return PreviewPlan(plan, shown, words_source, status, errors, analysed=analysed)
+    mattes = preview_mattes(plan, job.id, matte_version) if matte_version else []
+    return PreviewPlan(plan, shown, words_source, status, errors, analysed=analysed, mattes=mattes)
+
+
+def preview_mattes(plan: RenderPlan, job_id: str, version: str) -> list[MattePiece]:
+    """The Matte pieces `plan`'s cut-out Segments of the Source read, made by the matter `version`, in
+    order, each once, and where the Job's media serves them (app/matte.py's names)."""
+    pieces = sorted({
+        (segment.background_removal.subject, piece)
+        for segment in plan.segments if segment.background_removal is not None and segment.media is None
+        for piece in segment.matte
+    }, key=lambda found: (found[1], found[0]))
+    return [MattePiece(piece, f"/media/{job_id}/{MATTES_DIR}/{subject}-{version}-{piece}.mp4") for subject, piece in pieces]

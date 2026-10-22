@@ -38,6 +38,7 @@ import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./lay
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
 import { DecksGraded, EffectFilters, EffectsClock, GradeFilters } from "./GradeFilters";
+import { backdropView, cutSlot, CutBackdrop, CutGroup, DeckMatte } from "./MatteCut";
 import { EyedropperLayer } from "./EyedropperLayer";
 import { pictureBox } from "./videoEffects";
 import { PreviewAdjusted } from "./PreviewAdjustments";
@@ -149,6 +150,18 @@ export function ClipPreview({
   }, [playback, decks]);
   const shownDeck = usePlayback(playback, (_, p) => p.shownDeck);
   const shownSegment = usePlayback(playback, (_, p) => p.shownSegmentIndex);
+  // Each deck's Matte (ADR 0015), following its master, for the cut-out Segments' pieces.
+  const mattes = useMemo(() => [new DeckMatte(), new DeckMatte()], []);
+  const pieces = preview?.mattes;
+  const sourceFps = plan ? plan.source_fps || plan.fps : 0;
+  useEffect(() => {
+    for (const matte of mattes) matte.setPieces(pieces, sourceFps);
+  }, [mattes, pieces, sourceFps]);
+  useEffect(() => {
+    mattes.forEach((matte, slot) => matte.attachMaster(decks[slot][0].current));
+    return () => mattes.forEach((matte) => matte.dispose());
+  }, [mattes, decks]);
+  const cutting = !!pieces?.length;
 
   useEffect(() => {
     const element = stage.current;
@@ -254,30 +267,50 @@ export function ClipPreview({
           <DecksGraded grade={drawn?.grade}>
             {/* The playing Segment's picture: a Transition's incoming side, which its look may style. */}
             <div ref={incoming} className="absolute inset-0">
-              {/* The decks' panels in the shown Segment's Grade and Video Effects (ADR 0013, 0014): its whole frame, black included. */}
-              <DecksGraded
-                grade={drawn?.segments[shownSegment]?.grade}
-                effects={drawn?.segments[shownSegment]?.video_effects}
-                start={drawn?.segments[shownSegment]?.start}
+              {/* A cut-out Segment's picture over its Background (ADR 0015), shown while the shown deck's is cut. */}
+              <CutGroup
+                mattes={cutting ? mattes : []}
+                playback={playback}
+                cutNow={() => !!drawn?.segments[playback.shownSegmentIndex]?.background_removal}
+                shownMatte={() => mattes[playback.shownDeck]}
               >
-                {decks.map((refs, deck) =>
-                  refs.map((ref, slot) => (
-                    <PanelView
-                      key={`${deck}:${slot}`}
-                      videoRef={ref}
-                      src={src}
-                      plan={drawn}
-                      {...slotView(scene, slot)}
-                      playback={playback}
-                      muted={deck > 0 || slot > 0}
-                      hidden={deck !== shownDeck}
-                    />
-                  )),
+                {cutting && drawn && scene && drawn.segments[shownSegment]?.background_removal && (
+                  <CutBackdrop
+                    plan={drawn}
+                    view={backdropView(drawn, scene.layout === "manual" ? slotView(scene, 0) : null, drawn.segments[shownSegment].background)}
+                    masters={masters}
+                    master={() => decks[playback.shownDeck][0].current}
+                    playback={playback}
+                  />
                 )}
-              </DecksGraded>
+                {/* The decks' panels in the shown Segment's Grade and Video Effects (ADR 0013, 0014): its whole frame, black included
+                    (but for a cut-out Segment's Background). */}
+                <DecksGraded
+                  grade={drawn?.segments[shownSegment]?.grade}
+                  effects={drawn?.segments[shownSegment]?.video_effects}
+                  start={drawn?.segments[shownSegment]?.start}
+                  className="group-data-[cut]/cut:!bg-transparent"
+                >
+                  {decks.map((refs, deck) =>
+                    refs.map((ref, slot) => (
+                      <PanelView
+                        key={`${deck}:${slot}`}
+                        videoRef={ref}
+                        src={src}
+                        plan={drawn}
+                        {...slotView(scene, slot)}
+                        playback={playback}
+                        muted={deck > 0 || slot > 0}
+                        hidden={deck !== shownDeck}
+                        cut={cutting ? { matte: mattes[deck], feather: drawn?.segments[shownSegment]?.background_removal?.feather ?? 0 } : null}
+                      />
+                    )),
+                  )}
+                </DecksGraded>
+              </CutGroup>
               <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
             </div>
-            <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} incoming={incoming} />
+            <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} incoming={incoming} mattes={pieces} />
           </DecksGraded>
         </div>
         <PreviewOverlays
@@ -884,6 +917,9 @@ function Watermark({ plan, event, font }: { plan: RenderPlan; event: WatermarkEv
  * Background's colour. A `hidden` one (its deck parked) is still drawn, transparent, so that its
  * frame is ready. A keyed Manual picture (ADR 0008) moves as PicturePanel moves one: sampled at the
  * time shown on every frame of the playback's clock, its box and opacity written to it directly.
+ * With `cut` (a plan with cut-out Segments, ADR 0015), a picture's video has a canvas beside it that
+ * draws it cut by its deck's Matte (MatteCut.tsx), shown in its place while the cut is (`CutGroup`);
+ * a fill (Blur's blurred panel, a Manual Scene's Background) gives way to the cut-out Background then.
  */
 export function PanelView({
   videoRef,
@@ -895,6 +931,7 @@ export function PanelView({
   playback,
   muted,
   hidden = false,
+  cut = null,
 }: {
   videoRef: React.RefObject<HTMLVideoElement>;
   src: string;
@@ -905,6 +942,7 @@ export function PanelView({
   playback: Playback;
   muted: boolean;
   hidden?: boolean;
+  cut?: SlotCut | null;
 }) {
   const pointIndex = useShown(playback, (time) => {
     if (!panel) return 0;
@@ -938,6 +976,7 @@ export function PanelView({
         video={inner}
         boxRef={boxRef}
         layerRef={layerRef}
+        cut={cut}
       />
     );
   }
@@ -946,7 +985,16 @@ export function PanelView({
   if (!plan || !panel || !point) {
     // A colour shows where the video doesn't.
     const box: CSSProperties = colour ? { inset: 0, background: colour } : { inset: 0, visibility: "hidden" };
-    return <SlotVideo videoRef={videoRef} src={src} muted={muted} box={{ ...box, ...parked }} video={colour ? { ...whole, visibility: "hidden" } : whole} />;
+    return (
+      <SlotVideo
+        videoRef={videoRef}
+        src={src}
+        muted={muted}
+        box={{ ...box, ...parked }}
+        video={colour ? { ...whole, visibility: "hidden" } : whole}
+        fill={!!cut && !!colour}
+      />
+    );
   }
   const box: CSSProperties = {
     left: percent(panel.area.x / plan.width),
@@ -962,13 +1010,20 @@ export function PanelView({
     height: percent(plan.source_height / panel.crop_height),
     filter: panel.blur ? `blur(calc(${BLUR_SIGMA}px * var(--scale))) brightness(${BLUR_BRIGHTNESS})` : undefined,
   };
-  return <SlotVideo videoRef={videoRef} src={src} muted={muted} box={{ ...box, ...parked }} video={video} />;
+  return <SlotVideo videoRef={videoRef} src={src} muted={muted} box={{ ...box, ...parked }} video={video} cut={panel.blur ? null : cut} fill={!!cut && panel.blur} />;
+}
+
+/** A slot's cut (ADR 0015): its deck's Matte, and the feather of the Segment shown, in output pixels. */
+export interface SlotCut {
+  matte: DeckMatte;
+  feather: number;
 }
 
 /**
  * A slot's video in its `box`, inside a `layer` (a picture's: clipped to it, at its opacity), as
  * `video` sizes and moves it: always the same elements, so that the video plays on whatever its
- * slot shows.
+ * slot shows. With `cut`, a canvas sized and moved as the video draws it cut (`cutSlot`), shown in
+ * its place while the cut is; a `fill` is hidden then.
  */
 function SlotVideo({
   videoRef,
@@ -979,6 +1034,8 @@ function SlotVideo({
   video,
   boxRef,
   layerRef,
+  cut = null,
+  fill = false,
 }: {
   videoRef: React.RefObject<HTMLVideoElement>;
   src: string;
@@ -988,11 +1045,31 @@ function SlotVideo({
   video: CSSProperties;
   boxRef?: React.RefObject<HTMLDivElement>;
   layerRef?: React.RefObject<HTMLDivElement>;
+  cut?: SlotCut | null;
+  fill?: boolean;
 }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const feather = useRef(0);
+  feather.current = cut?.feather ?? 0;
+  const matte = cut?.matte;
+  useEffect(() => {
+    const picture = videoRef.current;
+    if (!matte || !picture || !canvas.current) return;
+    return cutSlot(matte, picture, canvas.current, () => feather.current);
+  }, [matte, videoRef]);
   return (
-    <div ref={boxRef} className="absolute" style={box}>
+    <div ref={boxRef} className={cx("absolute", fill && "group-data-[cut]/cut:invisible")} style={box}>
       <div ref={layerRef} className="absolute inset-0" style={layer}>
-        <video ref={videoRef} src={src} muted={muted} playsInline preload="auto" className="absolute max-w-none object-fill" style={video} />
+        <video
+          ref={videoRef}
+          src={src}
+          muted={muted}
+          playsInline
+          preload="auto"
+          className={cx("absolute max-w-none object-fill", matte && "group-data-[cut]/cut:opacity-0")}
+          style={video}
+        />
+        {matte && <canvas ref={canvas} aria-hidden className="absolute max-w-none opacity-0 group-data-[cut]/cut:opacity-100" style={video} />}
       </div>
     </div>
   );

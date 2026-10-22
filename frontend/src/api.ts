@@ -1084,6 +1084,8 @@ export interface RenderPlan {
   source_width: number;
   source_height: number;
   fps: number;
+  // The Source's own frame rate (0 when it isn't known), which its Matte's pieces have (ADR 0015).
+  source_fps?: number;
   scenes: ScenePlan[];
   captions: Cue[];
   hook: HookEvent | null;
@@ -1156,6 +1158,16 @@ export interface PreviewPlan {
   words_errors: Record<string, string>;
   // False while the Clip is planned as one Scene, unanalysed.
   analysed: boolean;
+  // The Matte pieces its cut-out Segments read (ADR 0015), in order: the preview draws the cut from
+  // them, and the picture whole where a piece isn't served yet. None in a plan made by hand.
+  mattes?: MattePiece[];
+}
+
+// A piece of the Source's Matte (backend/app/matte.py), by its `start` in seconds (10 s long), and
+// where it is served once it is made.
+export interface MattePiece {
+  start: number;
+  url: string;
 }
 
 export interface NewPreset {

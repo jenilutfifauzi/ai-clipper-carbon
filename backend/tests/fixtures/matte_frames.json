@@ -1,0 +1,17 @@
+{
+  "about": "Which frame of which Matte piece (docs/adr/0015, app/matte.py) shows a time into a cut-out Segment. A Segment is its range on the Source, `start` to `end`, and how it plays it: `speed` (1 by default), `reverse` (false) and `hold` (none), as in segment_times.json; `offset` is seconds into it on the Timeline, and `source` the Source time it shows there (docs/adr/0009). The Source's frame there is `round(source × fps)`; it is in the 10 s piece from `piece` seconds, whose frame `frame` it is (the piece's frames start at its own first frame of the Source, `round(piece × fps)`). Read by backend/tests/test_matte_frames.py and frontend/src/pages/job/editor/matteTime.test.ts, so that the backend's and the preview's mappings can't drift.",
+  "cases": [
+    {"name": "forward, its first frame", "fps": 30, "segment": {"start": 12, "end": 25}, "offset": 0, "source": 12, "piece": 10, "frame": 60},
+    {"name": "forward, into the next piece", "fps": 30, "segment": {"start": 12, "end": 25}, "offset": 8, "source": 20, "piece": 20, "frame": 0},
+    {"name": "the last frame of a piece", "fps": 30, "segment": {"start": 12, "end": 25}, "offset": 7.98, "source": 19.98, "piece": 10, "frame": 299},
+    {"name": "a time rounded to the next piece's first frame", "fps": 30, "segment": {"start": 19.99, "end": 25}, "offset": 0, "source": 19.99, "piece": 20, "frame": 0},
+    {"name": "at 29.97 fps, a piece starting on its frame", "fps": 29.97, "segment": {"start": 10, "end": 30}, "offset": 10, "source": 20, "piece": 20, "frame": 0},
+    {"name": "at 29.97 fps, within a piece", "fps": 29.97, "segment": {"start": 10, "end": 30}, "offset": 5, "source": 15, "piece": 10, "frame": 150},
+    {"name": "at 25 fps, from a fraction of a second", "fps": 25, "segment": {"start": 3.32, "end": 9}, "offset": 1, "source": 4.32, "piece": 0, "frame": 108},
+    {"name": "at 2x", "fps": 30, "segment": {"start": 8, "end": 16, "speed": 2}, "offset": 1.5, "source": 11, "piece": 10, "frame": 30},
+    {"name": "at 0.5x", "fps": 30, "segment": {"start": 8, "end": 12, "speed": 0.5}, "offset": 5, "source": 10.5, "piece": 10, "frame": 15},
+    {"name": "reversed", "fps": 30, "segment": {"start": 8, "end": 16, "reverse": true}, "offset": 1, "source": 15, "piece": 10, "frame": 150},
+    {"name": "reversed into the piece before", "fps": 30, "segment": {"start": 8, "end": 16, "reverse": true}, "offset": 7, "source": 9, "piece": 0, "frame": 270},
+    {"name": "held", "fps": 30, "segment": {"start": 14.5, "end": 14.5, "hold": 2}, "offset": 1.2, "source": 14.5, "piece": 10, "frame": 135}
+  ]
+}
