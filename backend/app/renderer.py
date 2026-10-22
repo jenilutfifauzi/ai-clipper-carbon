@@ -70,6 +70,15 @@ short, as Concat found. A reversed Segment is read forwards from its Retimed cop
 `read_from_copies`): a video's as its video, the Source's (`read_from`) in place of the Source, still
 drawn in its Scenes' panels and heard at the Clip's own volume.
 
+A cut-out Segment of the Source (Background removal, docs/adr/0015) reads its Matte's pieces
+(app/matte.py) as one more input, joined by the concat demuxer and trimmed to the time its picture
+reads, after every other input (`_matte_inputs`). Its picture is drawn in its Scenes as any
+Segment's; its Matte is drawn through the same Scenes (the same crops, scales, flips and placing, at
+the Source's size, Blur's fill left out), feathered by a blur and joined to the picture as its alpha;
+that is graded and drawn through its Video Effects, so they touch only what is kept, and laid over
+its Background (the picture blurred over the whole frame; a Manual Scene's Framing's Background), all
+before the joins (`_cut_out`). Without one, the command is as it was.
+
 Overlays are more inputs (a video read from its offset for as long as it shows, or an image), each
 drawn as its Picture (`_picture`: cropped, scaled, flipped, rounded and bordered, turned with a
 transparent fill, shadowed, faded) and laid over the joined frames at its centre while it shows,
@@ -141,6 +150,7 @@ from app.keyframes import linear_steps
 from app.segment_time import SegmentTime
 from app.planner import (
     HOOK_LEADING,
+    filled,
     AudioEvent,
     SegmentPlan,
     HOOK_PAD_Y,
@@ -162,7 +172,7 @@ from app.planner import (
     own_volume,
     picture_at,
 )
-from app.candidates import BlendMode, Keyframe, Shadow, Shape, TextLayer
+from app.candidates import Background, BackgroundKind, BlendMode, Keyframe, Shadow, Shape, TextLayer
 from app.scaled_plan import drawn_scale, scaled_plan
 from app.transition_kinds import TransitionSound
 from app.transitions import RECIPES, Side
@@ -202,6 +212,8 @@ class _Drawing(NamedTuple):
     fonts: Path
     logo: Path | None
     keyed: "dict[Keyed, np.ndarray | Path]"
+    # Each cut-out Segment's Matte pieces, by its place among the plan's Segments: a concat listing.
+    mattes: dict[int, Path]
 
 
 class Encoded(NamedTuple):
@@ -258,7 +270,7 @@ class Renderer:
                     feeds = _feeds(drawing.plan, drawing.keyed, self.ffmpeg)
                     command = self._command(
                         source, drawing.plan, loudness, encoder, *parts, drawing.subtitles, drawing.logo, files, feeds,
-                        drawing.fonts, pictures, drawing.above, export,
+                        drawing.fonts, pictures, drawing.above, export, mattes=drawing.mattes,
                     )
                     stderr = self._run(command, plan.duration, progress, list(feeds.values()))
                     if stderr is None and parts[1].is_file():
@@ -301,7 +313,7 @@ class Renderer:
                 feeds = _feeds(drawing.plan, drawing.keyed, self.ffmpeg)
                 command = self._command(
                     source, drawing.plan, None, "png", part, part, drawing.subtitles, drawing.logo, files, feeds,
-                    drawing.fonts, pictures, drawing.above, export, still_at=between,
+                    drawing.fonts, pictures, drawing.above, export, still_at=between, mattes=drawing.mattes,
                 )
                 stderr = self._run(command, plan.duration, lambda done: None, list(feeds.values()))
                 if stderr is None and part.is_file():
@@ -341,15 +353,22 @@ class Renderer:
             logo = None
         # The keyed pictures' items: an image read once for every encode, a video decoded for each.
         keyed = _keyed_items(drawn, files, source, pictures, self.ffmpeg)
+        # A cut-out Segment's Matte pieces are read as one input, joined by the concat demuxer.
+        mattes = {
+            i: output.with_name(f".{output.stem}.part-matte{i}.txt")
+            for i, segment in enumerate(plan.segments) if segment.background_removal is not None and segment.matte_files
+        }
         try:
             if scripts:
                 registry().gather(_faces(plan), fonts)
             for path, script in scripts.values():
                 path.write_text(_ass(script), encoding="utf-8")
+            for i, listing in mattes.items():
+                listing.write_text("ffconcat version 1.0\n" + "".join(f"file {_concat_path(files[piece])}\n" for piece in plan.segments[i].matte_files))
             subtitles, above_script = (scripts[name][0] if name in scripts else None for name in ("below", "above"))
-            yield _Drawing(drawn, subtitles, above_script, fonts, logo, keyed)
+            yield _Drawing(drawn, subtitles, above_script, fonts, logo, keyed, mattes)
         finally:
-            for path, _ in scripts.values():
+            for path in [*(path for path, _ in scripts.values()), *mattes.values()]:
                 path.unlink(missing_ok=True)
             shutil.rmtree(fonts, ignore_errors=True)
 
@@ -501,6 +520,7 @@ class Renderer:
         above: Path | None = None,
         export: ExportSettings = ExportSettings(),
         still_at: float | None = None,
+        mattes: dict[int, Path] | None = None,
     ) -> list[str]:
         """The encode's command: `plan` (drawn at the Clip's size, its width x height) is encoded by
         `encoder` as `export` says, and the sound is normalized to its loudness target from the
@@ -509,7 +529,8 @@ class Renderer:
         places among them); a keyed one without is drawn still, at its constants. `fonts` holds the
         Faces the `subtitles` set text in, burned under the picture layers (drawn from `pictures`, by
         their names), and `above` over them. With `still_at`, only the frame at that time is written,
-        to `video` (PNG), and `encoder`, `poster` and the sound are unused."""
+        to `video` (PNG), and `encoder`, `poster` and the sound are unused. `mattes` are the listings of
+        the cut-out Segments' Matte pieces, by their places (`_matte_inputs`), read after every other input."""
         tuning = self.tuning
         feeds = feeds or {}
         # The music's inputs come after the Source's and its videos', and the logo's.
@@ -519,7 +540,9 @@ class Renderer:
         layers, layered = _overlay_inputs(plan, files or {}, before_music + songs, feeds)
         scene_inputs, drawn = _scene_inputs(plan, before_music + songs + len(layered), feeds)
         picture_inputs, written = _layer_inputs(plan, pictures or {}, before_music + songs + len(layered) + len(drawn), feeds)
-        frame = _segmented(plan, tuning, drawn) if plan.segments else _scenes(plan, tuning, keyed=drawn)
+        given = [*sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *scene_inputs, *picture_inputs]
+        matte_inputs, matted = _matte_inputs(plan, mattes or {}, given.count("-i"))
+        frame = _segmented(plan, tuning, drawn, matted) if plan.segments else _scenes(plan, tuning, keyed=drawn)
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"
         if graded := grade_filters(plan.grade):
@@ -557,16 +580,14 @@ class Renderer:
             frame += f";{joined}{burned}format=yuv420p,select='gte(t\\,{still_at:.4f})',trim=end_frame=1[still]"
             return [
                 str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-progress", "pipe:1",
-                *sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *scene_inputs, *picture_inputs,
-                "-filter_complex", frame, "-map", "[still]", "-frames:v", "1", "-c:v", "png",
+                *given, *matte_inputs, "-filter_complex", frame, "-map", "[still]", "-frames:v", "1", "-c:v", "png",
                 "-f", "image2", "-update", "1", str(video),
             ]
         frame += f";{joined}{burned}format=yuv420p,split=2[v][still];[still]select='gte(t\\,{poster_at:.3f})',trim=end_frame=1[poster]"
         audio = f"{heard}{_normalized(tuning, export.loudness, loudness)}[a]"
         return [
             str(self.ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error", "-y", "-progress", "pipe:1",
-            *sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *scene_inputs, *picture_inputs,
-            "-filter_complex", f"{frame};{audio}",
+            *given, *matte_inputs, "-filter_complex", f"{frame};{audio}",
             "-map", "[v]", "-map", "[a]", "-map_metadata", "-1", "-map_chapters", "-1",
             *encoder_args(export, plan.fps, encoder).args, "-g", str(max(1, round(plan.fps * tuning.keyframe_secs))),
             "-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k",
@@ -656,9 +677,23 @@ def _encoders(ffmpeg: Path) -> frozenset[str]:
 
 
 def _check(plan: RenderPlan) -> None:
-    """Refuse a Render Plan with nothing to draw."""
+    """Refuse a Render Plan with nothing to draw, or a cut-out Segment it can't cut out (docs/adr/0015):
+    one without its Matte's pieces, or one it can't draw them for yet (played in Reverse, or a keyed
+    Manual Scene's)."""
     if not plan.scenes or not all(scene.panels or scene.picture for scene in plan.scenes):
         raise ValueError("A Render Plan needs at least one scene, each with at least one panel or a picture")
+    first = 0
+    for segment in plan.segments:
+        scenes = plan.scenes[first : first + segment.scenes]
+        first += segment.scenes
+        if segment.background_removal is None or segment.media is not None:
+            continue
+        if not segment.matte_files:
+            raise RuntimeError(f"Segment {segment.id}'s Matte wasn't made, so its background can't be removed")
+        if segment.reverse or segment.read_from is not None:
+            raise RuntimeError(f"Segment {segment.id} plays in Reverse, which Background removal can't draw yet")
+        if any(scene.picture is not None and scene.picture.motion for scene in scenes):
+            raise RuntimeError(f"Segment {segment.id} has a keyed Manual Scene, which Background removal can't draw yet")
 
 
 # How many arguments read one input: -ss, its start, -t, its length, -i, the file.
@@ -883,27 +918,35 @@ def _crossed(plan: RenderPlan, transition: TransitionEvent, outgoing: str, incom
     return chains
 
 
-def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | None = None) -> str:
+def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | None = None, matted: dict[int, int] | None = None) -> str:
     """The filtergraph that draws a Clip of several Segments into [frame]: each Segment from its own
     input, its Scenes drawn as _scenes draws a Clip's (in seconds into the Segment; a Freeze frame's
     from its first frame, held), then graded (docs/adr/0013) and drawn through its Video Effects
     (docs/adr/0014), and the Segments joined back to back.
     A keyed Scene's picture is the input `drawn` gives by its place among the plan's Scenes, from
-    its frame process."""
+    its frame process. A cut-out Segment (docs/adr/0015) is drawn by `_cut_out`, its Matte from the
+    input `matted` gives by its place among the plan's Segments."""
     chains, first = [], 0
     for i, segment in enumerate(plan.segments):
         scenes = plan.scenes[first : first + segment.scenes]
         keyed = {j: number for j in range(segment.scenes) if (number := (drawn or {}).get(first + j)) is not None}
         first += segment.scenes
-        given = f"[{i}:v]"
+        timing = ""
         if segment.hold is not None:
-            given += _held(segment.hold, _rate(plan) if _resampled(plan) else None)
+            timing = _held(segment.hold, _rate(plan) if _resampled(plan) else None)
         elif segment.speed != 1:
             # Its frames moved onto the Timeline, then dropped or repeated to the Clip's frame rate:
             # each frame is the last of the video's at or before its time, as a Retimed copy's (a
             # frame landing on one of the Clip's, a thousandth of a frame early against rounding, is that one).
             rate = _rate(plan)
-            given += f"settb=AVTB,setpts=(PTS-STARTPTS)/{segment.speed:.6g}-{0.001 / _rate_value(plan):.6g}/TB,fps={rate}:round=up,"
+            timing = f"settb=AVTB,setpts=(PTS-STARTPTS)/{segment.speed:.6g}-{0.001 / _rate_value(plan):.6g}/TB,fps={rate}:round=up,"
+        given = f"[{i}:v]{timing}"
+        if (matte := (matted or {}).get(i)) is not None:
+            offset, span = _matte_read(plan, segment)
+            # Its frames from the same time of the Source as the picture's, at the same times.
+            read = f"[{matte}:v]trim=start={max(0.0, offset - 1e-4):.6f}:duration={span:.3f},setpts=PTS-{offset:.6f}/TB,"
+            chains += _cut_out(plan, tuning, segment, scenes, given, f"{read}{timing}", f"g{i}", keyed)
+            continue
         # Its Grade, then its Video Effects (docs/adr/0014), over its whole frame, before the joins,
         # so that a Transition blends pictures that carry them.
         graded = ",".join([
@@ -929,6 +972,94 @@ def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | N
     return ";".join(chains)
 
 
+def _cut_out(
+    plan: RenderPlan, tuning: RenderTuning, segment: SegmentPlan, scenes: list[ScenePlan], given: str, matte: str, name: str,
+    keyed: dict[int, int],
+) -> list[str]:
+    """Filters that draw a cut-out Segment (docs/adr/0015) into [`name`] from its frames `given` and its
+    Matte's `matte` (each a link label, then the filters that time it, the same for both): its picture,
+    its Scenes drawn as any Segment's; its Matte drawn through the same Scenes (`_matte_scene`: the
+    same crops, scales, flips and placing, at the Source's size), feathered by a blur of its feather
+    as drawn and joined to the picture as its alpha; that graded (docs/adr/0013) and drawn through its
+    Video Effects (docs/adr/0014), so that they touch only what is kept; then laid over its Background
+    (`_backdrop_scene`, in each Scene), all before the joins."""
+    removal = segment.background_removal
+    assert removal is not None
+    graded = grade_filters(segment.grade, alpha=f"{name}a")
+    effects = video_effect_chain(segment.video_effects, (plan.width, plan.height), label=f"{name}fx")
+    feather = [f"gblur=sigma={removal.feather:.3f}"] if removal.feather > 0 else []
+    return [
+        f"{given}split=2[{name}v][{name}w]",
+        _scenes(plan, tuning, scenes, f"[{name}v]", f"[{name}p]", f"{name}s", segment.start, keyed),
+        _scenes(
+            plan, tuning, scenes, f"{matte}scale={plan.source_width}:{plan.source_height},", f"[{name}t]", f"{name}t", segment.start,
+            draw=_matte_scene,
+        ),
+        f"[{name}t]{','.join(['format=gray', *feather])}[{name}m]",
+        f"[{name}p][{name}m]{','.join(['alphamerge', *filter(None, [graded]), *effects])}[{name}c]",
+        _scenes(plan, tuning, scenes, f"[{name}w]", f"[{name}b]", f"{name}u", segment.start, draw=partial(_backdrop_scene, background=segment.background)),
+        f"[{name}b][{name}c]overlay=0:0[{name}]",
+    ]
+
+
+def _matte_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, keyed: int | None = None) -> str:
+    """Filters that draw a Scene's Matte from the Matte's frames `given` (at the Source's size) into
+    `out`, as `_scene` draws its picture: the same panels, crops and scales, Blur's blurred fill left
+    out; a Scene of one picture placed as it is, over black. Black where the picture isn't."""
+    if scene.picture is not None:
+        return _scene(plan, replace(scene, panels=[], colour="#000000"), name, given, out, tuning)
+    return _scene(plan, replace(scene, panels=[panel for panel in scene.panels if not panel.blur]), name, given, out, tuning)
+
+
+def _backdrop_scene(
+    plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, keyed: int | None = None,
+    background: Background | None = None,
+) -> str:
+    """Filters that draw what shows where a cut-out Scene's Matte takes the picture away, from its
+    frames `given` into `out`: a Scene of one picture (a Manual one's) its Framing's Background (its
+    blurred cover panel, or its colour); any other the Segment's `background`, the picture blurred
+    over the whole frame (a colour, of its colour), which in Blur replaces the Layout's fill."""
+    if scene.picture is not None:
+        panels, colour = scene.panels[:1], scene.colour
+    elif background is not None and background.kind is BackgroundKind.COLOUR:
+        panels, colour = [], background.colour
+    else:
+        cover = filled(plan.source_width, plan.source_height, scene.start)
+        panels, colour = [replace(cover, area=Box(0, 0, plan.width, plan.height), blur=True)], None
+    if panels:
+        return f"{given}{_panel(plan, scene, f'{name}p0', panels[0], tuning)}{_pad(plan, panels[0])}{out}"
+    rgb = (colour or "#000000").removeprefix("#")
+    return f"{given}crop=2:2:0:0,format=rgb24,drawbox=c=0x{rgb}:t=fill,scale={plan.width}:{plan.height},setsar=1{out}"
+
+
+def _matte_inputs(plan: RenderPlan, mattes: dict[int, Path], first: int) -> tuple[list[str], dict[int, int]]:
+    """The input options that read each cut-out Segment's Matte, numbered from `first`, and each one's
+    input number by the Segment's place: its pieces' listing (`mattes`, joined by the concat demuxer),
+    from their start up to the end of what its picture reads (`_matte_read`; the concat demuxer's own
+    seek doesn't keep the pieces' times, so the frames before are trimmed off in the graph)."""
+    inputs: list[str] = []
+    numbers: dict[int, int] = {}
+    for i, listing in mattes.items():
+        offset, span = _matte_read(plan, plan.segments[i])
+        numbers[i] = first + len(numbers)
+        inputs += ["-f", "concat", "-safe", "0", "-t", f"{offset + span + 1:.3f}", "-i", str(listing)]
+    return inputs, numbers
+
+
+def _matte_read(plan: RenderPlan, segment: SegmentPlan) -> tuple[float, float]:
+    """Where a cut-out Segment's picture starts in its Matte's pieces (joined, from their first one's
+    first frame of the Source), in seconds, and for how long it reads, as its picture's input does."""
+    fps = plan.source_fps if plan.source_fps > 0 else 30
+    offset = max(0.0, segment.source_start - round(segment.matte[0] * fps) / fps)
+    return offset, _HELD_READ_SECS if segment.hold is not None else segment.time.span
+
+
+def _concat_path(path: Path) -> str:
+    """A file's path as a concat listing names it: quoted, a quote within escaped."""
+    escaped = str(path.resolve()).replace("'", "'\\''")
+    return f"'{escaped}'"
+
+
 def _held(hold: float, rate: str | None = None) -> str:
     """Filters that make a Freeze frame's picture of its input: the first frame, held `hold` seconds
     (in frames of `rate`, when given, else of its input's)."""
@@ -945,17 +1076,21 @@ def _scenes(
     prefix: str = "s",
     offset: float = 0.0,
     keyed: dict[int, int] | None = None,
+    draw: "Callable[..., str] | None" = None,
 ) -> str:
     """The filtergraph that draws the plan's Scenes (or `scenes`, starting `offset` seconds into the
     Clip) from `given` (by default [0:v]) into `out` (by default [frame]), its filters named from
     `prefix`. With several, the video is split into a branch per Scene, trimmed to it from half a
     frame before its first frame (so that rounding can't move a frame across a cut) and restarted at
     0 s, and the branches are concatenated. A Scene `keyed` (by its place among them) has its
-    picture drawn by the frame process whose frames are that input."""
+    picture drawn by the frame process whose frames are that input. Each Scene is drawn by `draw`
+    (`_scene`'s arguments; by default `_scene`): a cut-out Segment's Matte and Background are drawn
+    through its Scenes so."""
     scenes = plan.scenes if scenes is None else scenes
     keyed = keyed or {}
+    draw = draw or _scene
     if len(scenes) == 1:
-        return _scene(plan, scenes[0], f"{prefix}0", given, out, tuning, keyed.get(0))
+        return draw(plan, scenes[0], f"{prefix}0", given, out, tuning, keyed.get(0))
     count = len(scenes)
     chains = [f"{given}split={count}" + "".join(f"[{prefix}{i}]" for i in range(count))]
     for i, scene in enumerate(scenes):
@@ -965,7 +1100,7 @@ def _scenes(
         if i < count - 1:
             bounds.append(f"end={scene.end - offset - 0.5 / plan.fps:.4f}")
         chains.append(
-            _scene(
+            draw(
                 plan, scene, f"{prefix}{i}", f"[{prefix}{i}]trim={':'.join(bounds)},setpts=PTS-STARTPTS,", f"[{prefix}v{i}]", tuning,
                 keyed.get(i),
             )

@@ -119,6 +119,7 @@ from app.candidates import (
     AdjustmentLayer,
     PICTURE_KEYS,
     Background,
+    BackgroundRemoval,
     BackgroundKind,
     BlendMode,
     Border,
@@ -152,6 +153,7 @@ from app.ducking import Span, duck_at, ducked_stretches, heard_words, speech_spa
 from app.emoji import IMAGE_SET, clusters, image_of, is_emoji
 from app.fonts import DEFAULT_FONT, FALLBACK_FACE, on_change, registry
 from app.keyframes import value_at
+from app.matte import matte_pieces
 from app.line_breaks import broken_lines
 from app.pictures import cover_scale, drawn_size, fitted, kept, turned_size
 from app.segment_time import SegmentTime, overlay_time, transition_overlap
@@ -327,6 +329,8 @@ class SegmentInput:
     audio_effects: list[AudioEffect] = field(default_factory=list)
     # Its frame's Video Effects (docs/adr/0014), checked, in order; the plan keeps the enabled ones.
     video_effects: list[VideoEffect] = field(default_factory=list)
+    # Its Background removal (docs/adr/0015), as given: its feather at the picture's fitted size.
+    background_removal: BackgroundRemoval | None = None
 
     @property
     def time(self) -> SegmentTime:
@@ -639,6 +643,16 @@ class SegmentPlan:
     # Its frame's enabled Video Effects (docs/adr/0014), in order, drawn after its Grade and before the
     # joins; their sizes the 1080x1920 frame's (scale 1).
     video_effects: list[VideoEffect] = field(default_factory=list)
+    # Its Background removal (docs/adr/0015), a Source Segment's: its picture (its Scenes' panels and
+    # pictures, Blur's fill left out) cut by its Matte, the feather times its picture's scale (as drawn),
+    # then graded and drawn through its Video Effects, laid over its `background` (the Background in
+    # force: the picture blurred unless it has one of its own), before the joins. `matte` is the
+    # pieces of the Source's Matte it reads (app/matte.py), by their starts in seconds; `matte_files`
+    # the renderer's: their files, in the render's `files`.
+    background_removal: BackgroundRemoval | None = None
+    background: Background | None = None
+    matte: list[int] = field(default_factory=list)
+    matte_files: list[str] = field(default_factory=list)
 
     @property
     def time(self) -> SegmentTime:
@@ -1139,12 +1153,14 @@ def plan_render(
                 moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate) for scene in moved]
             plans.extend(moved)
             fade_in, fade_out = fades_within(given.fade_in, given.fade_out, length)
+            cut = _cut_out(given, framing if layout is Layout.MANUAL else None, source.duration)
             segments.append(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
                     given.keys.get(KeyProperty.VOLUME, []), given.id, given.speed, given.reverse, hold, given.pitch,
                     fade_in=fade_in, fade_out=fade_out, muted=given.muted, grade=given.grade,
                     audio_effects=enabled_effects(given.audio_effects), video_effects=enabled_video_effects(given.video_effects),
+                    **cut,
                 )
             )
             at, before = round(at + length, 3), length
@@ -1194,6 +1210,24 @@ def plan_render(
         grade=grade,
         adjustment_layers=[event for layer in adjustment_layers or [] if (event := adjustment_event(layer, duration)) is not None],
     )
+
+
+def _cut_out(given: SegmentInput, framing: Framing | None, duration: float) -> dict:
+    """A Source Segment's Background removal as its SegmentPlan carries it (docs/adr/0015): its
+    feather times its picture's scale (`overlay_scale`: a Manual Candidate's Framing's; 1 in Track,
+    Split and Blur, whose pictures fill their panels), the Background in force (the picture blurred)
+    and the pieces of the Source's Matte (`duration` long) its range reads. Nothing without one, and
+    for now nothing for a media Segment's."""
+    removal = given.background_removal
+    if removal is None or given.media is not None:
+        return {}
+    scale = overlay_scale(framing.transform) if framing is not None else 1.0
+    end = given.start if given.hold is not None else given.end
+    return {
+        "background_removal": replace(removal, feather=round(removal.feather * scale, 3)),
+        "background": Background(),
+        "matte": matte_pieces(given.start, end, duration),
+    }
 
 
 def edit_shown(edit: "TimelineKeyed", media: str | None, start: float, end: float) -> bool:
@@ -3212,6 +3246,12 @@ def _filled(width: int, height: int, start: float) -> Panel:
         crop_height = min(_even(crop_width * OUTPUT_HEIGHT / OUTPUT_WIDTH), _even_floor(height))
     x, y = _centred(width, crop_width), _centred(height, crop_height)
     return Panel(Box(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT), crop_width, crop_height, [CropPoint(start, x, y)])
+
+
+def filled(width: int, height: int, start: float) -> Panel:
+    """The largest 9:16 crop from the middle of a frame of any shape, filling the output: what the
+    picture blurred (a Background's) covers the frame with."""
+    return _filled(width, height, start)
 
 
 def _fitted(width: int, height: int, start: float) -> Panel:

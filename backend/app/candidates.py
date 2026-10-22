@@ -778,6 +778,32 @@ class Background:
     colour: Colour = "#000000"
 
 
+class Subject(StrEnum):
+    """What Background removal keeps (docs/adr/0015): a person, the only one for now."""
+
+    PERSON = "person"
+
+
+# The softest edge Background removal's feather gives, in output pixels at the picture's fitted size.
+FEATHER_MAX = 40.0
+
+
+@dataclass(frozen=True)
+class BackgroundRemoval:
+    """An item's Background removal (GLOSSARY; docs/adr/0015): only its `subject` kept, by its Matte,
+    the edge softened by `feather` output pixels at the picture's fitted size (0..FEATHER_MAX). Checked
+    by the item that has it (`checked_background_removal`), so that a refusal names the item."""
+
+    subject: Subject = Subject.PERSON
+    feather: Annotated[FiniteFloat, WithJsonSchema({"type": "number", "minimum": 0, "maximum": FEATHER_MAX})] = 4.0
+
+
+def checked_background_removal(removal: BackgroundRemoval | None, item: str) -> None:
+    """ValueError, naming `item`, unless `removal` (if any) has a feather within 0..FEATHER_MAX."""
+    if removal is not None and not 0 <= removal.feather <= FEATHER_MAX:
+        raise ValueError(f"{item}'s background_removal feather is {removal.feather:g}; it is 0 to {FEATHER_MAX:g}")
+
+
 @dataclass(frozen=True)
 class Framing:
     """How a picture fills the frame on its own (docs/adr/0007): a media Segment's video, or the
@@ -861,6 +887,9 @@ class Segment:
     # so that a Transition blends pictures that carry them; sizes at the 1080x1920 frame's. Empty in
     # one saved before them. A Freeze frame takes them too.
     video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
+    # Its Background removal (docs/adr/0015): only its subject kept by its Matte, after its crop, scale
+    # and flips and before its Grade and Video Effects, over its Background. None (off) in one saved before it.
+    background_removal: BackgroundRemoval | None = None
 
     def __post_init__(self) -> None:
         if self.media is None and (framed := next((name for name, keys in self.keys.items() if keys and name not in SOUND_KEYS), None)):
@@ -873,6 +902,7 @@ class Segment:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Segment {self.id}", PICTURE_KEYS + SOUND_KEYS, length))
         object.__setattr__(self, "audio_effects", checked_effects(self.audio_effects, f"Segment {self.id}"))
         object.__setattr__(self, "video_effects", checked_video_effects(self.video_effects, f"Segment {self.id}"))
+        checked_background_removal(self.background_removal, f"Segment {self.id}")
 
 
 def _check_held(segment: Segment) -> None:

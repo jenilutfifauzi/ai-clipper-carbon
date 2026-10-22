@@ -65,7 +65,10 @@ KITA_SOAL = (1.6, 2.6)
 # Raised from 87_500 for Narrations (text-to-speech/09): generate_speech, and list_assets' kind
 # "voices" and `language` (88_152); how to lay one is in the server's instructions.
 # Raised from 88_500 for Background removal's model (background-removal/01): download_person_model (88_615).
-TOOLS_BUDGET_BYTES = 89_000
+# Raised from 89_000 for Background removal (background-removal/02): `segments[].background_removal` in
+# edit_candidate's and merge_candidate_items' schemas, and wait_for_matte (90_592); what it does is in
+# the server's instructions.
+TOOLS_BUDGET_BYTES = 91_000
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

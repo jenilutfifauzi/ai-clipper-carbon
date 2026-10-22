@@ -50,6 +50,7 @@ from app.jobs import Job, JobConflict, JobStatus, JobStore, JobWarning
 from app.layer_pictures import PICTURES_DIR, make_pictures
 from app.logos import LOGOS_DIR, LogoStore
 from app.media import MEDIA_DIR, MediaItem, MediaKind, MediaNotFound, MediaStore
+from app.matte import MATTES_DIR, MatteRunner, Mattes, ModelAbsent, matte_pieces
 from app.media_words import MediaWordsFailed, MediaWordsStatus, MediaWordsStore
 from app.planner import Join, MediaInfo, SegmentInput, RenderPlan, edit_shown, plan_render, reframes
 from app.renderer import Renderer, RenderStopped, picture_layouts
@@ -159,6 +160,53 @@ def source_copies(job_dir: Path, source: Source) -> Copies:
     size from its proxy (or the video itself, when the browser plays it), the full size from its video."""
     videos = {CopySize.PREVIEW: job_dir / (source.preview or source.video), CopySize.FULL: job_dir / source.video}
     return Copies(job_dir / RETIMED_DIR, videos, (source.metadata.width, source.metadata.height, source.metadata.fps))
+
+
+def source_mattes(job_dir: Path, source: Source) -> Mattes:
+    """The Matte pieces (app/matte.py) of the Job's Source, in `job_dir`'s MATTES_DIR, made from its video."""
+    metadata = source.metadata
+    return Mattes(job_dir / MATTES_DIR, job_dir / source.video, (metadata.width, metadata.height, metadata.fps), metadata.duration)
+
+
+def matte_wanted(candidate: Candidate, mattes: Mattes) -> dict[str, list[tuple]]:
+    """The Matte pieces each of the Candidate's cut-out Source Segments reads (`matte_pieces`), by its
+    id: the pieces `MatteRunner` asks for, makes and reports on."""
+    wanted = {}
+    for segment in candidate.source_segments():
+        if (removal := segment.background_removal) is not None:
+            end = segment.start if segment.hold is not None else segment.end
+            wanted[segment.id] = [(mattes, removal.subject, piece) for piece in matte_pieces(segment.start, end, mattes.duration)]
+    return wanted
+
+
+def matted(
+    plan: RenderPlan, mattes: Mattes, runner: MatteRunner | None, progress: Callable[[float], None] = lambda done: None
+) -> tuple[RenderPlan, dict[str, Path]]:
+    """The plan with each cut-out Segment reading its Matte's pieces (`matte_files`), made now where
+    they aren't there (`MatteRunner.make`, `progress` from 0 to 1 over them all), and their files. A
+    RuntimeError naming the Segment and the cause when one can't be had: the person model isn't
+    downloaded, or a piece failed (now, or before a Retry)."""
+    cut = [segment for segment in plan.segments if segment.background_removal is not None and segment.media is None]
+    if not cut:
+        return plan, {}
+    total = sum(len(segment.matte) for segment in cut)
+    done, files, segments = 0, {}, []
+    for segment in plan.segments:
+        if segment not in cut:
+            segments.append(segment)
+            continue
+        assert segment.background_removal is not None
+        wanted = [(mattes, segment.background_removal.subject, piece) for piece in segment.matte]
+        try:
+            if runner is None:
+                raise ModelAbsent("the person model isn't offered here")
+            paths = runner.make(wanted, lambda d, done=done, count=len(wanted): progress((done + d * count) / total))
+        except Exception as exc:
+            raise RuntimeError(f"Segment {segment.id}'s background couldn't be removed: {exc}") from exc
+        done += len(wanted)
+        files |= {str(path): path for path in paths}
+        segments.append(replace(segment, matte_files=[str(path) for path in paths]))
+    return replace(plan, segments=segments), files
 
 
 def analysed_range(candidate: Candidate, segment: Segment, duration: float) -> tuple[float, float]:
@@ -323,7 +371,7 @@ def candidate_plan(
                 join=join, keys=segment.keys, id=segment.id,
                 speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,
                 fade_in=segment.fade_in, fade_out=segment.fade_out, muted=segment.muted, grade=segment.grade, audio_effects=segment.audio_effects,
-                video_effects=segment.video_effects,
+                video_effects=segment.video_effects, background_removal=segment.background_removal,
             ))
             continue
         # Its Scenes, faces and Layout Overrides are of its analysed range (a Freeze frame's is wider).
@@ -341,7 +389,7 @@ def candidate_plan(
             id=segment.id,
             speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,
             fade_in=segment.fade_in, fade_out=segment.fade_out, muted=segment.muted, grade=segment.grade, audio_effects=segment.audio_effects,
-            video_effects=segment.video_effects,
+            video_effects=segment.video_effects, background_removal=segment.background_removal,
             analysed=(start, end),
         ))
     return plan_render(candidate.start, candidate.end, source, main_track=inputs, **common)
@@ -411,22 +459,28 @@ def drawing_inputs(
     media: MediaStore,
     logos: LogoStore,
     progress: Callable[[int], Callable[[float], None]] = lambda copies: lambda done: None,
+    mattes: MatteRunner | None = None,
+    matting: Callable[[float], None] = lambda done: None,
 ) -> tuple[RenderPlan, Path | None, dict[str, Path], dict[str, Path]]:
     """What the renderer draws `plan` (of the Job in `job_dir`, of `source`) as `export` says from:
-    the plan reading its reversed Segments and Overlays from their full-size Retimed copies, made
-    now if they aren't there (`progress(copies)` gives each copy's progress); its Logo's file; the
+    the plan reading its cut-out Segments' Matte pieces, made now by `mattes` if they aren't there
+    (`matted`, its progress `matting`), and its reversed Segments and Overlays from their full-size
+    Retimed copies, made now if they aren't there (`progress(copies)` gives each copy's progress); its Logo's file; the
     file of each Media Library item it plays, by id; and its picture layers' pictures at the export's
     size, made now if they aren't there (docs/adr/0010), by name. A render and a saved frame both
     draw from these."""
     logo = logos.file(plan.watermark.logo) if plan.watermark and plan.watermark.logo else None
+    plan, matte_files = matted(plan, source_mattes(job_dir, source), mattes, matting)
     plan, files = played_files(plan, job_dir, source, media, settings.ffmpeg_bin, progress)
+    files |= matte_files
     pictures = make_pictures(settings.ffmpeg_bin, picture_layouts(plan, export), job_dir / PICTURES_DIR)
     return plan, logo, files, pictures
 
 
 class Renders:
     def __init__(
-        self, store: JobStore, settings: Settings, transcriber: Transcriber, media_words: MediaWordsStore | None = None
+        self, store: JobStore, settings: Settings, transcriber: Transcriber, media_words: MediaWordsStore | None = None,
+        mattes: MatteRunner | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
@@ -439,6 +493,8 @@ class Renders:
         self.renderer = Renderer(settings.ffmpeg_bin, settings.render)
         self.analyzer = Analyzer(settings.ffmpeg_bin, BLAZE_FACE_MODEL, settings.analysis)
         self.transcriber = transcriber
+        # Shared with the API, so that a render and the editor make Matte pieces one at a time.
+        self.mattes = mattes
         self.watchdog = Watchdog(transcriber, settings.transcription)
         self._stopping = threading.Event()
         self._transcribing = False
@@ -732,8 +788,11 @@ class Renders:
                 export.fps, captioned=job.options.captions, music=music_words(candidate, at_hand),
             )
             write_atomic(job_dir / plan_file, _PLAN.dump_json(plan, indent=2))
+            # The Matte pieces it lacks take half of what is left, before its Retimed copies.
+            matting = step((1 - shown / 100) / 2) if any(segment.background_removal for segment in plan.segments) else lambda done: None
             plan, logo, files, pictures = drawing_inputs(
                 plan, export, job_dir, job.source, self.settings, self.media, self.logos, lambda copies: step((1 - shown / 100) / 2 / copies),
+                self.mattes, matting,
             )
             encoder, bitrate_fallback = self.renderer.render(
                 job_dir / job.source.video, plan, job_dir / video, job_dir / poster, step(1 - shown / 100), logo, files, pictures, export,

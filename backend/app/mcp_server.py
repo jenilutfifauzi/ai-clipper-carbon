@@ -369,6 +369,10 @@ Edits:
   sizes are as given. A lone Segment of the episode with a stack (even all off) stays a Segment.
   merge_candidate_items replaces its stack as a whole; the dry run lists its enabled ones under
   `segments`.
+- A Segment of the episode's `background_removal` {{subject "person", feather 0-40 px, default 4}}
+  keeps only the speaker, over their own picture blurred, in any Layout (null: off). Its Matte is
+  made in the background (the person model first: download_person_model); a render makes what is
+  missing, and fails on a failed one. wait_for_matte follows it. The dry run lists it, feather as drawn.
 - An Adjustment Layer's `video_effects`: the same stack over what its Grade covers, after it, mixed
   by its strength and fades (its grade may be neutral); sizes as a Segment's. Merged and listed as
   a Segment's. A keyed Overlay shows the effects it would unkeyed at the same scale.
@@ -1030,6 +1034,22 @@ def build_mcp(app: FastAPI) -> MCPServer:
             state = await api("GET", "/models/person")
         return state
 
+    @tool()
+    async def wait_for_matte(
+        ctx: Context, job_id: str, candidate_id: str, retry: bool = False, timeout_secs: int = Field(MODEL_WAIT_SECS, ge=1, le=WAIT_MAX_SECS)
+    ) -> dict:
+        """Wait for the Matte of a Candidate's cut-out Segments (`retry`: a failed one). Gives its state
+        (ready; making on timeout: call again; waiting for the person model; failed, error), progress
+        0..1 and each Segment's."""
+        path = f"/jobs/{job_id}/candidates/{candidate_id}/matte"
+        matte = await api("POST", path, json={"retry": retry})
+        deadline = asyncio.get_running_loop().time() + timeout_secs
+        while matte["state"] == "making" and asyncio.get_running_loop().time() < deadline:
+            await ctx.report_progress(matte["progress"], 1, "Finding the subject")
+            await asyncio.sleep(MODEL_POLL_SECS)
+            matte = await api("POST", path)
+        return matte
+
     @tool(destructive=True)
     async def delete_asset(kind: Literal["logo", "media", "font", "look"], asset_id: str) -> dict:
         """Delete a Logo, or a Media Library item, an imported font's Face or an Imported Look that
@@ -1284,6 +1304,7 @@ def _plan_view(
                 "audio_effects": _effects_view(segment.get("audio_effects", [])),
                 "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
                 "grade": _grade_view(segment["grade"]), "video_effects": _effects_view(segment.get("video_effects", [])),
+                "background_removal": segment.get("background_removal"),
                 "words_status": preview["words_status"].get(segment["id"]), "words_error": preview["words_errors"].get(segment["id"]),
             })
             for segment in plan["segments"]

@@ -16,7 +16,10 @@ from app.clips import Clip
 from app.config import Settings, load_settings
 from app.evaluation import EvalError, evaluate, gate, gate_summary, latest_report, summary
 from app.jobs import DEFAULT_LANGUAGE, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
+from app.matte import MatteRunner, RvmMatter
 from app.media import MEDIA_DIR, MediaStore
+from app.model_download import MODELS_DIR
+from app.person_model import PersonModel
 from app.pipeline import Pipeline
 from app.ports import real_ports
 from app.profile import PROFILE_FILE, ProfileStore
@@ -129,7 +132,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _render(settings: Settings, store: JobStore, job_id: str, candidate_ids: list[str] | None) -> int:
-    renders = Renders(store, settings, WhisperTranscriber(settings))
+    mattes = MatteRunner(PersonModel(settings.data_dir / MODELS_DIR), RvmMatter, settings.ffmpeg_bin)
+    renders = Renders(store, settings, WhisperTranscriber(settings), mattes=mattes)
     try:
         renders.request(job_id, candidate_ids)
     except JobNotFound:

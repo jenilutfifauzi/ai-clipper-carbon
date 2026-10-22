@@ -13,7 +13,7 @@ crop and item size in its item's; and times, Eases, scales, rotations and opacit
 - A Picture's drawn size (even), centre, bounds, corners, border, shadow and the Keyframes of its
   centre are scaled; its drawn size at scale 1 too, so that a keyed scale still gives its size.
   An Overlay's Video Effects' sizes (docs/adr/0014) are scaled with it, and a Segment's and an
-  Adjustment Layer's with the frame.
+  Adjustment Layer's with the frame, as is a Segment's Background removal's feather (docs/adr/0015).
 - A picture layer's picture is rasterised at the output's size: its layout's scale is multiplied by
   the factor (under MAX_LAYER_PICTURE, as `picture_scale` keeps it), which names another picture
   (`PictureLayout.name` hashes the scale) of the same `picture_key`, so that a 4K picture and a
@@ -40,6 +40,7 @@ from app.planner import (
     PictureLayer,
     RenderPlan,
     ScenePlan,
+    SegmentPlan,
     TextEvent,
 )
 
@@ -61,7 +62,7 @@ def scaled_plan(plan: RenderPlan, size: tuple[int, int]) -> RenderPlan:
         overlays=[
             replace(event, picture=_scaled_picture(event.picture, k), video_effects=scaled_effects(event.video_effects, k)) for event in plan.overlays
         ],
-        segments=[replace(segment, video_effects=scaled_effects(segment.video_effects, k)) for segment in plan.segments],
+        segments=[_scaled_segment(segment, k) for segment in plan.segments],
         adjustment_layers=[replace(event, video_effects=scaled_effects(event.video_effects, k)) for event in plan.adjustment_layers],
         texts=[_scaled_layer(event, k) for event in plan.texts],
         shapes=[_scaled_layer(event, k) for event in plan.shapes],
@@ -73,6 +74,15 @@ def drawn_scale(plan: RenderPlan) -> float:
     planner's size, 2 for one drawn at 4K. What the renderer has in the planner's pixels (Blur's
     tuning, a Slide's distance) is scaled by it."""
     return plan.height / FRAME[1]
+
+
+def _scaled_segment(segment: SegmentPlan, k: float) -> SegmentPlan:
+    """A Segment's Video Effects' sizes and its Background removal's feather drawn `k` times as large."""
+    removal = segment.background_removal
+    return replace(
+        segment, video_effects=scaled_effects(segment.video_effects, k),
+        background_removal=None if removal is None else replace(removal, feather=round(removal.feather * k, 3)),
+    )
 
 
 def _scaled_scene(scene: ScenePlan, k: float, size: tuple[int, int]) -> ScenePlan:

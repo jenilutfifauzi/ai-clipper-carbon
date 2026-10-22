@@ -91,7 +91,8 @@ from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.renderer import AudioFormat, available_codecs
-from app.rendering import NothingToRender, has_media_words, media_language, ranked_clips, source_copies
+from app.matte import MatteRunner, MatteStatus
+from app.rendering import NothingToRender, has_media_words, matte_wanted, media_language, ranked_clips, source_copies, source_mattes
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
@@ -210,6 +211,10 @@ def _person_model(request: Request) -> PersonModel:
     return model
 
 
+def _mattes(request: Request) -> MatteRunner:
+    return request.app.state.mattes
+
+
 def _media_words(request: Request) -> MediaWordsStore:
     return request.app.state.media_words
 
@@ -227,13 +232,16 @@ def _edit(request: Request) -> Edit:
     return Edit.of(request.headers.get("X-Edit-Source"), request.headers.get("X-Edit-Tab"))
 
 
-def _after_save(request: Request, background: BackgroundTasks) -> Callable[[str, float], None]:
-    """What runs once a save of a Job's Candidates is sent: removing the Job's Effected copies none of
-    its Candidates uses, made before the save started (`sweep_unused_effected`)."""
+def _after_save(request: Request, background: BackgroundTasks) -> Callable[[str, float, Candidate], None]:
+    """What runs once a save of a Job's Candidate is sent: removing the Job's Effected copies none of
+    its Candidates uses, made before the save started (`sweep_unused_effected`); and asking for the
+    Matte pieces the saved Candidate's cut-out Segments lack (`ask_mattes`), as switching Background
+    removal on or changing a range needs."""
     state = request.app.state
 
-    def after(job_id: str, started: float) -> None:
+    def after(job_id: str, started: float, saved: Candidate) -> None:
         background.add_task(sweep_unused_effected, state.store, state.settings, state.presets, state.logos, state.media, job_id, started)
+        background.add_task(ask_mattes, state.store, state.mattes, job_id, saved)
 
     return after
 
@@ -263,7 +271,8 @@ PersonModelDep = Annotated[PersonModel, Depends(_person_model)]
 FaceRegistry = Annotated[Faces, Depends(_faces)]
 ImportedLookStore = Annotated[ImportedLooks, Depends(_imported_looks)]
 EditBy = Annotated[Edit, Depends(_edit)]
-AfterSave = Annotated[Callable[[str, float], None], Depends(_after_save)]
+AfterSave = Annotated[Callable[[str, float, Candidate], None], Depends(_after_save)]
+MatteMaker = Annotated[MatteRunner, Depends(_mattes)]
 ExistingJob = Annotated[Job, Depends(_job)]
 
 
@@ -996,6 +1005,7 @@ def save_candidate_frame(
     logos: Logos,
     library: Media,
     media_words: MediaWordsDep,
+    mattes: MatteMaker,
 ) -> SavedExport:
     """Save the frame at `at` (Timeline time) of the Candidate, or of `draft` (as the Preview Plan
     plans it: from cached analysis only), drawn as its render would draw it at the Export Preset's
@@ -1006,7 +1016,7 @@ def save_candidate_frame(
     planned = _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, media_words, body.draft, export.fps)
     job, job_dir = store.get(job_id), store.job_dir(job_id)
     try:
-        path = save_frame(job, job_dir, candidate_id, planned.plan, body.at, export, settings, library, logos)
+        path = save_frame(job, job_dir, candidate_id, planned.plan, body.at, export, settings, library, logos, mattes)
     except RuntimeError as exc:
         raise HTTPException(500, str(exc)) from None
     return saved_export(job_id, job_dir, path)
@@ -1024,6 +1034,7 @@ def compare_frame(
     logos: Logos,
     library: Media,
     media_words: MediaWordsDep,
+    mattes: MatteMaker,
 ) -> Response:
     """Compare render (GLOSSARY): the frame at `at` (Timeline time) of the Candidate, or of `draft` (as
     the Preview Plan plans it), drawn by the render path as save_frame draws it, at 1080x1920 and the
@@ -1037,7 +1048,7 @@ def compare_frame(
     with tempfile.TemporaryDirectory(prefix="compare-") as folder:
         path = Path(folder) / "frame.png"
         try:
-            draw_frame(job, job_dir, planned.plan, body.at, path, export, settings, library, logos)
+            draw_frame(job, job_dir, planned.plan, body.at, path, export, settings, library, logos, mattes)
         except RuntimeError as exc:
             raise HTTPException(500, str(exc)) from None
         png = path.read_bytes()
@@ -1321,10 +1332,10 @@ def _review(
     job_id: str,
     change: Callable[[list[Candidate], Episode], tuple[list[Candidate], Candidate]],
     edit: Edit,
-    after_save: Callable[[str, float], None],
+    after_save: Callable[[str, float, Candidate], None],
 ) -> Candidate:
     """Save the Candidates `change` makes, then `after_save` (every save of a Candidate sweeps the
-    Job's unused Effected copies; one made since the save started survives)."""
+    Job's unused Effected copies, one made since the save started surviving, and asks for its Matte)."""
     started = time.time()
 
     def changed(job: Job, candidates: list[Candidate]) -> tuple[list[Candidate], Candidate]:
@@ -1346,7 +1357,7 @@ def _review(
     except StaleRevision as exc:
         message = f"{exc}: it changed since this edit was made; merge the edit into it and save again"
         raise HTTPException(409, {"message": message, "candidate": _CANDIDATE.dump_python(exc.candidate, mode="json")}) from None
-    after_save(job_id, started)
+    after_save(job_id, started, saved)
     return saved
 
 
@@ -2058,6 +2069,64 @@ def remove_person_model(model: PersonModelDep) -> None:
         model.remove()
     except PersonModelBusy as exc:
         raise HTTPException(409, str(exc)) from None
+
+
+class MattePart(BaseModel):
+    """How a Matte is coming along (app/matte.py's MatteStatus): `state` ready, making, waiting (for
+    the person model), failed (with its `error`, until a Retry) or missing; `progress` 0..1."""
+
+    state: Literal["ready", "making", "waiting", "failed", "missing"]
+    progress: float
+    error: str | None = None
+
+
+class CandidateMatte(MattePart):
+    """The Matte of a Candidate's cut-out Segments together, and each one's by its id (none: nothing is cut out)."""
+
+    segments: dict[str, MattePart]
+
+
+class MatteRequest(BaseModel):
+    # Forget the pieces' failures and make them again.
+    retry: bool = False
+
+
+@router.post("/jobs/{job_id}/candidates/{candidate_id}/matte")
+def candidate_matte(
+    job_id: str, candidate_id: str, store: Store, mattes: MatteMaker, body: MatteRequest | None = None
+) -> CandidateMatte:
+    """How the Matte of the saved Candidate's cut-out Segments is coming along (\"Finding the subject…
+    N%\"), polled by the Inspector and the agent; the pieces missing are asked for now (as once the person
+    model is downloaded), latest first. With `retry`, their failures are forgotten and they are made
+    again. 404 for an unknown Job or Candidate."""
+    try:
+        job = store.get(job_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    candidate = next((c for c in store.load_candidates(job_id) or [] if c.id == candidate_id), None)
+    if candidate is None or job.source is None:
+        raise HTTPException(404, f"Job {job_id} has no Candidate {candidate_id}")
+    wanted = matte_wanted(candidate, source_mattes(store.job_dir(job_id), job.source))
+    pieces = [piece for segment in wanted.values() for piece in segment]
+    (mattes.retry if body is not None and body.retry else mattes.ask)(pieces)
+
+    def part(status: MatteStatus) -> dict:
+        return {"state": status.state, "progress": status.progress, "error": status.error}
+
+    return CandidateMatte(
+        **part(mattes.status(pieces)), segments={id: MattePart(**part(mattes.status(segment))) for id, segment in wanted.items()}
+    )
+
+
+def ask_mattes(store: JobStore, mattes: MatteRunner, job_id: str, candidate: Candidate) -> None:
+    """Ask for the Matte pieces the saved `candidate`'s cut-out Segments lack (`MatteRunner.ask`)."""
+    try:
+        job = store.get(job_id)
+    except JobNotFound:
+        return
+    if job.source is not None:
+        wanted = matte_wanted(candidate, source_mattes(store.job_dir(job_id), job.source))
+        mattes.ask([piece for segment in wanted.values() for piece in segment])
 
 
 @router.get("/voices/{engine}/{voice}/sample", response_class=FileResponse)

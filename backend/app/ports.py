@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from app.config import Settings
 from app.kokoro import KokoroModel
 from app.llm import GeminiLlm, Llm, OpenAiLlm
+from app.matte import Matter, RvmMatter
 from app.model_download import MODELS_DIR
 from app.person_model import PersonModel
 from app.transcriber import Transcriber, WhisperTranscriber
@@ -24,6 +25,8 @@ class Ports:
     kokoro: KokoroModel | None = None
     # The person model (app/person_model.py), downloaded on first use for Background removal's Matte.
     person_model: PersonModel | None = None
+    # What makes a Matte from the person model's file (app/matte.py's matter seam): RVM through onnxruntime.
+    matter: type[Matter] = RvmMatter
 
 
 def real_ports(settings: Settings) -> Ports:
