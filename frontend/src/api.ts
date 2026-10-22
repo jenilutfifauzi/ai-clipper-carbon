@@ -1088,10 +1088,23 @@ export interface SegmentPlan extends Retiming {
   video_effects?: VideoEffect[];
   // A cut-out Segment's (ADR 0015): its Background removal, the feather as drawn (times its picture's
   // scale); a Source Segment's Background in force (its own, else the picture blurred; a video's is
-  // its Scene's) and the pieces of the Source's Matte it reads, by their starts in seconds (10 s each).
+  // its Scene's) and what it reads of the Source's Matte (its pieces; the rest is the render's).
   background_removal?: BackgroundRemoval | null;
   background?: Background | null;
-  matte?: number[];
+  matte?: MatteRead | null;
+}
+
+/**
+ * What a picture with Background removal reads of its item's Matte (ADR 0015): its pieces, by their
+ * starts in seconds (10 s each). The files, where its first frame is in them and a reversed copy are
+ * filled in by the render only, so a Preview Plan has none (the preview reads `mattes` instead).
+ */
+export interface MatteRead {
+  pieces: number[];
+  files: string[];
+  at: number;
+  copy: string | null;
+  copy_at: number;
 }
 
 export interface RenderPlan {

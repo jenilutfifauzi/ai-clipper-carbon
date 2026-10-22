@@ -17,7 +17,7 @@ from app.candidates import BackgroundRemoval, Candidate, Framing, Overlay, Segme
 from app.config import CameraTuning
 from app.matte import Mattes
 from app.media import MediaKind
-from app.planner import MediaInfo, SegmentInput, plan_render
+from app.planner import MatteRead, MediaInfo, SegmentInput, plan_render
 from app.rendering import candidate_plan, matte_wanted
 from app.styles import PresetStore
 from app.video_source import SourceMetadata
@@ -54,7 +54,7 @@ def test_an_overlays_background_removal_reaches_its_event_with_the_feather_times
     assert image.background_removal == BackgroundRemoval(feather=18.0)
     assert plain.background_removal is None
     # Its pieces are its item's, found by the renderer.
-    assert video.matte == [] and video.matte_files == []
+    assert video.matte is None
 
 
 def test_a_media_segments_background_removal_reaches_its_plan_its_background_its_framings():
@@ -66,8 +66,8 @@ def test_a_media_segments_background_removal_reaches_its_plan_its_background_its
     media, source = planned.segments
     assert media.background_removal == BackgroundRemoval(feather=3.0)
     # Its Background is its Scene's, its Framing's; its pieces are its item's.
-    assert media.background is None and media.matte == []
-    assert source.background_removal == CUT and source.matte == [20]
+    assert media.background is None and media.matte is None
+    assert source.background_removal == CUT and source.matte == MatteRead([20])
 
 
 def test_a_candidate_saved_before_it_plans_exactly_as_before(tmp_path):

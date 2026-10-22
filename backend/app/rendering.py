@@ -53,7 +53,7 @@ from app.logos import LOGOS_DIR, LogoStore
 from app.media import MEDIA_DIR, MediaItem, MediaKind, MediaNotFound, MediaStore
 from app.matte import MATTES_DIR, MatteRunner, Mattes, ModelAbsent, PieceOrCopy, Reversed, matte_pieces
 from app.media_words import MediaWordsFailed, MediaWordsStatus, MediaWordsStore
-from app.planner import Join, MediaInfo, SegmentInput, RenderPlan, edit_shown, plan_render, reframes
+from app.planner import Join, MatteRead, MediaInfo, SegmentInput, RenderPlan, edit_shown, plan_render, reframes
 from app.renderer import Renderer, RenderStopped, picture_layouts
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, read_from_copies
 from app.review import CandidateNotFound
@@ -244,9 +244,9 @@ def matted(
     media: MediaMattes = lambda media_id: None,
 ) -> tuple[RenderPlan, dict[str, Path]]:
     """The plan with each cut-out picture (`matte_reads`: a Segment, of the Source's Matte `mattes` or
-    its video's, or an Overlay, of its item's in `media`) reading its Matte's pieces (`matte`,
-    `matte_files`, its first frame `matte_at` seconds into them), and a reversed one its reversed copy
-    (`matte_copy`, from where it shows its range), made now where they aren't there
+    its video's, or an Overlay, of its item's in `media`) reading its Matte (`matte`, a MatteRead: its
+    pieces and their files, its first frame that far into them, and a reversed one its reversed copy
+    from where it shows its range), made now where they aren't there
     (`MatteRunner.make`, `progress` from 0 to 1 over them all), and their files. A RuntimeError
     naming the item and the cause when one can't be had: the person model isn't downloaded, or a
     piece failed (now, or before a Retry)."""
@@ -255,7 +255,7 @@ def matted(
         return plan, {}
     total = sum(len(parts) for _, parts in reads.values())
     done, files = 0, {}
-    found: dict[MattePlace, dict] = {}
+    found: dict[MattePlace, MatteRead] = {}
     for cut, (own, parts) in reads.items():
         kind, i = cut
         item = plan.segments[i] if kind == "segment" else (plan.overlays if kind == "overlay" else plan.behind)[i]
@@ -274,19 +274,20 @@ def matted(
         pieces = [part for part in parts if not isinstance(part, Reversed)]
         start = item.source_start if kind == "segment" else item.time.start
         fps = own.frame[2]
-        found[cut] = {
-            "matte": pieces,
-            "matte_files": [str(path) for path, (_, _, part) in zip(paths, wanted) if not isinstance(part, Reversed)],
-            "matte_at": 0.0 if own.still else round(max(0.0, start - round(pieces[0] * fps) / fps), 6),
-        }
+        read = MatteRead(
+            pieces,
+            [str(path) for path, (_, _, part) in zip(paths, wanted) if not isinstance(part, Reversed)],
+            0.0 if own.still else round(max(0.0, start - round(pieces[0] * fps) / fps), 6),
+        )
         if reversed_part := next((part for part in parts if isinstance(part, Reversed)), None):
             path, at = own.reversed_copy(subject, runner.version, reversed_part)
-            found[cut] |= {"matte_copy": str(path), "matte_copy_at": at}
+            read = replace(read, copy=str(path), copy_at=at)
+        found[cut] = read
     return replace(
         plan,
-        segments=[replace(item, **found[("segment", i)]) if ("segment", i) in found else item for i, item in enumerate(plan.segments)],
-        overlays=[replace(item, **found[("overlay", i)]) if ("overlay", i) in found else item for i, item in enumerate(plan.overlays)],
-        behind=[replace(item, **found[("behind", i)]) if ("behind", i) in found else item for i, item in enumerate(plan.behind)],
+        segments=[replace(item, matte=found[("segment", i)]) if ("segment", i) in found else item for i, item in enumerate(plan.segments)],
+        overlays=[replace(item, matte=found[("overlay", i)]) if ("overlay", i) in found else item for i, item in enumerate(plan.overlays)],
+        behind=[replace(item, matte=found[("behind", i)]) if ("behind", i) in found else item for i, item in enumerate(plan.behind)],
     ), files
 
 

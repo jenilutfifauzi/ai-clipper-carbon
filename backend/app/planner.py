@@ -605,6 +605,21 @@ class AudioEvent:
 
 
 @dataclass(frozen=True)
+class MatteRead:
+    """What a picture with Background removal reads of its item's Matte (docs/adr/0015, app/matte.py):
+    its `pieces`, by their starts in seconds (an image's one, 0); and the renderer's (`matted`): their
+    `files`, in the render's `files`, its picture's first frame `at` seconds into them joined, and a
+    reversed one's reversed copy (`copy`, its file, played forwards from `copy_at` seconds, as its
+    picture is from its Retimed copy)."""
+
+    pieces: list[int] = field(default_factory=list)
+    files: list[str] = field(default_factory=list)
+    at: float = 0.0
+    copy: str | None = None
+    copy_at: float = 0.0
+
+
+@dataclass(frozen=True)
 class SegmentPlan:
     """A Segment as played: the Source (or the Media Library video `media`) from `source_start` to
     `source_end`, at `speed`, forwards or in `reverse`, or its frame at `source_start` held for
@@ -651,19 +666,12 @@ class SegmentPlan:
     # fill left out; a video's picture) cut by its item's Matte, the feather times its picture's scale
     # (as drawn), then graded and drawn through its Video Effects, laid over its `background` (a
     # Source Segment's Background in force: the picture blurred unless it has one of its own; a
-    # video's is its Scene's, its Framing's, and this None), before the joins. `matte` is the pieces
-    # of the Source's Matte it reads (app/matte.py), by their starts in seconds (a video's, filled in
-    # by the renderer's `matted` with the rest); `matte_files` the renderer's: their files, in the
-    # render's `files`, its picture's first frame `matte_at` seconds into them joined. A reversed
-    # one's Matte is read from its reversed copy (`matte_copy`, the renderer's: its file, played
-    # forwards from `matte_copy_at` seconds, as its picture is from its Retimed copy).
+    # video's is its Scene's, its Framing's, and this None), before the joins. `matte` is what it
+    # reads of its item's Matte: a Source Segment's pieces, as planned; the rest (a video's pieces
+    # too) filled in by the renderer's `matted`. None without Background removal.
     background_removal: BackgroundRemoval | None = None
     background: Background | None = None
-    matte: list[int] = field(default_factory=list)
-    matte_files: list[str] = field(default_factory=list)
-    matte_copy: str | None = None
-    matte_copy_at: float = 0.0
-    matte_at: float = 0.0
+    matte: MatteRead | None = None
 
     @property
     def time(self) -> SegmentTime:
@@ -796,16 +804,10 @@ class OverlayEvent:
     blend: BlendMode = BlendMode.NORMAL
     # Its Background removal (docs/adr/0015), its feather times its scale (`overlay_scale`), as drawn:
     # its picture cut by its item's Matte after its crop, scale and flips, before its Grade and Video
-    # Effects (whose Chroma or Luma key multiplies the alpha). The rest is the renderer's, filled in by
-    # `matted`: the pieces of its item's Matte it reads (`matte`, by their starts; an image's one, 0)
-    # and their files (`matte_files`), its first frame `matte_at` seconds into them joined; a reversed
-    # one's reversed copy (`matte_copy`, read from `matte_copy_at`), as SegmentPlan's.
+    # Effects (whose Chroma or Luma key multiplies the alpha). What it reads of its item's Matte
+    # (`matte`) is the renderer's, filled in by `matted`, as SegmentPlan's.
     background_removal: BackgroundRemoval | None = None
-    matte: list[int] = field(default_factory=list)
-    matte_files: list[str] = field(default_factory=list)
-    matte_at: float = 0.0
-    matte_copy: str | None = None
-    matte_copy_at: float = 0.0
+    matte: MatteRead | None = None
 
     @property
     def time(self) -> SegmentTime:
@@ -1260,7 +1262,7 @@ def _segment_removal(given: SegmentInput, shown: ScenePlan, duration: float, fps
     return {
         "background_removal": replace(removal, feather=round(removal.feather * scale, 3)),
         "background": given.background or Background(),
-        "matte": matte_pieces(given.start, end, duration, fps),
+        "matte": MatteRead(matte_pieces(given.start, end, duration, fps)),
     }
 
 

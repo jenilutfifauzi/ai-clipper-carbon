@@ -159,6 +159,7 @@ from app.segment_time import SegmentTime
 from app.planner import (
     HOOK_LEADING,
     filled,
+    MatteRead,
     AudioEvent,
     SegmentPlan,
     HOOK_PAD_Y,
@@ -363,8 +364,8 @@ class Renderer:
         keyed = _keyed_items(drawn, files, source, pictures, self.ffmpeg)
         # A cut-out picture's Matte pieces are read as one input, joined by the concat demuxer.
         pieces = [
-            tuple(item.matte_files) for item in [*plan.segments, *plan.overlays, *plan.behind]
-            if item.background_removal is not None and item.matte_files and Path(item.matte_files[0]).suffix == ".mp4"
+            tuple(matte.files) for item in [*plan.segments, *plan.overlays, *plan.behind]
+            if (matte := _read_matte(item)) is not None and Path(matte.files[0]).suffix == ".mp4"
         ]
         mattes = {files: output.with_name(f".{output.stem}.part-matte{i}.txt") for i, files in enumerate(dict.fromkeys(pieces))}
         try:
@@ -703,19 +704,20 @@ def _check(plan: RenderPlan) -> None:
         first += segment.scenes
         if segment.background_removal is None:
             continue
-        _check_matte(segment, f"Segment {segment.id}", segment.reverse or segment.read_from is not None)
+        _check_matte(segment.matte, f"Segment {segment.id}", segment.reverse or segment.read_from is not None)
         if any(scene.picture is not None and scene.picture.motion for scene in scenes):
             raise RuntimeError(f"Segment {segment.id} has a keyed picture (Keyframes), which Background removal can't draw yet")
     for event in plan.overlays + plan.behind:
         if event.background_removal is not None:
-            _check_matte(event, f"Overlay {event.id}", event.reverse)
+            _check_matte(event.matte, f"Overlay {event.id}", event.reverse)
 
 
-def _check_matte(item: SegmentPlan | OverlayEvent, name: str, reversed_: bool) -> None:
-    """Refuse a cut-out item without its Matte's pieces, or, `reversed_`, its reversed copy."""
-    if not item.matte_files:
+def _check_matte(matte: MatteRead | None, name: str, reversed_: bool) -> None:
+    """Refuse an item with Background removal whose Matte read (`matte`) has no pieces' files, or,
+    `reversed_`, no reversed copy."""
+    if matte is None or not matte.files:
         raise RuntimeError(f"{name}'s Matte wasn't made, so its background can't be removed")
-    if reversed_ and item.matte_copy is None:
+    if reversed_ and matte.copy is None:
         raise RuntimeError(f"{name}'s reversed Matte wasn't made, so its background can't be removed")
 
 
@@ -1107,32 +1109,51 @@ def _matte_inputs(
     unless a frame process draws it (and its Matte, `_overlay_feed`). Its pieces are read from their
     `listings` (joined by the concat demuxer) up to the end of what its picture reads (the concat
     demuxer's own seek doesn't keep the pieces' times, so the frames before are trimmed off in the
-    graph); a reversed one's reversed copy (`matte_copy`) from where it shows the range for as long, as
-    its picture's Retimed copy is; an image's one picture as its picture is, held or looped."""
+    graph); a reversed one's reversed copy from where it shows the range for as long, as its
+    picture's Retimed copy is (`_matte_input`); an image's one picture as its picture is, held or looped."""
     inputs: list[str] = []
     reads: dict[MattePlace, str] = {}
-    cut: list[tuple[MattePlace, SegmentPlan | OverlayEvent]] = [
-        (("segment", i), segment) for i, segment in enumerate(plan.segments) if segment.background_removal is not None and segment.matte_files
+    # Each picture's place, the picture, how long it reads of its item, and, an image Overlay's, itself.
+    shown: list[tuple[MattePlace, SegmentPlan | OverlayEvent, float, OverlayEvent | None]] = [
+        (("segment", i), segment, _HELD_READ_SECS if segment.hold is not None else segment.time.span, None)
+        for i, segment in enumerate(plan.segments)
     ]
-    cut += [(("overlay", place), event) for event, _, feed, place in layered if feed is None]
-    cut += [(("behind", k), event) for laid in behind.values() for event, _, feed, k in laid if feed is None]
-    for key, item in cut:
-        if item.background_removal is None or not item.matte_files:
+    events = [(("overlay", place), event) for event, _, feed, place in layered if feed is None]
+    events += [(("behind", k), event) for laid in behind.values() for event, _, feed, k in laid if feed is None]
+    shown += [(key, event, event.time.span, event if event.image else None) for key, event in events]
+    for key, item, span, image in shown:
+        if (matte := _read_matte(item)) is None:
             continue
         number = first + len(reads)
-        span = _HELD_READ_SECS if isinstance(item, SegmentPlan) and item.hold is not None else item.time.span
-        if isinstance(item, OverlayEvent) and item.image:
-            looped = ["-loop", "1", "-framerate", _rate(plan), "-t", f"{item.end - item.start:.3f}"] if _looped(item) else []
-            inputs += [*looped, "-i", item.matte_files[0]]
-            reads[key] = f"[{number}:v]"
-        elif item.matte_copy is not None:
-            inputs += ["-ss", f"{item.matte_copy_at:.3f}", "-t", f"{span:.3f}", "-i", item.matte_copy]
-            reads[key] = f"[{number}:v]"
+        if image is not None:
+            looped = ["-loop", "1", "-framerate", _rate(plan), "-t", f"{image.end - image.start:.3f}"] if _looped(image) else []
+            given, timed = [*looped, "-i", matte.files[0]], ""
         else:
-            offset = item.matte_at
-            inputs += ["-f", "concat", "-safe", "0", "-t", f"{offset + span + 1:.3f}", "-i", str(listings[tuple(item.matte_files)])]
-            reads[key] = f"[{number}:v]trim=start={max(0.0, offset - 1e-4):.6f}:duration={span:.3f},setpts=PTS-{offset:.6f}/TB,"
+            given, timed = _matte_input(matte, span, listings)
+        inputs += given
+        reads[key] = f"[{number}:v]{timed}," if timed else f"[{number}:v]"
     return inputs, reads
+
+
+def _read_matte(item: SegmentPlan | OverlayEvent) -> MatteRead | None:
+    """What a picture with Background removal reads of its item's Matte, once the renderer has found
+    its pieces' files (`matted`); None for another."""
+    matte = item.matte
+    return matte if item.background_removal is not None and matte is not None and matte.files else None
+
+
+def _matte_input(matte: MatteRead, span: float, listings: Listings) -> tuple[list[str], str]:
+    """The input options that read a video's Matte `matte` for `span` seconds of its picture, and the
+    filters that then bring its frames to the picture's own ("" for none): its reversed copy from
+    where it shows the range; else its pieces from their listing in `listings` (the concat demuxer)
+    up to the end of what its picture reads, the frames before trimmed off."""
+    if matte.copy is not None:
+        return ["-ss", f"{matte.copy_at:.3f}", "-t", f"{span:.3f}", "-i", matte.copy], ""
+    offset = matte.at
+    return (
+        ["-f", "concat", "-safe", "0", "-t", f"{offset + span + 1:.3f}", "-i", str(listings[tuple(matte.files)])],
+        f"trim=start={max(0.0, offset - 1e-4):.6f}:duration={span:.3f},setpts=PTS-{offset:.6f}/TB",
+    )
 
 
 def _concat_path(path: Path) -> str:
@@ -1536,7 +1557,9 @@ def _behind_parts(plan: RenderPlan) -> list[_BehindPart]:
             part = replace(
                 event, start=round(begin - start, 3), end=round(until - start, 3), offset=offset,
                 picture=_later(event.picture, -start) if event.picture.motion else event.picture,
-                matte_at=round(event.matte_at + later, 6), matte_copy_at=round(event.matte_copy_at + later, 6),
+                matte=None if event.matte is None else replace(
+                    event.matte, at=round(event.matte.at + later, 6), copy_at=round(event.matte.copy_at + later, 6),
+                ),
             )
             parts.append(_BehindPart(slot, start, part, event))
     return parts
@@ -1873,8 +1896,8 @@ def _keyed_overlay(event: OverlayEvent, whole: OverlayEvent, files: dict[str, Pa
     if not event.image or _looped(event):
         return files[event.media]
     image = read_image(files[event.media])
-    if event.background_removal is not None and event.matte_files:
-        image = cut_image(image, Path(event.matte_files[0]), event.picture, event.background_removal.feather)
+    if event.background_removal is not None and (matte := _read_matte(event)) is not None:
+        image = cut_image(image, Path(matte.files[0]), event.picture, event.background_removal.feather)
     graded = grade_filters(event.grade, alpha="g")
     if (graded or event.video_effects) and ffmpeg is not None:
         image = graded_image(ffmpeg, image, event.picture, graded, event.video_effects)
@@ -1970,16 +1993,11 @@ def _keyed_matte(event: OverlayEvent, listings: Listings, rate: float) -> KeyedM
     for the still chain: its pieces from their listing, trimmed to its picture's first frame; its
     reversed copy from where it shows the range; an image's one picture, looped as it is."""
     removal = event.background_removal
-    if removal is None or not event.matte_files:
+    if removal is None or (matte := _read_matte(event)) is None:
         return None
-    span = event.time.span
     if event.image:
-        return KeyedMatte(["-loop", "1", "-framerate", f"{rate:.6g}", "-t", f"{event.end - event.start:.3f}", "-i", event.matte_files[0]], "", removal.feather, True)
-    if event.matte_copy is not None:
-        return KeyedMatte(["-ss", f"{event.matte_copy_at:.3f}", "-t", f"{span:.3f}", "-i", event.matte_copy], "", removal.feather, False)
-    offset = event.matte_at
-    read = f"trim=start={max(0.0, offset - 1e-4):.6f}:duration={span:.3f},setpts=PTS-{offset:.6f}/TB"
-    inputs = ["-f", "concat", "-safe", "0", "-t", f"{offset + span + 1:.3f}", "-i", str(listings[tuple(event.matte_files)])]
+        return KeyedMatte(["-loop", "1", "-framerate", f"{rate:.6g}", "-t", f"{event.end - event.start:.3f}", "-i", matte.files[0]], "", removal.feather, True)
+    inputs, read = _matte_input(matte, event.time.span, listings)
     return KeyedMatte(inputs, read, removal.feather, False)
 
 
