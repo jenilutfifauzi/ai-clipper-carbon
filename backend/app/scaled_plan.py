@@ -36,6 +36,7 @@ from app.planner import (
     MAX_LAYER_PICTURE,
     Box,
     HookEvent,
+    OverlayEvent,
     Picture,
     PictureLayer,
     RenderPlan,
@@ -59,9 +60,8 @@ def scaled_plan(plan: RenderPlan, size: tuple[int, int]) -> RenderPlan:
         captions=[replace(event, area=_scaled_box(event.area, k), size=event.size * k) for event in plan.captions],
         hook=None if plan.hook is None else _scaled_hook(plan.hook, k),
         watermark=None if watermark is None else replace(watermark, area=_scaled_box(watermark.area, k), size=watermark.size * k),
-        overlays=[
-            replace(event, picture=_scaled_picture(event.picture, k), video_effects=scaled_effects(event.video_effects, k)) for event in plan.overlays
-        ],
+        overlays=[_scaled_overlay(event, k) for event in plan.overlays],
+        behind=[_scaled_overlay(event, k) for event in plan.behind],
         segments=[_scaled_segment(segment, k) for segment in plan.segments],
         adjustment_layers=[replace(event, video_effects=scaled_effects(event.video_effects, k)) for event in plan.adjustment_layers],
         texts=[_scaled_layer(event, k) for event in plan.texts],
@@ -74,6 +74,11 @@ def drawn_scale(plan: RenderPlan) -> float:
     planner's size, 2 for one drawn at 4K. What the renderer has in the planner's pixels (Blur's
     tuning, a Slide's distance) is scaled by it."""
     return plan.height / FRAME[1]
+
+
+def _scaled_overlay(event: OverlayEvent, k: float) -> OverlayEvent:
+    """An Overlay's picture and its Video Effects' sizes drawn `k` times as large."""
+    return replace(event, picture=_scaled_picture(event.picture, k), video_effects=scaled_effects(event.video_effects, k))
 
 
 def _scaled_segment(segment: SegmentPlan, k: float) -> SegmentPlan:

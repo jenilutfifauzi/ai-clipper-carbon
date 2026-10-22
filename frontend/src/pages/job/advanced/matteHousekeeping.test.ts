@@ -1,8 +1,9 @@
 // .scratch/background-removal/issues/08-matte-housekeeping.md: a Segment's Background removal (ADR
-// 0015) moves with it like any other field. Copy and paste, duplicate, Split (both parts, which read
+// 0015) moves with it like any other field, and so does an Overlay's `behind`. Copy and paste, duplicate, Split (both parts, which read
 // the same Matte pieces) and the Revision merge carry it.
 import { describe, expect, test } from "vitest";
-import type { BackgroundRemoval, ClipSegment } from "../../../api";
+import type { BackgroundRemoval, ClipSegment, Overlay } from "../../../api";
+import { NO_CROP } from "../editor/cropGestures";
 import { mergeEdits } from "../editor/merge";
 import { playedFrom } from "../editor/playback";
 import { duplicate, split, type PickContext } from "./actions";
@@ -73,5 +74,42 @@ describe("moving a cut-out Segment", () => {
     expect(removals(mergeEdits(base, softer, theirs).merged)).toEqual([{ ...cut, feather: 2 }, null]);
     // Switched off on my side, left on theirs as it was: off.
     expect(removals(mergeEdits(theirs, base, theirs).merged)).toEqual([null, null]);
+  });
+});
+
+// An Overlay Behind the Main Track (ticket 05) moves with its field as well.
+describe("moving an Overlay Behind the Main Track", () => {
+  const under: Overlay = {
+    id: "o",
+    media: "clip",
+    start: 2,
+    secs: 4,
+    offset: 0,
+    transform: { x: 540, y: 400, scale: 0.5, stretch_x: 1, stretch_y: 1, rotation: 0, flip_h: false, flip_v: false, opacity: 1 },
+    crop: NO_CROP,
+    volume: 0,
+    radius: 0,
+    border: null,
+    shadow: null,
+    keys: {},
+    behind: true,
+  };
+  const over = (id: string): Overlay => ({ ...under, id, behind: undefined });
+  const ref = { kind: "overlay" as const, id: "o" };
+  const behinds = (state: AdvancedEdits) => state.overlays.map((each) => each.behind ?? false);
+
+  test("copy and paste, duplicate and both parts of a Split keep it", () => {
+    const state = edits({ overlays: [under] });
+    const copied = copy(scene(state, picked(ref)), { job: "j1", candidate: "c1" })!;
+    expect(behinds(paste(scene(edits({ overlays: [over("p")] })), copied, 0, { job: "j1", candidate: "c2" }).edits)).toEqual([false, true]);
+    expect(behinds(duplicate(scene(state, picked(ref)))!.edits)).toEqual([true, true]);
+    expect(behinds(split(scene(state, picked(ref)), 4)!.edits)).toEqual([true, true]);
+  });
+
+  test("the Revision merge keeps mine where I moved it, and theirs where I changed something else", () => {
+    const base = edits({ overlays: [over("o"), over("p")] });
+    expect(behinds(mergeEdits(base, edits({ overlays: [under, over("p")] }), base).merged)).toEqual([true, false]);
+    const mine = edits({ overlays: [over("o"), { ...over("p"), secs: 3 }] });
+    expect(behinds(mergeEdits(base, mine, edits({ overlays: [under, over("p")] })).merged)).toEqual([true, false]);
   });
 });

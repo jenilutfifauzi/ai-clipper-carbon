@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { BlendMode, MediaItem, Overlay } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Select } from "../../../components/Select";
+import { Switch } from "../../../components/Switch";
 import { NO_CROP } from "../editor/cropGestures";
 import { mediaSize, overlayPlacement } from "../editor/picture";
 import type { Playback } from "../editor/playback";
@@ -24,9 +25,10 @@ const STILL_SECS = 3;
 /**
  * An Overlay of `item` at `at` (the playhead, or where it was dropped): placed as `overlayPlacement`
  * says (half the frame wide, in its upper middle); a video as long as it is (and fits), its sound at
- * full volume and Muted, so that unmuting it gives its sound at once.
+ * full volume and Muted, so that unmuting it gives its sound at once. `behind` puts it Behind the Main
+ * Track (ADR 0015), on the Behind Track.
  */
-export function newOverlay(item: MediaItem, at: number, duration: number): Overlay {
+export function newOverlay(item: MediaItem, at: number, duration: number, behind = false): Overlay {
   const length = item.duration ?? STILL_SECS;
   const start = Math.max(0, Math.min(at, duration - Math.min(length, duration)));
   const sound = item.kind === "video" ? { volume: 1, muted: true } : { volume: 0 };
@@ -43,7 +45,23 @@ export function newOverlay(item: MediaItem, at: number, duration: number): Overl
     border: null,
     shadow: null,
     keys: {},
+    ...(behind && { behind }),
   };
+}
+
+/**
+ * "Behind the Main Track" (ADR 0015): on, the Overlay moves to the Behind Track and shows only where a
+ * Segment is cut out or its picture doesn't cover the frame; off, back over the Main Track.
+ */
+export function BehindSwitch({ behind, onChange }: { behind: boolean; onChange: (behind: boolean) => void }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Switch checked={behind} onChange={onChange}>
+        <span className="text-sm font-medium">Behind the Main Track</span>
+      </Switch>
+      <p className="text-sm text-pretty text-muted">Shows only where a Segment is cut out or doesn’t cover the frame.</p>
+    </div>
+  );
 }
 
 // `overlay` laid by `blend`: Normal leaves it without the field, as one saved before Blend Modes.
@@ -140,6 +158,7 @@ export function OverlayFields({
   color,
   pictureEffects,
   effects,
+  onBehind,
 }: {
   overlay: Overlay;
   item: MediaItem | undefined;
@@ -164,6 +183,8 @@ export function OverlayFields({
   pictureEffects?: ReactNode;
   // A video's Audio Effects section (AudioEffectsFields), after its sound; none for an image or a video without sound.
   effects?: ReactNode;
+  // Moved Behind the Main Track or back over it (actions.ts' setBehind); without it, no switch.
+  onBehind?: (behind: boolean) => void;
 }) {
   const video = item?.kind === "video";
   const length = item?.duration ?? Infinity;
@@ -204,6 +225,7 @@ export function OverlayFields({
         blend={<BlendModeField value={overlay.blend ?? "normal"} onChange={(blend) => onChange(reblended(overlay, blend), `overlay:${overlay.id}:blend`)} />}
       />
       <DecorationFields overlay={overlay} onChange={onChange} />
+      {onBehind && <BehindSwitch behind={overlay.behind ?? false} onChange={onBehind} />}
       {removeBackground}
       {color}
       {pictureEffects}

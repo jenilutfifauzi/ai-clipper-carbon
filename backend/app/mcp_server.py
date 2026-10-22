@@ -376,6 +376,9 @@ Edits:
   Its `background` {{kind "blur"|"colour"|"image", colour, image (a Media Library image id)}} shows
   behind it while cut out (null: its picture blurred; in Blur it replaces the fill); listed so too.
   A Framing's `background` takes the image kind too, covering the frame. A used image can't be deleted.
+- An Overlay's `behind` (default false) puts it Behind the Main Track: over each Segment's Background,
+  under its picture, so it shows only where a Segment is cut out or doesn't cover the frame; under the
+  Candidate's Grade and Adjustment Layers. The dry run lists these under `behind`.
 - An Adjustment Layer's `video_effects`: the same stack over what its Grade covers, after it, mixed
   by its strength and fades (its grade may be neutral); sizes as a Segment's. Merged and listed as
   a Segment's. A keyed Overlay shows the effects it would unkeyed at the same scale.
@@ -1222,6 +1225,23 @@ def _clip_view(job_dir: Path, clip: dict) -> dict:
     return _compact(view)
 
 
+def _overlay_view(event: dict, copied: Callable[[dict], bool]) -> dict:
+    """An Overlay as the dry run lists it (one Behind the Main Track too): its item, times and picture,
+    its corners, border and shadow, Grade, Video Effects and Blend Mode where set, what a video reads,
+    its Keyframes and its animations."""
+    return {
+        "id": event["id"], "media": event["media"], **_times(event, "start", "end"), **_picture_view(event["picture"]),
+        **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
+        **_compact({
+            "grade": _grade_view(event["grade"]), "video_effects": _effects_view(event.get("video_effects", [])),
+            "blend": None if event.get("blend", "normal") == "normal" else event["blend"],
+        }),
+        **({} if event["image"] else _video_read(event, copied)),
+        **_motion_view(event["picture"]),
+        **_animation_view(event),
+    }
+
+
 def _picture_view(picture: dict) -> dict:
     """Where a picture is drawn: its box once turned, in output pixels, its rotation, what its crop
     keeps, in its item's pixels, and its opacity."""
@@ -1325,20 +1345,9 @@ def _plan_view(
         },
         "shapes": [_layer_view(shape, _SHAPE, picture_url) for shape in plan["shapes"]],
         "text_layers": [_layer_view(text, _TEXT, picture_url, "lines") for text in plan["texts"]],
-        "overlays": [
-            {
-                "id": event["id"], "media": event["media"], **_times(event, "start", "end"), **_picture_view(event["picture"]),
-                **_compact({key: event["picture"][key] or None for key in ("radius", "border", "shadow")}),
-                **_compact({
-                    "grade": _grade_view(event["grade"]), "video_effects": _effects_view(event.get("video_effects", [])),
-                    "blend": None if event.get("blend", "normal") == "normal" else event["blend"],
-                }),
-                **({} if event["image"] else _video_read(event, copied)),
-                **_motion_view(event["picture"]),
-                **_animation_view(event),
-            }
-            for event in plan["overlays"]
-        ],
+        "overlays": [_overlay_view(event, copied) for event in plan["overlays"]],
+        # Behind the Main Track: over each Segment's Background, under its picture; left out when none.
+        **_compact({"behind": [_overlay_view(event, copied) for event in plan.get("behind", [])]}),
         # Over the Main Track and the Overlays, in the order applied; a field at its default left out.
         "adjustment_layers": [
             {

@@ -3,6 +3,7 @@ import type { MattePiece, RenderPlan, TransitionEvent } from "../../../api";
 import { PanelView } from "./ClipPreview";
 import { DecksGraded } from "./GradeFilters";
 import { backdropView, CutBackdrop, CutGroup, DeckMatte } from "./MatteCut";
+import { BehindOverlays, coversFrame } from "./PreviewOverlays";
 import { MAX_DRIFT_SECS } from "./follow";
 import { slotView } from "./picture";
 import { onOwnVideos, Playback, usePlayback, useShown } from "./playback";
@@ -165,12 +166,24 @@ function Ghost({
     };
   }, [playback, ghost, transition, segment, own, plan.source_volume, incoming]);
 
+  const ghostPanel = (ref: RefObject<HTMLVideoElement>, slot: number) => (
+    <PanelView
+      videoRef={ref}
+      src={src}
+      plan={plan}
+      {...slotView(scene, slot)}
+      playback={ghost}
+      muted={slot > 0}
+      cut={removal ? { matte, feather: removal.feather } : null}
+    />
+  );
+
   return (
     <>
       <TransitionFilters />
       <div ref={layer} aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
         {segment.media ? (
-          <MediaSegment segment={segment} end={segment.end} scene={segmentScene(plan, index)} playback={playback} fade={transition} />
+          <MediaSegment plan={plan} segment={segment} end={segment.end} scene={segmentScene(plan, index)} playback={playback} fade={transition} />
         ) : own ? (
           <CopiedSourceSegment plan={plan} index={index} end={segment.end} playback={playback} src={src} jobId={jobId} fade={transition} />
         ) : (
@@ -186,19 +199,15 @@ function Ghost({
                 playback={ghost}
               />
             )}
+            {/* The Behind Overlays (ADR 0015), in the Clip's time: the ghost crossfades with them. */}
+            {removal && <BehindOverlays plan={plan} playback={playback} className="invisible group-data-[cut]/cut:visible" />}
             <DecksGraded grade={segment.grade} effects={segment.video_effects} start={segment.start} className="group-data-[cut]/cut:!bg-transparent">
-              {[master, follower].map((ref, slot) => (
-                <PanelView
-                  key={slot}
-                  videoRef={ref}
-                  src={src}
-                  plan={plan}
-                  {...slotView(scene, slot)}
-                  playback={ghost}
-                  muted={slot > 0}
-                  cut={removal ? { matte, feather: removal.feather } : null}
-                />
-              ))}
+              {ghostPanel(master, 0)}
+              {/* Over a Manual Scene's Background its picture doesn't cover, under its picture. */}
+              {scene?.layout === "manual" && !coversFrame(scene.picture, plan) && (
+                <BehindOverlays plan={plan} playback={playback} className="group-data-[cut]/cut:invisible" />
+              )}
+              {ghostPanel(follower, 1)}
             </DecksGraded>
           </CutGroup>
         )}

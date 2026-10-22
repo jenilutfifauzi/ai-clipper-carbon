@@ -1,10 +1,10 @@
-import type { CandidateChange, Keys, RenderPlan } from "../../../api";
+import type { CandidateChange, Keys, Overlay, RenderPlan } from "../../../api";
 import type { PlayedSegment } from "../editor/playback";
 
 // The Tracks of the Advanced Edit's Timeline (GLOSSARY.md), and what is hidden, muted or locked of
 // them. Kept in the editor only: never saved, never undone, and the Clip renders as if none were set.
 
-export type TrackKind = "text" | "shape" | "adjust" | "overlay" | "video" | "captions" | "hook" | "music";
+export type TrackKind = "text" | "shape" | "adjust" | "overlay" | "video" | "behind" | "captions" | "hook" | "music";
 
 /** Each Track's name, and whether it can be hidden (it shows) and muted (it sounds). Every Track locks. */
 export const TRACKS: Record<TrackKind, { label: string; hide: boolean; mute: boolean }> = {
@@ -14,6 +14,8 @@ export const TRACKS: Record<TrackKind, { label: string; hide: boolean; mute: boo
   adjust: { label: "Adjust", hide: true, mute: false },
   overlay: { label: "Overlay", hide: true, mute: true },
   video: { label: "Video", hide: true, mute: true },
+  // The Overlays Behind the Main Track (ADR 0015), under the Video Track.
+  behind: { label: "Behind", hide: true, mute: true },
   captions: { label: "Captions", hide: true, mute: false },
   hook: { label: "Hook", hide: true, mute: false },
   music: { label: "Music", hide: false, mute: true },
@@ -32,7 +34,7 @@ export function toggledTrack(state: TrackState, control: TrackControl, kind: Tra
   return { ...state, [control]: now.includes(kind) ? now.filter((other) => other !== kind) : [...now, kind] };
 }
 
-/** The plan as the preview draws it: without the hidden Tracks' Text Layers, Shapes, Adjustment Layers, Overlays, captions and hook. */
+/** The plan as the preview draws it: without the hidden Tracks' Text Layers, Shapes, Adjustment Layers, Overlays (over or behind the Main Track), captions and hook. */
 export function shownPlan(plan: RenderPlan, { hidden }: TrackState): RenderPlan {
   if (!hidden.length) return plan;
   return {
@@ -41,6 +43,7 @@ export function shownPlan(plan: RenderPlan, { hidden }: TrackState): RenderPlan 
     shapes: hidden.includes("shape") ? [] : plan.shapes,
     adjustment_layers: hidden.includes("adjust") ? [] : plan.adjustment_layers,
     overlays: hidden.includes("overlay") ? [] : plan.overlays,
+    behind: hidden.includes("behind") ? [] : plan.behind,
     captions: hidden.includes("captions") ? [] : plan.captions,
     hook: hidden.includes("hook") ? null : plan.hook,
   };
@@ -48,14 +51,16 @@ export function shownPlan(plan: RenderPlan, { hidden }: TrackState): RenderPlan 
 
 /**
  * The draft as the preview plans it, to be heard: without the muted Tracks' sound (the songs, the
- * Overlays' videos' sound, the Clip's own sound). The backend plans what is heard, as it plans the
+ * Overlays' videos' sound, over or behind the Main Track, the Clip's own sound). The backend plans what is heard, as it plans the
  * rest (docs/adr/0001-backend-plans-frontend-draws.md); nothing else of the plan changes.
  */
 export function heardDraft<T extends CandidateChange>(draft: T, { muted }: TrackState): T {
   if (!muted.length) return draft;
   const next = { ...draft };
   if (muted.includes("music")) next.music = [];
-  if (muted.includes("overlay") && next.overlays) next.overlays = next.overlays.map(silenced);
+  // The Overlay Track's and the Behind Track's, each muted on its own.
+  const silent = (overlay: Overlay) => muted.includes(overlay.behind ? "behind" : "overlay");
+  if (next.overlays?.some(silent)) next.overlays = next.overlays.map((overlay) => (silent(overlay) ? silenced(overlay) : overlay));
   if (muted.includes("video")) {
     // Each Segment silenced, not `source_volume`: that also scales a Detached sound of the Source,
     // which is on the Music Track. A draft without Segments is the Clip as filmed, all one sound.

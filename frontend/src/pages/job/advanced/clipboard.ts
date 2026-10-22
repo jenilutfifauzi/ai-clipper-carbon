@@ -4,7 +4,7 @@ import { trackLength } from "../editor/segmentTime";
 import { rekeyed } from "./keyActions";
 import { fadesHalved, idOf, pickedItems, remove, stillDetached, withJoins, type Outcome, type PickContext, type Timed, type TimedKind } from "./actions";
 import { ITEM_MIN_SECS, keptOffset, round } from "./edits";
-import { counted, listed, LISTS, picked, TRACK_OF, type ItemKind, type ItemRef } from "./pick";
+import { counted, listed, LISTS, picked, trackOf, type ItemKind, type ItemRef } from "./pick";
 import { ripple } from "./ripple";
 import { byKey, sameKey, segmentHolds, type TimelineKey } from "../editor/timelineKey";
 
@@ -158,7 +158,7 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
   // Music Clips of the Source's sound, which another Job's clips can't play.
   let unheard = 0;
   for (const { kind, item, at: after } of clipboard.layers) {
-    if (locked.includes(TRACK_OF[kind])) {
+    if (locked.includes(trackOf(kind, item as { behind?: boolean }))) {
       refuse(kind);
       continue;
     }

@@ -881,6 +881,9 @@ export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   video_effects?: VideoEffect[];
   // How it is laid over what is under it (ADR 0014). Normal when missing.
   blend?: BlendMode;
+  // Behind the Main Track (ADR 0015): on the Behind Track, over each Segment's Background and under its
+  // picture. Over the Main Track when missing.
+  behind?: boolean;
 }
 
 // How an Overlay is laid over what is under it (GLOSSARY.md, Blend Mode; ADR 0014): covering it by its
@@ -1109,6 +1112,9 @@ export interface RenderPlan {
   segments: SegmentPlan[];
   // Laid over the Segments, in drawing order.
   overlays: OverlayEvent[];
+  // Behind the Main Track (ADR 0015), in drawing order: over each Segment's Background, under its
+  // picture. Missing from a plan made before them.
+  behind?: OverlayEvent[];
   // Between Segments, in order.
   transitions: TransitionEvent[];
   // The Shapes that show, in drawing order, under the Text Layers.

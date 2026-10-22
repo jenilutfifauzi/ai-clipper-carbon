@@ -259,7 +259,7 @@ def read_from_copies(
     plan: RenderPlan, files: dict[str, Path], copy_of: Callable[[str | None, SegmentTime], Copy]
 ) -> tuple[RenderPlan, dict[str, Path]]:
     """The Render Plan as the renderer reads it, and its files: each reversed Segment, each reversed
-    Overlay's picture and sound, and each reversed Music Clip, played forwards from the full-size copy
+    Overlay's picture and sound (one Behind the Main Track's too), and each reversed Music Clip, played forwards from the full-size copy
     `copy_of` gives for its item (None: the Source) and range, at its Speed. The copy is in `files` under its own path: a
     media Segment's or an Overlay's stands in for its video; a Source Segment's is its `read_from`,
     still a Segment of the Source (its Scenes' panels, the Clip's own volume)."""
@@ -286,7 +286,7 @@ def read_from_copies(
         return replace(event, media=path, offset=played.start, reverse=False)
 
     overlays, audio = [forwards(event) for event in plan.overlays], [forwards(event) for event in plan.audio]
-    return replace(plan, segments=segments, overlays=overlays, audio=audio), files
+    return replace(plan, segments=segments, overlays=overlays, behind=[forwards(event) for event in plan.behind], audio=audio), files
 
 
 def preview_copy(start: float, end: float, speed: float = 1.0, reverse: bool = False, pitch: bool = False) -> Retime | None:

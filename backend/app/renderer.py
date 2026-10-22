@@ -539,11 +539,16 @@ class Renderer:
         count = len(sources) // _INPUT_ARGS
         before_music = count + (1 if logo is not None else 0)
         layers, layered = _overlay_inputs(plan, files or {}, before_music + songs, feeds)
-        scene_inputs, drawn = _scene_inputs(plan, before_music + songs + len(layered), feeds)
-        picture_inputs, written = _layer_inputs(plan, pictures or {}, before_music + songs + len(layered) + len(drawn), feeds)
-        given = [*sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *scene_inputs, *picture_inputs]
+        behind_inputs, behind = _behind_inputs(plan, files or {}, before_music + songs + len(layered), feeds)
+        overlaid = len(layered) + sum(len(laid) for laid in behind.values())
+        scene_inputs, drawn = _scene_inputs(plan, before_music + songs + overlaid, feeds)
+        picture_inputs, written = _layer_inputs(plan, pictures or {}, before_music + songs + overlaid + len(drawn), feeds)
+        given = [*sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *behind_inputs, *scene_inputs, *picture_inputs]
         matte_inputs, matted = _matte_inputs(plan, mattes or {}, given.count("-i"))
-        frame = _segmented(plan, tuning, drawn, matted, files or {}) if plan.segments else _scenes(plan, tuning, keyed=drawn, images=files or {})
+        if plan.segments:
+            frame = _segmented(plan, tuning, drawn, matted, files or {}, behind)
+        else:
+            frame = _scenes(plan, tuning, keyed=drawn, images=files or {}, behind=_scene_behind(plan, behind, range(len(plan.scenes))))
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"
         if graded := grade_filters(plan.grade):
@@ -645,14 +650,14 @@ def shown_frame(at: float, fps: float, duration: float) -> int:
 
 
 def _at_frame(plan: RenderPlan, at: float) -> RenderPlan:
-    """`plan` without the Overlays and Adjustment Layers that don't show on the frame shown at `at`
+    """`plan` without the Overlays (Behind the Main Track too) and Adjustment Layers that don't show on the frame shown at `at`
     (`shown_frame`), give or take a frame: drawing one frame draws every frame before it, so an item
     over an earlier span would cost its whole span's effects and Blend Mode for nothing (docs/adr/0014)."""
     fps = plan.fps if plan.fps > 0 else 30
     time, near = shown_frame(at, fps, plan.duration) / fps, 1 / fps
-    overlays = [event for event in plan.overlays if event.start - near <= time <= event.end + near]
-    layers = [event for event in plan.adjustment_layers if event.start - near <= time <= event.end + near]
-    return replace(plan, overlays=overlays, adjustment_layers=layers)
+    shows = lambda event: event.start - near <= time <= event.end + near
+    overlays, behind = [event for event in plan.overlays if shows(event)], [event for event in plan.behind if shows(event)]
+    return replace(plan, overlays=overlays, behind=behind, adjustment_layers=[event for event in plan.adjustment_layers if shows(event)])
 
 
 def picture_layouts(plan: RenderPlan, export: ExportSettings) -> list[PictureLayout]:
@@ -921,7 +926,7 @@ def _crossed(plan: RenderPlan, transition: TransitionEvent, outgoing: str, incom
 
 def _segmented(
     plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | None = None, matted: dict[int, int] | None = None,
-    images: dict[str, Path] | None = None,
+    images: dict[str, Path] | None = None, behind: "Behind | None" = None,
 ) -> str:
     """The filtergraph that draws a Clip of several Segments into [frame]: each Segment from its own
     input, its Scenes drawn as _scenes draws a Clip's (in seconds into the Segment; a Freeze frame's
@@ -929,11 +934,14 @@ def _segmented(
     (docs/adr/0013) and drawn through its Video Effects (docs/adr/0014), and the Segments joined back to back.
     A keyed Scene's picture is the input `drawn` gives by its place among the plan's Scenes, from
     its frame process. A cut-out Segment (docs/adr/0015) is drawn by `_cut_out`, its Matte from the
-    input `matted` gives by its place among the plan's Segments."""
+    input `matted` gives by its place among the plan's Segments. The Behind Overlays' parts `behind`
+    gives are laid over its Background, or over a Scene's that its picture doesn't cover (`_behind_slots`)."""
     chains, first = [], 0
+    behind = behind or {}
     for i, segment in enumerate(plan.segments):
         scenes = plan.scenes[first : first + segment.scenes]
         keyed = {j: number for j in range(segment.scenes) if (number := (drawn or {}).get(first + j)) is not None}
+        places = range(first, first + segment.scenes)
         first += segment.scenes
         timing = ""
         if segment.hold is not None:
@@ -949,7 +957,7 @@ def _segmented(
             offset, span = _matte_read(plan, segment)
             # Its frames from the same time of the Source as the picture's, at the same times.
             read = f"[{matte}:v]trim=start={max(0.0, offset - 1e-4):.6f}:duration={span:.3f},setpts=PTS-{offset:.6f}/TB,"
-            chains += _cut_out(plan, tuning, segment, scenes, given, f"{read}{timing}", f"g{i}", keyed, images or {})
+            chains += _cut_out(plan, tuning, segment, scenes, given, f"{read}{timing}", f"g{i}", keyed, images or {}, _lay(plan, behind.get(("segment", i))))
             continue
         # Its Grade, then its Video Effects (docs/adr/0014), over its whole frame, before the joins,
         # so that a Transition blends pictures that carry them.
@@ -957,7 +965,7 @@ def _segmented(
             *filter(None, [grade_filters(segment.grade)]), *video_effect_chain(segment.video_effects, (plan.width, plan.height), label=f"g{i}fx"),
         ])
         drawn_to = f"[g{i}u]" if graded else f"[g{i}]"
-        chains.append(_scenes(plan, tuning, scenes, given, drawn_to, f"g{i}s", segment.start, keyed, images=images))
+        chains.append(_scenes(plan, tuning, scenes, given, drawn_to, f"g{i}s", segment.start, keyed, images=images, behind=_scene_behind(plan, behind, places)))
         if graded:
             chains.append(f"{drawn_to}{graded}[g{i}]")
     count = len(plan.segments)
@@ -978,7 +986,7 @@ def _segmented(
 
 def _cut_out(
     plan: RenderPlan, tuning: RenderTuning, segment: SegmentPlan, scenes: list[ScenePlan], given: str, matte: str, name: str,
-    keyed: dict[int, int], images: dict[str, Path],
+    keyed: dict[int, int], images: dict[str, Path], behind: "Lay | None" = None,
 ) -> list[str]:
     """Filters that draw a cut-out Segment (docs/adr/0015) into [`name`] from its frames `given` and its
     Matte's `matte` (each a link label, then the filters that time it, the same for both): its picture,
@@ -986,7 +994,7 @@ def _cut_out(
     same crops, scales, flips and placing, at the Source's size), feathered by a blur of its feather
     as drawn and joined to the picture as its alpha; that graded (docs/adr/0013) and drawn through its
     Video Effects (docs/adr/0014), so that they touch only what is kept; then laid over its Background
-    (`_backdrop_scene`, in each Scene), all before the joins."""
+    (`_backdrop_scene`, in each Scene) with the Behind Overlays over it (`behind`), all before the joins."""
     removal = segment.background_removal
     assert removal is not None
     graded = grade_filters(segment.grade, alpha=f"{name}a")
@@ -1005,7 +1013,8 @@ def _cut_out(
             plan, tuning, scenes, f"[{name}w]", f"[{name}b]", f"{name}u", segment.start, images=images,
             draw=partial(_backdrop_scene, background=segment.background),
         ),
-        f"[{name}b][{name}c]overlay=0:0[{name}]",
+        *([behind(f"[{name}b]", f"[{name}h]", f"{name}h")] if behind is not None else []),
+        f"[{name}{'h' if behind is not None else 'b'}][{name}c]overlay=0:0[{name}]",
     ]
 
 
@@ -1109,6 +1118,7 @@ def _scenes(
     keyed: dict[int, int] | None = None,
     draw: "Callable[..., str] | None" = None,
     images: dict[str, Path] | None = None,
+    behind: "dict[int, Lay] | None" = None,
 ) -> str:
     """The filtergraph that draws the plan's Scenes (or `scenes`, starting `offset` seconds into the
     Clip) from `given` (by default [0:v]) into `out` (by default [frame]), its filters named from
@@ -1117,12 +1127,14 @@ def _scenes(
     0 s, and the branches are concatenated. A Scene `keyed` (by its place among them) has its
     picture drawn by the frame process whose frames are that input; an image Background's file is
     in `images`, by its id. Each Scene is drawn by `draw` (`_scene`'s arguments; by default `_scene`):
-    a cut-out Segment's Matte and Background are drawn through its Scenes so."""
+    a cut-out Segment's Matte and Background are drawn through its Scenes so. A Scene `behind` gives
+    (by its place) lays the Behind Overlays over its Background (`_framed_scene`)."""
     scenes = plan.scenes if scenes is None else scenes
     keyed = keyed or {}
     draw = draw or _scene
+    laid = lambda i: {"behind": lay} if (lay := (behind or {}).get(i)) is not None else {}
     if len(scenes) == 1:
-        return draw(plan, scenes[0], f"{prefix}0", given, out, tuning, keyed.get(0), images=images)
+        return draw(plan, scenes[0], f"{prefix}0", given, out, tuning, keyed.get(0), images=images, **laid(0))
     count = len(scenes)
     chains = [f"{given}split={count}" + "".join(f"[{prefix}{i}]" for i in range(count))]
     for i, scene in enumerate(scenes):
@@ -1134,7 +1146,7 @@ def _scenes(
         chains.append(
             draw(
                 plan, scene, f"{prefix}{i}", f"[{prefix}{i}]trim={':'.join(bounds)},setpts=PTS-STARTPTS,", f"[{prefix}v{i}]", tuning,
-                keyed.get(i), images=images,
+                keyed.get(i), images=images, **laid(i),
             )
         )
     chains.append("".join(f"[{prefix}v{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0{out}")
@@ -1143,16 +1155,17 @@ def _scenes(
 
 def _scene(
     plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, keyed: int | None = None,
-    images: dict[str, Path] | None = None,
+    images: dict[str, Path] | None = None, behind: "Lay | None" = None,
 ) -> str:
     """Filters that draw `scene` from the frames `given` (a link label, then any filters to start
     with) into the link `out`: its first panel, padded to the frame unless it fills it, then each
     other panel laid over it in its area; or, for a Scene of one picture, as `_framed_scene` draws it
-    (a keyed one's picture from input `keyed`, as `_keyed_scene` does)."""
+    (a keyed one's picture from input `keyed`, as `_keyed_scene` does), `behind` laying the Behind
+    Overlays between its Background and its picture."""
     if scene.picture is not None and keyed is not None:
-        return _keyed_scene(plan, scene, name, given, out, tuning, keyed, images)
+        return _keyed_scene(plan, scene, name, given, out, tuning, keyed, images, behind)
     if scene.picture is not None:
-        return _framed_scene(plan, scene, name, given, out, tuning, images)
+        return _framed_scene(plan, scene, name, given, out, tuning, images, behind)
     panels = scene.panels
     if len(panels) == 1:
         chains = [f"{given}{_panel(plan, scene, f'{name}p0', panels[0], tuning)}{_pad(plan, panels[0])}{out}"]
@@ -1171,41 +1184,59 @@ def _scene(
 
 def _framed_scene(
     plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, images: dict[str, Path] | None = None,
+    behind: "Lay | None" = None,
 ) -> str:
     """Filters that draw a Scene of one picture (a media Segment's, or a Manual Scene's of the Source)
     from the frames `given` into `out`: its Background, the blurred cover panel or a frame of its
     colour or its image (its file in `images`; `_plain`, made from the frames themselves, so that it
     has their times), then the part of its Picture on the frame over it. A picture that covers the frame hides its Background, which is
-    then not blurred."""
+    then not blurred. Over a Background it doesn't hide, `behind` lays the Behind Overlays (docs/adr/0015)."""
     assert scene.picture is not None
     picture = on_frame(scene.picture, (plan.width, plan.height))
-    covers = picture.opacity >= 1 and not picture.rotation % 360 and picture.bounds == Box(0, 0, plan.width, plan.height)
+    covers = _covers(plan, scene)
     chains = [f"{given}split=2[{name}b][{name}f]"]
     if scene.panels and not covers:
         panel = scene.panels[0]
         chains.append(f"[{name}b]{_panel(plan, scene, f'{name}p0', panel, tuning)}{_pad(plan, panel)}[{name}l]")
     else:
         chains.append(_plain(plan, f"[{name}b]", f"[{name}l]", name, scene.colour, _image(scene, images) if not covers else None))
-    chains.append(_picture(picture, f"[{name}f]", f"[{name}l]", out, f"{name}q"))
+    under = f"[{name}l]"
+    if behind is not None and not covers:
+        chains.append(behind(under, f"[{name}h]", f"{name}h"))
+        under = f"[{name}h]"
+    chains.append(_picture(picture, f"[{name}f]", under, out, f"{name}q"))
     return ";".join(chains)
 
 
 def _keyed_scene(
     plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, index: int, images: dict[str, Path] | None = None,
+    behind: "Lay | None" = None,
 ) -> str:
     """Filters that draw a Scene of one keyed picture (a video Segment's or a Manual Scene's) from the frames `given`
     into `out`: its Background as `_framed_scene` draws it (none at all when the plan has left it
     out: the picture covers the frame throughout), from the frames brought to the Clip's frame rate
     from 0 s, then its frame process's frames (input `index`) laid at 0, 0, frame n over frame n.
-    The Transitions then see the picture move."""
+    The Transitions then see the picture move. `behind` lays the Behind Overlays over its Background."""
     timed = f"{given}setpts=PTS-STARTPTS,fps={_rate(plan)}:start_time=0:round=up,"
     if scene.panels:
         panel = scene.panels[0]
         chains = [f"{timed}{_panel(plan, scene, f'{name}p0', panel, tuning)}{_pad(plan, panel)}[{name}l]"]
     else:
         chains = [_plain(plan, timed, f"[{name}l]", name, scene.colour, _image(scene, images))]
-    chains.append(f"[{index}:v]setpts=PTS-STARTPTS[{name}q];[{name}l][{name}q]overlay=0:0{out}")
+    under = f"[{name}l]"
+    if behind is not None:
+        chains.append(behind(under, f"[{name}h]", f"{name}h"))
+        under = f"[{name}h]"
+    chains.append(f"[{index}:v]setpts=PTS-STARTPTS[{name}q];{under}[{name}q]overlay=0:0{out}")
     return ";".join(chains)
+
+
+def _covers(plan: RenderPlan, scene: ScenePlan) -> bool:
+    """Whether a Scene of one picture covers the frame, hiding its Background: opaque, unturned, the
+    frame's bounds exactly."""
+    assert scene.picture is not None
+    picture = on_frame(scene.picture, (plan.width, plan.height))
+    return picture.opacity >= 1 and not picture.rotation % 360 and picture.bounds == Box(0, 0, plan.width, plan.height)
 
 
 def _image(scene: ScenePlan, images: dict[str, Path] | None) -> Path | None:
@@ -1371,19 +1402,144 @@ def _overlay_inputs(
         if event.media not in files:
             continue
         feed = feeds.get(("overlay", i))
-        if feed is not None:
-            inputs += _piped(plan, feed)
-        else:
-            if not event.image:
-                inputs += ["-ss", f"{event.offset:.3f}", "-t", f"{event.time.span:.3f}"]
-            elif _looped(event):
-                inputs += ["-loop", "1", "-framerate", _rate(plan), "-t", f"{event.end - event.start:.3f}"]
-            inputs += ["-i", str(files[event.media])]
+        inputs += _overlay_input(plan, event, files, feed)
         drawn.append((event, first + len(drawn), feed))
     return inputs, drawn
 
 
-def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int, feed: FrameFeed | None = None, fps: float = 30) -> str:
+def _overlay_input(plan: RenderPlan, event: OverlayEvent, files: dict[str, Path], feed: FrameFeed | None) -> list[str]:
+    """The input options of one Overlay (`_overlay_inputs`)."""
+    if feed is not None:
+        return _piped(plan, feed)
+    inputs: list[str] = []
+    if not event.image:
+        inputs += ["-ss", f"{event.offset:.3f}", "-t", f"{event.time.span:.3f}"]
+    elif _looped(event):
+        inputs += ["-loop", "1", "-framerate", _rate(plan), "-t", f"{event.end - event.start:.3f}"]
+    return [*inputs, "-i", str(files[event.media])]
+
+
+# A stretch of the Main Track the Behind Overlays are laid in (docs/adr/0015): ("segment", a cut-out
+# Segment's place among the plan's Segments), or ("scene", a Scene's of one picture that doesn't cover
+# the frame, by its place among the plan's Scenes).
+Slot = tuple[str, int]
+
+
+class _BehindPart(NamedTuple):
+    """The part of a Behind Overlay (`whole`, in seconds into the Clip) that shows in one stretch of the
+    Main Track (`slot`), whose frames are from 0 s at `at` seconds into the Clip: `event`, that part in
+    the stretch's own time."""
+
+    slot: Slot
+    at: float
+    event: OverlayEvent
+    whole: OverlayEvent
+
+
+# What lays the Behind Overlays in a stretch: filters from its Background's frames (a link label) into
+# a link, named from a prefix (`_behind`).
+Lay = Callable[[str, str, str], str]
+# Each stretch's Behind Overlays' parts as drawn: each with its input's number, its frame process and its place among the parts.
+Behind = dict[Slot, list[tuple[OverlayEvent, int, "FrameFeed | None", int]]]
+
+
+def _behind_slots(plan: RenderPlan) -> list[tuple[Slot, float, float]]:
+    """Where the plan's Behind Overlays can show (docs/adr/0015): each stretch of the Main Track drawn
+    on its own whose Background shows, with its first frame's and its end's times in the Clip. That is
+    a cut-out Segment, whole; and a Scene of one picture (a media Segment's, a Manual Scene's) that
+    doesn't cover the frame, a keyed one always. A Segment that isn't cut out and covers the frame
+    hides them, and has none: none at all without Behind Overlays."""
+    if not plan.behind:
+        return []
+    uncovered = lambda scene: scene.picture is not None and (bool(scene.picture.motion) or not _covers(plan, scene))
+    if not plan.segments:
+        return [(("scene", j), scene.start if j else 0.0, scene.end) for j, scene in enumerate(plan.scenes) if uncovered(scene)]
+    slots: list[tuple[Slot, float, float]] = []
+    first = 0
+    for i, segment in enumerate(plan.segments):
+        scenes = plan.scenes[first : first + segment.scenes]
+        if segment.background_removal is not None and segment.media is None:
+            slots.append((("segment", i), segment.start, segment.end))
+        else:
+            # A Segment's one Scene, or its first, is drawn from its start; its last to its end.
+            slots += [
+                (("scene", first + j), scene.start if j else segment.start, scene.end if j < len(scenes) - 1 else segment.end)
+                for j, scene in enumerate(scenes) if uncovered(scene)
+            ]
+        first += segment.scenes
+    return slots
+
+
+def _behind_parts(plan: RenderPlan) -> list[_BehindPart]:
+    """Each Behind Overlay's part in each stretch it shows in (`_behind_slots`), at least half a frame
+    long: its span cut to the stretch (a frame past its end), a video's from as far into it as the
+    cut, its motion in the stretch's time. In order of the stretches, then the Overlays'."""
+    fps = plan.fps if plan.fps > 0 else 30
+    parts = []
+    for slot, start, end in _behind_slots(plan):
+        for event in plan.behind:
+            begin, until = max(event.start, start), min(event.end, end)
+            if until - begin < 0.5 / fps:
+                continue
+            # Cut before the Overlay's end, it goes on a frame past the stretch's, which the stretch
+            # never shows: its last frame, there, would otherwise be its input's end, which passes the
+            # frames under it through.
+            until = min(event.end, until + 1 / fps)
+            time = event.time.part(begin - event.start, until - event.start)
+            part = replace(
+                event, start=round(begin - start, 3), end=round(until - start, 3), offset=event.offset if event.image else round(time.start, 3),
+                picture=_later(event.picture, -start) if event.picture.motion else event.picture,
+            )
+            parts.append(_BehindPart(slot, start, part, event))
+    return parts
+
+
+def _behind_inputs(plan: RenderPlan, files: dict[str, Path], first: int, feeds: "Feeds") -> tuple[list[str], Behind]:
+    """The input options of the Behind Overlays' parts (`_behind_parts`), one each as an Overlay's
+    (`_overlay_input`), numbered from `first` (a keyed or animated one's from its frame process in
+    `feeds`, by its place among the parts); and each stretch's parts as drawn. One whose file isn't in
+    `files` isn't drawn."""
+    inputs: list[str] = []
+    behind: Behind = {}
+    count = 0
+    for k, part in enumerate(_behind_parts(plan)):
+        if part.event.media not in files:
+            continue
+        feed = feeds.get(("behind", k))
+        inputs += _overlay_input(plan, part.event, files, feed)
+        behind.setdefault(part.slot, []).append((part.event, first + count, feed, k))
+        count += 1
+    return inputs, behind
+
+
+def _lay(plan: RenderPlan, laid: "list[tuple[OverlayEvent, int, FrameFeed | None, int]] | None") -> Lay | None:
+    """What lays the parts `laid` of a stretch (`_behind`); None without any."""
+    return partial(_behind, plan, laid) if laid else None
+
+
+def _scene_behind(plan: RenderPlan, behind: Behind, places: Sequence[int]) -> dict[int, Lay]:
+    """What lays the Behind Overlays in each of the Scenes at `places` among the plan's that has any, by
+    its place among them."""
+    return {j: lay for j, place in enumerate(places) if (lay := _lay(plan, behind.get(("scene", place)))) is not None}
+
+
+def _behind(plan: RenderPlan, laid: list[tuple[OverlayEvent, int, "FrameFeed | None", int]], below: str, out: str, name: str) -> str:
+    """Filters that lay a stretch's Behind Overlays' parts `laid` over its Background's frames `below`
+    into `out` (docs/adr/0015), in the stretch's time, each as an Overlay is (`_overlay`), named from
+    `name`. With a frame process among them, the frames are brought to n / fps exactly first, the
+    times it draws at. Outside its span, each lets the frames pass through."""
+    chains, under = [], below
+    if any(feed is not None for _, _, feed, _ in laid):
+        chains.append(f"{below}fps={_rate(plan)}[{name}r]")
+        under = f"[{name}r]"
+    for n, (event, number, feed, k) in enumerate(laid):
+        to = out if n == len(laid) - 1 else f"[{name}{n}]"
+        chains.append(_overlay(event, under, to, number, f"b{k}", feed, _rate_value(plan)))
+        under = to
+    return ";".join(chains)
+
+
+def _overlay(event: OverlayEvent, below: str, out: str, index: int, number: int | str, feed: FrameFeed | None = None, fps: float = 30) -> str:
     """Filters that draw an Overlay (input `index`) as its Picture over the frames `below` while it
     shows, into `out`: a video's frames moved to start when it does and timed by its Speed, an
     image's one picture held (or its looped frames moved to start when it does, `_looped`), graded after it is scaled and flipped and then drawn through its Video
@@ -1610,7 +1766,8 @@ def _resampled(plan: RenderPlan) -> bool:
     return plan.fps != plan.source_fps
 
 
-# A keyed picture of the plan: ("overlay", a keyed or animated Overlay's place among them), ("scene", its Scene's
+# A keyed picture of the plan: ("overlay", a keyed or animated Overlay's place among them), ("behind", a
+# keyed or animated Behind Overlay's part's place among `_behind_parts`), ("scene", its Scene's
 # place among the Scenes) or ("layer", a keyed or animated picture layer's place among the plan's);
 # and each one's frame process.
 Keyed = tuple[str, int]
@@ -1627,16 +1784,11 @@ def _keyed_items(
     keyed or animated picture layer's picture's pixels, from `pictures`."""
     items: dict[Keyed, np.ndarray | Path] = {}
     for i, event in enumerate(plan.overlays):
-        if not (_comes_animated(event) or event.picture.motion) or event.media not in files:
-            continue
-        if not event.image or _looped(event):
-            items[("overlay", i)] = files[event.media]
-            continue
-        image = read_image(files[event.media])
-        graded = grade_filters(event.grade, alpha="g")
-        if (graded or event.video_effects) and ffmpeg is not None:
-            image = graded_image(ffmpeg, image, event.picture, graded, event.video_effects)
-        items[("overlay", i)] = image
+        if (item := _keyed_overlay(event, event, files, ffmpeg)) is not None:
+            items[("overlay", i)] = item
+    for i, part in enumerate(_behind_parts(plan)):
+        if (item := _keyed_overlay(part.event, part.whole, files, ffmpeg)) is not None:
+            items[("behind", i)] = item
     for i, (media, _) in _keyed_scenes(plan).items():
         if media is None:
             items[("scene", i)] = source
@@ -1646,6 +1798,20 @@ def _keyed_items(
         if (_comes_animated(event.layer) or event.picture.motion) and pictures and event.image in pictures:
             items[("layer", i)] = read_image(pictures[event.image])
     return items
+
+
+def _keyed_overlay(event: OverlayEvent, whole: OverlayEvent, files: dict[str, Path], ffmpeg: Path | None) -> np.ndarray | Path | None:
+    """A keyed or animated Overlay's item (`_keyed_items`), of `event`, the part of `whole` drawn (a
+    Behind Overlay's in one stretch, or itself); None for another, or one whose file isn't in `files`."""
+    if not (_comes_animated(whole) or whole.picture.motion) or event.media not in files:
+        return None
+    if not event.image or _looped(event):
+        return files[event.media]
+    image = read_image(files[event.media])
+    graded = grade_filters(event.grade, alpha="g")
+    if (graded or event.video_effects) and ffmpeg is not None:
+        image = graded_image(ffmpeg, image, event.picture, graded, event.video_effects)
+    return image
 
 
 def _comes_animated(style: _Motion) -> bool:
@@ -1685,6 +1851,7 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
     frame, drawn = (plan.width, plan.height), drawn_scale(plan)
     scenes = _keyed_scenes(plan)
     layers = plan.picture_layers
+    parts = _behind_parts(plan) if any(kind == "behind" for kind, _ in items) else []
     feeds = {}
     for (kind, i), item in items.items():
         if kind == "scene":
@@ -1701,20 +1868,32 @@ def _feeds(plan: RenderPlan, items: dict[Keyed, np.ndarray | Path], ffmpeg: Path
             frames = PictureFrames(layer.picture, item, frame, lambda time, layer=layer: layer_at(layer, time, drawn))
             feeds[(kind, i)] = FrameFeed(frames, layer.start, layer.end, rate)
             continue
+        if kind == "behind":
+            # A Behind Overlay's part, in its stretch's time, sampled as the whole Overlay is in the Clip's.
+            part = parts[i]
+            sampled = lambda time, part=part: overlay_at(part.whole, time + part.at, drawn)
+            feeds[(kind, i)] = _overlay_feed(part.event, item, frame, sampled, rate, ffmpeg)
+            continue
         event = plan.overlays[i]
-        sampled = partial(overlay_at, event, drawn=drawn)
-        if isinstance(item, Path):
-            # An Overlay's video plays forwards from its offset at its Speed for as long as it shows; a
-            # looped image's one picture is read over its span.
-            frames = PictureFrames(event.picture, frame=frame, sampled=sampled)
-            video = VideoDecode(
-                ffmpeg, item, event.picture, event.start, event.end, event.time, rate, grade_filters(event.grade, alpha="g"), event.video_effects,
-                looped=event.image,
-            )
-        else:
-            frames, video = PictureFrames(event.picture, item, frame, sampled), None
-        feeds[(kind, i)] = FrameFeed(frames, event.start, event.end, rate, video)
+        feeds[(kind, i)] = _overlay_feed(event, item, frame, partial(overlay_at, event, drawn=drawn), rate, ffmpeg)
     return feeds
+
+
+def _overlay_feed(
+    event: OverlayEvent, item: np.ndarray | Path, frame: tuple[int, int], sampled: Callable[[float], Picture], rate: float, ffmpeg: Path,
+) -> FrameFeed:
+    """The frame process of a keyed or animated Overlay (`_feeds`), its picture at each time as `sampled` gives it."""
+    if isinstance(item, Path):
+        # An Overlay's video plays forwards from its offset at its Speed for as long as it shows; a
+        # looped image's one picture is read over its span.
+        frames = PictureFrames(event.picture, frame=frame, sampled=sampled)
+        video = VideoDecode(
+            ffmpeg, item, event.picture, event.start, event.end, event.time, rate, grade_filters(event.grade, alpha="g"), event.video_effects,
+            looped=event.image,
+        )
+    else:
+        frames, video = PictureFrames(event.picture, item, frame, sampled), None
+    return FrameFeed(frames, event.start, event.end, rate, video)
 
 
 def _later(picture: Picture, by: float) -> Picture:

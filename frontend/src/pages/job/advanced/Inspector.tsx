@@ -11,7 +11,7 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { StyleFieldsSkeleton } from "../editor/StyleFields";
 import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, reshape, restyle, setAdjustment, setBlend, setDuck, setFade, setSpeech, setVolume, sharedBlend, type Detacher, type ItemActions, type Outcome, type SpeedRef, type StackRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setAdjustment, setBehind, setBlend, setDuck, setFade, setSpeech, setVolume, sharedBlend, type Detacher, type ItemActions, type Outcome, type SpeedRef, type StackRef } from "./actions";
 import { audioEffectChanges, AudioEffectsFields } from "./AudioEffectsFields";
 import { videoEffectChanges, VideoEffectsFields } from "./VideoEffectsFields";
 import { AdjustmentLayerFields } from "./AdjustmentLayers";
@@ -368,6 +368,12 @@ export function Inspector({
         color={colorOf()}
         pictureEffects={pictureEffectsOf()}
         effects={effectsOf()}
+        onBehind={(behind) => {
+          // Its own step of undo; refused onto a locked Track.
+          const outcome = setBehind({ edits, pick, locked }, overlay.id, behind);
+          if (outcome?.notice) keying?.onNotice?.(outcome.notice);
+          else if (outcome) onEdits(outcome.edits);
+        }}
       />
     );
   }

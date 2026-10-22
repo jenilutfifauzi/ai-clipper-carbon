@@ -10,7 +10,7 @@ import { TRANSITION_KINDS } from "../editor/transitions";
 import { DUCK_MAX, DUCK_MIN, FADE_MAX_SECS, fadesWithin, halfFadeMax, ITEM_MIN_SECS, keptOffset, NEW_LAYER_SECS, newId, round, type AdvancedEdits } from "./edits";
 import { mirroredKeys, rekeyed, scaledKeys, shownTransform, toMillionth } from "./keyActions";
 import { draggedSegments, MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
-import { isPicked, isPlaced, itemsOf, listOf, onlyItem, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick, type PlacedKind } from "./pick";
+import { isPicked, isPlaced, itemsOf, listOf, onlyItem, picked, TRACK_OF, trackOf, trackOfRef, type ItemKind, type ItemRef, type Pick, type PlacedKind } from "./pick";
 import { removedNotice, ripple, type Layers, type TrackChange } from "./ripple";
 import { speedLabel, speedOf } from "./speed";
 import type { LandedTake } from "./takeFlow";
@@ -209,18 +209,21 @@ export const layersOf = ({ text_layers, shapes, music, overlays, adjustment_laye
 /**
  * The picked items removed and their gaps closed, whatever the Magnetic timeline's switch says (Ripple
  * delete, GLOSSARY.md): the Text Layers, Shapes, Music Clips and Overlays of a Track after a removed one of
- * it move up by its length (those over it stay), and then the layers follow the removed Segments.
+ * it move up by its length (those over it stay; the Overlay Track's and the Behind Track's each by their own), and then the layers follow the removed Segments.
  */
 export function rippleRemove(scene: PickContext): Outcome | null {
   const { layers } = pickedItems(scene);
   const edits = { ...scene.edits };
   for (const kind of Object.keys(KINDS) as TimedKind[]) {
-    const gone = layers.filter((layer) => layer.kind === kind).map(({ item }) => ({ start: item.start, end: item.start + item.secs }));
-    if (!gone.length) continue;
+    const removed = layers.filter((layer) => layer.kind === kind);
+    if (!removed.length) continue;
+    // The Track an item is on: Overlays over the Main Track and Behind it are on two.
+    const track = (item: Timed) => trackOf(kind, item as { behind?: boolean });
     const list = KINDS[kind].list;
     const closed = (listOf(edits, kind) as Timed[])
       .filter((item) => !isPicked(scene.pick, kind, item.id))
       .map((item) => {
+        const gone = removed.filter((layer) => track(layer.item as Timed) === track(item)).map(({ item: was }) => ({ start: was.start, end: was.start + was.secs }));
         const by = covered(gone.filter((span) => span.end <= item.start + 1e-6));
         return by ? { ...item, start: round(item.start - by) } : item;
       });
@@ -497,7 +500,7 @@ export function split(scene: PickContext, at: number): Outcome | null {
 // Every Segment, Text Layer, Shape, Music Clip and Overlay the playhead at `time` is inside, but on locked Tracks.
 function under(scene: PickContext, time: number): ItemRef[] {
   const locked = scene.locked ?? [];
-  return itemsOf(pickAll(scene.edits)).filter((ref) => !locked.includes(TRACK_OF[ref.kind]) && inside(scene, ref, time));
+  return itemsOf(pickAll(scene.edits)).filter((ref) => !locked.includes(trackOfRef(ref, scene.edits)) && inside(scene, ref, time));
 }
 
 /** Whether Split can cut at `time`: a picked item there, or with nothing picked, any item there (Split all). */
@@ -1745,4 +1748,21 @@ export function setBlend(scene: { edits: AdvancedEdits; pick: Pick }, blend: Ble
     return blend === "normal" ? rest : { ...rest, blend };
   });
   return { edits: { ...edits, overlays }, pick };
+}
+
+/**
+ * Overlay `id` moved Behind the Main Track (`behind`), onto the Behind Track, or back over it onto the
+ * Overlay Track (ADR 0015), as one change: Over leaves it without the field, as one saved before. It
+ * keeps its Timeline time and the Pick. Refused, with a notice, onto a `locked` Track; null when it is
+ * gone or there already.
+ */
+export function setBehind(scene: { edits: AdvancedEdits; pick: Pick; locked?: TrackKind[] }, id: string, behind: boolean): Outcome | null {
+  const { edits, pick } = scene;
+  const overlay = edits.overlays.find((other) => other.id === id);
+  if (!overlay || !!overlay.behind === behind) return null;
+  const onto: TrackKind = behind ? "behind" : "overlay";
+  if (scene.locked?.includes(onto)) return { edits, pick, notice: `The ${behind ? "Behind" : "Overlay"} Track is locked.` };
+  const { behind: _was, ...rest } = overlay;
+  const moved: Overlay = behind ? { ...rest, behind } : rest;
+  return { edits: { ...edits, overlays: edits.overlays.map((other) => (other.id === id ? moved : other)) }, pick };
 }

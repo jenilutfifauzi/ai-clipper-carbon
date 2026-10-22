@@ -298,7 +298,9 @@ export const keyedGroup = (group: string, keyed: boolean, at: number | null) => 
 
 // Item `ref` as keyed in `scene`; null when it can't be edited (gone, or on a locked Track).
 function editableItem(scene: KeyScene, ref: KeyedRef): KeyedItem | null {
-  if ((scene.locked ?? []).includes(kindOf(ref).track)) return null;
+  // An Overlay Behind the Main Track is on the Behind Track (ADR 0015).
+  const behind = ref.kind === "overlay" && scene.edits.overlays.some((overlay) => overlay.id === ref.id && overlay.behind);
+  if ((scene.locked ?? []).includes(behind ? "behind" : kindOf(ref).track)) return null;
   return keyedItem(scene.edits, ref, scene.track, scene.plan);
 }
 

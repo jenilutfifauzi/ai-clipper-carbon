@@ -29,7 +29,7 @@ import { RATES, usePlayback, useShown, type Playback } from "./playback";
 import { allStroke, filledStyle, FRAME, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewEffected } from "./PreviewEffected";
 import { PreviewMusic } from "./PreviewMusic";
-import { PreviewOverlays } from "./PreviewOverlays";
+import { BehindOverlays, coversFrame, PreviewOverlays } from "./PreviewOverlays";
 import { PreviewSegments } from "./PreviewSegments";
 import { InlineText, type Editing, type Retype } from "./InlineText";
 import { hookEnds, hookLook } from "./animation";
@@ -223,6 +223,22 @@ export function ClipPreview({
   const takes = (data: DataTransfer) => !!controls?.drop && controls.drop.types.some((type) => data.types.includes(type));
   const scene = drawn?.scenes[sceneIndex];
 
+  // A deck's slot: each deck's first slots are drawn, then the Behind Overlays over a Manual Scene's
+  // Background its picture doesn't cover (not cut out: CutGroup draws them then), then the other slots.
+  const deckPanel = (ref: React.RefObject<HTMLVideoElement>, deck: number, slot: number) => (
+    <PanelView
+      key={`${deck}:${slot}`}
+      videoRef={ref}
+      src={src}
+      plan={drawn}
+      {...slotView(scene, slot)}
+      playback={playback}
+      muted={deck > 0 || slot > 0}
+      hidden={deck !== shownDeck}
+      cut={cutting ? { matte: mattes[deck], feather: drawn?.segments[shownSegment]?.background_removal?.feather ?? 0 } : null}
+    />
+  );
+
   const stageFrame = (
     <div
       ref={stage}
@@ -250,12 +266,12 @@ export function ClipPreview({
         controls?.drop?.onDrop(event.dataTransfer, framePoint(event.currentTarget.getBoundingClientRect(), event, plan));
       }}
     >
-      {drawn && <GradeFilters grades={[...drawn.segments, ...drawn.overlays, drawn].map((item) => item.grade)} />}
+      {drawn && <GradeFilters grades={[...drawn.segments, ...drawn.overlays, ...(drawn.behind ?? []), drawn].map((item) => item.grade)} />}
       {drawn && (
         <EffectFilters
           items={[
             ...drawn.segments.map((segment) => ({ effects: segment.video_effects, box: FRAME, start: segment.start })),
-            ...drawn.overlays.map((event) => ({ effects: event.video_effects, box: pictureBox(event.picture), start: event.start })),
+            ...[...drawn.overlays, ...(drawn.behind ?? [])].map((event) => ({ effects: event.video_effects, box: pictureBox(event.picture), start: event.start })),
           ]}
         />
       )}
@@ -283,6 +299,8 @@ export function ClipPreview({
                     playback={playback}
                   />
                 )}
+                {/* The Overlays Behind the Main Track (ADR 0015): over the Background, under the cut picture. */}
+                {cutting && drawn && <BehindOverlays plan={drawn} playback={playback} className="invisible group-data-[cut]/cut:visible" />}
                 {/* The decks' panels in the shown Segment's Grade and Video Effects (ADR 0013, 0014): its whole frame, black included
                     (but for a cut-out Segment's Background). */}
                 <DecksGraded
@@ -291,21 +309,11 @@ export function ClipPreview({
                   start={drawn?.segments[shownSegment]?.start}
                   className="group-data-[cut]/cut:!bg-transparent"
                 >
-                  {decks.map((refs, deck) =>
-                    refs.map((ref, slot) => (
-                      <PanelView
-                        key={`${deck}:${slot}`}
-                        videoRef={ref}
-                        src={src}
-                        plan={drawn}
-                        {...slotView(scene, slot)}
-                        playback={playback}
-                        muted={deck > 0 || slot > 0}
-                        hidden={deck !== shownDeck}
-                        cut={cutting ? { matte: mattes[deck], feather: drawn?.segments[shownSegment]?.background_removal?.feather ?? 0 } : null}
-                      />
-                    )),
+                  {decks.map((refs, deck) => deckPanel(refs[0], deck, 0))}
+                  {drawn && scene?.layout === "manual" && !coversFrame(scene.picture, drawn) && (
+                    <BehindOverlays plan={drawn} playback={playback} className="group-data-[cut]/cut:invisible" />
                   )}
+                  {decks.flatMap((refs, deck) => refs.slice(1).map((ref, slot) => deckPanel(ref, deck, slot + 1)))}
                 </DecksGraded>
               </CutGroup>
               <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />

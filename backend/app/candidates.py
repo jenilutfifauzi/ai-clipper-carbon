@@ -726,6 +726,10 @@ class Overlay:
     # How it is laid over what is under it, after its opacity (docs/adr/0014). Normal in one saved
     # before Blend Modes.
     blend: BlendMode = BlendMode.NORMAL
+    # Behind the Main Track (docs/adr/0015): on the Behind Track, drawn over each Segment's Background
+    # and under its picture, so it shows only where that picture doesn't cover the frame or is cut
+    # out. Over the Main Track in one saved before it.
+    behind: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { mediaItemUrl, mediaProxyUrl, type OverlayEvent, type Picture, type RenderPlan } from "../../../api";
+import { cx } from "../../../format";
 import { isAnimated, overlayLook, type Look } from "./animation";
 import { follow } from "./follow";
 import { PicturePanel } from "./PicturePanel";
@@ -20,14 +21,56 @@ import { copyProgress, eventCopy, eventPlay, useRetimedCopy } from "./retimedCop
  * be seen while it is edited on a frame its animation hasn't reached. Its media element names its
  * Overlay (`data-overlay-media`), for Chroma key's eyedropper to read (EyedropperLayer).
  */
-export function PreviewOverlays({ plan, playback, selected }: { plan: RenderPlan | null; playback: Playback; selected: string[] }) {
-  if (!plan || !plan.overlays.length) return null;
+export function PreviewOverlays({
+  plan,
+  playback,
+  selected,
+  events = plan?.overlays ?? [],
+}: {
+  plan: RenderPlan | null;
+  playback: Playback;
+  selected: string[];
+  // The Overlays drawn: by default the plan's over the Main Track (BehindOverlays draws those behind it).
+  events?: OverlayEvent[];
+}) {
+  if (!plan || !events.length) return null;
   return (
     <>
-      {plan.overlays.map((event, i) => (
+      {events.map((event, i) => (
         <OverlayView key={`${i}:${event.media}`} plan={plan} event={event} picture={event.picture} playback={playback} selected={selected.includes(event.id)} />
       ))}
     </>
+  );
+}
+
+/**
+ * The plan's Overlays Behind the Main Track (ADR 0015), drawn as PreviewOverlays draws the others, in
+ * the Clip's time, over a Segment's Background and under its picture: where it is cut out (inside
+ * CutGroup, `className` showing them only with the cut), or where its picture doesn't cover the frame.
+ * None without any (or while the Behind Track is hidden, which leaves them out of the plan).
+ */
+export function BehindOverlays({ plan, playback, className }: { plan: RenderPlan; playback: Playback; className?: string }) {
+  if (!plan.behind?.length) return null;
+  return (
+    <div aria-hidden className={cx("absolute inset-0 overflow-hidden", className)}>
+      <PreviewOverlays plan={plan} playback={playback} selected={[]} events={plan.behind} />
+    </div>
+  );
+}
+
+/**
+ * Whether a Scene's one picture (a Manual Scene's, a video's) covers the frame, hiding its Background
+ * and the Behind Overlays: opaque, unturned and unkeyed, and over the whole frame, as the render's `_covers`.
+ */
+export function coversFrame(picture: Picture | null | undefined, frame: { width: number; height: number }): boolean {
+  if (!picture || picture.opacity < 1 || picture.rotation % 360 || Object.keys(picture.motion ?? {}).length) return false;
+  const [x, y] = picture.centre;
+  const reach = 0.5;
+  return (
+    x - picture.width / 2 <= reach &&
+    y - picture.height / 2 <= reach &&
+    x + picture.width / 2 >= frame.width - reach &&
+    y + picture.height / 2 >= frame.height - reach
   );
 }
 

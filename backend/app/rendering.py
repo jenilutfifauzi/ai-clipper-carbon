@@ -420,12 +420,12 @@ def played_files(
     used = (
         {event.media for event in plan.audio if event.media}
         | {segment.media for segment in plan.segments if segment.media}
-        | {overlay.media for overlay in plan.overlays}
+        | {overlay.media for overlay in plan.overlays + plan.behind}
         | backdrop_images(plan)
     )
     files = {media_id: media.file(media_id) for media_id in used}
     count = sum(1 for segment in plan.segments if segment.reverse and segment.hold is None) + sum(
-        1 for event in plan.overlays + plan.audio if event.reverse
+        1 for event in plan.overlays + plan.behind + plan.audio if event.reverse
     )
     return read_from_copies(plan, files, lambda media_id, played: (
         media.retimed(media_id) if media_id is not None else source_copies(job_dir, source)

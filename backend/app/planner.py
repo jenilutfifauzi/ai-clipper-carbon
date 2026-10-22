@@ -1005,6 +1005,9 @@ class RenderPlan:
     segments: list[SegmentPlan] = field(default_factory=list)
     # Laid over the Segments, in drawing order.
     overlays: list[OverlayEvent] = field(default_factory=list)
+    # The Overlays Behind the Main Track (docs/adr/0015), in drawing order: over each Segment's
+    # Background and under its picture, before the joins, so under the Candidate's Grade.
+    behind: list[OverlayEvent] = field(default_factory=list)
     # Between Segments, in order.
     transitions: list[TransitionEvent] = field(default_factory=list)
     # The Shapes that show, in drawing order, under the Text Layers.
@@ -1091,7 +1094,8 @@ def plan_render(
     `media_info` says of its songs (and `source` of the Source, for its Music Clips of the Source).
 
     `overlays` are laid over it as `overlay_events` places them, given what `media_info` says of
-    their items (whose videos' sound, when turned up, joins the music).
+    their items (whose videos' sound, when turned up, joins the music); those Behind the Main Track
+    are listed apart (`behind`, docs/adr/0015).
 
     `cue_edits` change single Cues (`_captions`). Unlike the other times, theirs are on their own
     timelines: the Source's, or with `media` that item's. Each applies in every Segment that shows
@@ -1206,7 +1210,8 @@ def plan_render(
         audio=_ducked(audio, heard, music_words or {}, ducking),
         source_volume=source_volume,
         segments=segments,
-        overlays=overlay_events(overlays or [], duration, media_info or {}),
+        overlays=overlay_events([overlay for overlay in overlays or [] if not overlay.behind], duration, media_info or {}),
+        behind=overlay_events([overlay for overlay in overlays or [] if overlay.behind], duration, media_info or {}),
         transitions=transitions,
         shapes=[event for shape in shapes or [] if (event := shape_event(shape, duration)) is not None],
         unused_cue_edits=[edit for i, edit in enumerate(cue_edits or []) if i not in used],

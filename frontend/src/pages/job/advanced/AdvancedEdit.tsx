@@ -507,7 +507,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   useReplanWhilePending(preview?.words_status, setReplan);
   // What is picked of the edits as they are now: an undo or a change from elsewhere may have taken
   // some of it away (a Cue, once the plan has none of its key), and nothing on a locked Track is picked.
-  const pick = prunedCue(unlockedPick(prunedPick(pickState, edits), tracks.locked), preview?.plan ?? null);
+  const pick = prunedCue(unlockedPick(prunedPick(pickState, edits), tracks.locked, edits), preview?.plan ?? null);
   useEffect(() => {
     if (pick !== pickState) setPickState(pick);
   }, [pick, pickState]);
@@ -734,9 +734,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     change({ music: [...edits.music, clip] });
     added(picked({ kind: "music", id: clip.id }));
   }
-  function addOverlay(item: MediaItem, at = playback.time) {
-    if (refused("overlay")) return;
-    const overlay = newOverlay(item, at, duration);
+  // An Overlay of `item` at `at`: over the Main Track, or `behind` it on the Behind Track (ADR 0015).
+  function addOverlay(item: MediaItem, at = playback.time, behind = false) {
+    if (refused(behind ? "behind" : "overlay")) return;
+    const overlay = newOverlay(item, at, duration, behind);
     change({ overlays: [...edits.overlays, overlay] });
     added(picked({ kind: "overlay", id: overlay.id }));
   }
@@ -761,7 +762,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     const item = mediaById.get(media);
     if (!item) return;
     if (onto === "music" && item.has_audio) addMusic(item, time);
-    else if (onto === "overlay" && item.kind !== "audio") addOverlay(item, time);
+    else if ((onto === "overlay" || onto === "behind") && item.kind !== "audio") addOverlay(item, time, onto === "behind");
     else if (onto === "segment" && item.kind === "video") {
       addSegment(newMediaSegment(item, newId()), placeDropped(played, time));
     }

@@ -5,6 +5,7 @@ import { follow } from "./follow";
 import { GradeVignette, useFrameFilter } from "./GradeFilters";
 import { filledStyle, FRAME, panelStyle, slotView } from "./picture";
 import { PicturePanel } from "./PicturePanel";
+import { BehindOverlays, coversFrame } from "./PreviewOverlays";
 import { onOwnVideos, playable, useShown, type Playback } from "./playback";
 import { changing, loudness, segmentSound } from "./loudness";
 import { copyProgress, mediaPlay, segmentCopy, sourcePlay, useRetimedCopies, useRetimedCopy } from "./retimedCopy";
@@ -32,6 +33,7 @@ export function PreviewSegments({ plan, playback, src, jobId }: { plan: RenderPl
         segment.media ? (
           <MediaSegment
             key={`${i}:${segment.start}`}
+            plan={plan}
             segment={segment}
             end={played[i].end}
             scene={segmentScene(plan, i)}
@@ -67,9 +69,11 @@ export const segmentScene = (plan: RenderPlan, index: number): ScenePlan | undef
  * its span its video waits at its start, so that its first frame is ready. A keyed picture moves
  * with the playback (PicturePanel), and a keyed or faded sound follows its gain curve (followCurve).
  * A reversed one, or one at a Speed a browser won't play, plays its Retimed copy, and shows its first
- * frame held with the copy's progress until the copy is made (`mediaPlay`).
+ * frame held with the copy's progress until the copy is made (`mediaPlay`). Where its picture doesn't
+ * cover the frame, the `plan`'s Behind Overlays (ADR 0015) show over its Background, under its picture.
  */
 export function MediaSegment({
+  plan,
   segment,
   end,
   scene,
@@ -77,6 +81,7 @@ export function MediaSegment({
   fade,
   into,
 }: {
+  plan: RenderPlan;
   segment: SegmentPlan;
   end: number;
   scene: ScenePlan | undefined;
@@ -129,6 +134,7 @@ export function MediaSegment({
             />
           </div>
         )}
+        {!coversFrame(picture, FRAME) && <BehindOverlays plan={plan} playback={playback} />}
         {picture && (
           <PicturePanel
             picture={picture}
