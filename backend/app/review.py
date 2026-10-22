@@ -274,7 +274,7 @@ def update(
         transitions=_joined(transitions, segments),
     )
     if change.segments is not None or change.layout_overrides is not None:
-        _check_cut_out_pictures(new)
+        _check_removal_keyframes(new)
     if change.text_layers is not None or change.shapes is not None:
         _check_inside(new, old)
     if change.music is not None:
@@ -393,7 +393,7 @@ def _check_framing(what: str, layout: Layout, framing: Framing | None) -> None:
         raise InvalidEdit(f"{what} has no framing: only the Manual Layout frames the episode by hand")
 
 
-def _check_cut_out_pictures(candidate: Candidate) -> None:
+def _check_removal_keyframes(candidate: Candidate) -> None:
     """InvalidEdit for a cut-out Segment (docs/adr/0015) whose picture has Keyframes: a video's own,
     or those of a Manual Layout Override that frames a Scene of its range (a Freeze frame holds one
     unkeyed). The render can't cut out a keyed picture yet (its frames are drawn by a frame process),

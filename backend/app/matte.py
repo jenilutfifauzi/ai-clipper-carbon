@@ -228,7 +228,7 @@ class Reversed:
 
 
 # What the runner makes: a piece, by its start, or a reversed copy.
-Part = int | Reversed
+PieceOrCopy = int | Reversed
 
 
 def matte_rate(fps: float) -> float:
@@ -292,7 +292,7 @@ class Mattes:
         scale = min(1.0, MATTE_SIDE / max(width, height))
         return max(2, 2 * round(width * scale / 2)), max(2, 2 * round(height * scale / 2))
 
-    def path(self, subject: Subject, version: str, piece: Part) -> Path:
+    def path(self, subject: Subject, version: str, piece: PieceOrCopy) -> Path:
         """A piece's file; a reversed copy's, the one serving it (`reversed_copy`)."""
         if isinstance(piece, Reversed):
             return self.reversed_copy(subject, version, piece)[0]
@@ -329,7 +329,7 @@ class Mattes:
         except OSError:
             return None
 
-    def retry(self, subject: Subject, version: str, pieces: Iterable[Part]) -> None:
+    def retry(self, subject: Subject, version: str, pieces: Iterable[PieceOrCopy]) -> None:
         """Forget the pieces' failures, so that they are made again."""
         for piece in pieces:
             self.path(subject, version, piece).with_suffix(".failed").unlink(missing_ok=True)
@@ -342,7 +342,7 @@ class Mattes:
         return max(1, round(end * fps) - round(start * fps)), round(start * fps) - round(warm * fps)
 
     def make(
-        self, ffmpeg: Path, matter: Matter, subject: Subject, piece: Part, progress: Callable[[float], None] = lambda done: None, nice: bool = False
+        self, ffmpeg: Path, matter: Matter, subject: Subject, piece: PieceOrCopy, progress: Callable[[float], None] = lambda done: None, nice: bool = False
     ) -> Path:
         """The piece from `piece`, made now by `matter` if it isn't there, its `progress` reported from 0
         to 1; or a reversed copy, made from its pieces (PiecesMissing until they are all there). A
@@ -528,7 +528,7 @@ class MatteRunner:
         self._loaded: Matter | None = None
         self._changed = threading.Condition()
         # Requests waiting, latest last: each its pieces, in order.
-        self._requests: list[list[tuple[Mattes, Subject, Part]]] = []
+        self._requests: list[list[tuple[Mattes, Subject, PieceOrCopy]]] = []
         # The piece the runner is making, and how far it has got.
         self._making: tuple[Path, float] | None = None
         self._thread: threading.Thread | None = None
@@ -545,7 +545,7 @@ class MatteRunner:
         """Whether the person model is downloaded, so that pieces can be made."""
         return self.model is not None and self.model.installed
 
-    def state(self, mattes: Mattes, subject: Subject, piece: Part) -> tuple[PieceState, float, str | None]:
+    def state(self, mattes: Mattes, subject: Subject, piece: PieceOrCopy) -> tuple[PieceState, float, str | None]:
         """The piece's state, with its progress from 0 to 1 and a failed one's message."""
         if mattes.path(subject, self.version, piece).is_file():
             return PieceState.READY, 1.0, None
@@ -559,7 +559,7 @@ class MatteRunner:
                 return PieceState.QUEUED, 0.0, None
         return PieceState.MISSING, 0.0, None
 
-    def status(self, wanted: Iterable[tuple[Mattes, Subject, Part]]) -> MatteStatus:
+    def status(self, wanted: Iterable[tuple[Mattes, Subject, PieceOrCopy]]) -> MatteStatus:
         """How the pieces `wanted` are coming along together."""
         states = [self.state(*piece) for piece in wanted]
         if not states:
@@ -573,7 +573,7 @@ class MatteRunner:
             return MatteStatus("making", progress)
         return MatteStatus("missing" if self.ready() else "waiting", progress)
 
-    def ask(self, wanted: Iterable[tuple[Mattes, Subject, Part]]) -> None:
+    def ask(self, wanted: Iterable[tuple[Mattes, Subject, PieceOrCopy]]) -> None:
         """Queue the pieces `wanted` that are missing (not there, not failed, not being made) as the
         latest request, ahead of those asked for before (which lose them). Nothing waits for the person
         model: it is asked again once there is one."""
@@ -591,14 +591,14 @@ class MatteRunner:
                 self._thread.start()
             self._changed.notify_all()
 
-    def retry(self, wanted: Iterable[tuple[Mattes, Subject, Part]]) -> None:
+    def retry(self, wanted: Iterable[tuple[Mattes, Subject, PieceOrCopy]]) -> None:
         """Forget the failures of the pieces `wanted`, and ask for them again."""
         wanted = list(wanted)
         for mattes, subject, piece in wanted:
             mattes.retry(subject, self.version, [piece])
         self.ask(wanted)
 
-    def make(self, wanted: Iterable[tuple[Mattes, Subject, Part]], progress: Callable[[float], None] = lambda done: None) -> list[Path]:
+    def make(self, wanted: Iterable[tuple[Mattes, Subject, PieceOrCopy]], progress: Callable[[float], None] = lambda done: None) -> list[Path]:
         """The pieces `wanted`, in order, made now in this thread where they aren't there (a render's,
         in the Worker), one at a time with the runner, `progress` reported from 0 to 1 over those made.
         ModelAbsent without the person model; a RuntimeError with the message of a piece that fails,

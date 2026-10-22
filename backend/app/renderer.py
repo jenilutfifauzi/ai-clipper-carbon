@@ -79,12 +79,12 @@ Segment's; its Matte is drawn through the same Scenes (the same crops, scales, f
 the Source's size, Blur's fill left out), feathered by a blur and joined to the picture as its alpha;
 that is graded and drawn through its Video Effects, so they touch only what is kept, and laid over
 its Background (its own colour or image, else the picture blurred over the whole frame; a Manual
-Scene's Framing's Background), all before the joins (`_cut_out`). A video's cut-out Segment is drawn
+Scene's Framing's Background), all before the joins (`_removed_background`). A video's cut-out Segment is drawn
 alike, its Matte its item's (app/media.py's `mattes`) at its item's size, over its Framing's
 Background. A cut-out Overlay (a video's or an image's) reads its item's Matte as one more input too
 (an image's one PNG, held or looped as its picture is): cropped, scaled and flipped as its picture is,
 feathered, and joined as its alpha (an image's multiplying its own) before its Grade and Video
-Effects, whose Chroma or Luma key multiplies it again (`_cut_picture`); a keyed one's frame process
+Effects, whose Chroma or Luma key multiplies it again (`_matted_picture`); a keyed one's frame process
 cuts its frames alike (app/frames.py). Without one, the command is as it was.
 
 Overlays are more inputs (a video read from its offset for as long as it shows, or an image), each
@@ -942,7 +942,7 @@ def _crossed(plan: RenderPlan, transition: TransitionEvent, outgoing: str, incom
 
 
 def _segmented(
-    plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | None = None, matted: "dict[Cut, str] | None" = None,
+    plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | None = None, matted: "dict[MattePlace, str] | None" = None,
     images: dict[str, Path] | None = None, behind: "Behind | None" = None,
 ) -> str:
     """The filtergraph that draws a Clip of several Segments into [frame]: each Segment from its own
@@ -950,7 +950,7 @@ def _segmented(
     from its first frame, held; an image Background from its file in `images`), then graded
     (docs/adr/0013) and drawn through its Video Effects (docs/adr/0014), and the Segments joined back to back.
     A keyed Scene's picture is the input `drawn` gives by its place among the plan's Scenes, from
-    its frame process. A cut-out Segment (docs/adr/0015) is drawn by `_cut_out`, its Matte read as
+    its frame process. A cut-out Segment (docs/adr/0015) is drawn by `_removed_background`, its Matte read as
     `matted` gives by its place among the plan's Segments (`_matte_inputs`). The Behind Overlays' parts `behind`
     gives are laid over its Background, or over a Scene's that its picture doesn't cover (`_behind_slots`)."""
     chains, first = [], 0
@@ -972,7 +972,7 @@ def _segmented(
         given = f"[{i}:v]{timing}"
         if (read := (matted or {}).get(("segment", i))) is not None:
             # Its Matte's frames from the same time of its item as the picture's, at the same times.
-            chains += _cut_out(plan, tuning, segment, scenes, given, f"{read}{timing}", f"g{i}", keyed, images or {}, _lay(plan, behind.get(("segment", i))))
+            chains += _removed_background(plan, tuning, segment, scenes, given, f"{read}{timing}", f"g{i}", keyed, images or {}, _lay(plan, behind.get(("segment", i))))
             continue
         # Its Grade, then its Video Effects (docs/adr/0014), over its whole frame, before the joins,
         # so that a Transition blends pictures that carry them.
@@ -999,7 +999,7 @@ def _segmented(
     return ";".join(chains)
 
 
-def _cut_out(
+def _removed_background(
     plan: RenderPlan, tuning: RenderTuning, segment: SegmentPlan, scenes: list[ScenePlan], given: str, matte: str, name: str,
     keyed: dict[int, int], images: dict[str, Path], behind: "Lay | None" = None,
 ) -> list[str]:
@@ -1092,14 +1092,14 @@ def _plain(plan: RenderPlan, given: str, out: str, name: str, colour: str | None
 
 # A cut-out picture of the plan (rendering.py's): ("segment", its place among the plan's Segments),
 # ("overlay", among its Overlays) or ("behind", a Behind Overlay's part's place among `_behind_parts`).
-Cut = tuple[str, int]
+MattePlace = tuple[str, int]
 # The concat listings of the cut-out pictures' Matte pieces, by the pieces' files.
 Listings = dict[tuple[str, ...], Path]
 
 
 def _matte_inputs(
     plan: RenderPlan, listings: Listings, first: int, layered: "list[tuple[OverlayEvent, int, FrameFeed | None, int]]", behind: "Behind",
-) -> tuple[list[str], dict[Cut, str]]:
+) -> tuple[list[str], dict[MattePlace, str]]:
     """The input options that read each cut-out picture's Matte, numbered from `first`, and each one's
     read, a link label then the filters that bring its frames to its picture's own (each picture from
     0 s at the first frame its input reads): a cut-out Segment's, by its place; an Overlay's of those
@@ -1110,8 +1110,8 @@ def _matte_inputs(
     graph); a reversed one's reversed copy (`matte_copy`) from where it shows the range for as long, as
     its picture's Retimed copy is; an image's one picture as its picture is, held or looped."""
     inputs: list[str] = []
-    reads: dict[Cut, str] = {}
-    cut: list[tuple[Cut, SegmentPlan | OverlayEvent]] = [
+    reads: dict[MattePlace, str] = {}
+    cut: list[tuple[MattePlace, SegmentPlan | OverlayEvent]] = [
         (("segment", i), segment) for i, segment in enumerate(plan.segments) if segment.background_removal is not None and segment.matte_files
     ]
     cut += [(("overlay", place), event) for event, _, feed, place in layered if feed is None]
@@ -1614,13 +1614,13 @@ def _overlay(
     chain = video_effect_chain(event.video_effects, (event.picture.width, event.picture.height), label=f"layer{number}fx", clock=clock)
     effected = ",".join([*([graded] if graded else []), *chain])
     removal = event.background_removal
-    cut = None if matte is None or removal is None else _Cut(matte, removal.feather, event.image)
+    cut = None if matte is None or removal is None else _PictureMatte(matte, removal.feather, event.image)
     return _picture(
         event.picture, f"[{index}:v]", below, out, f"layer{number}", timed, f"{shows}:eof_action={ends}", effected, event.blend, shows, spanned, cut
     )
 
 
-class _Cut(NamedTuple):
+class _PictureMatte(NamedTuple):
     """A picture's Matte (docs/adr/0015), as `_picture` cuts it: its frames `read` (a link label, then
     the filters that time them as the picture's own), feathered by a blur of `feather` drawn pixels;
     `own` when the picture may have an alpha of its own (an image's), which the Matte's multiplies."""
@@ -1990,7 +1990,7 @@ def _later(picture: Picture, by: float) -> Picture:
 
 def _picture(
     picture: Picture, source: str, below: str, out: str, name: str, after: str = "", laid: str = "", graded: str = "",
-    blend: BlendMode = BlendMode.NORMAL, shows: str = "", spanned: tuple[float, float, float] | None = None, cut: _Cut | None = None,
+    blend: BlendMode = BlendMode.NORMAL, shows: str = "", spanned: tuple[float, float, float] | None = None, cut: _PictureMatte | None = None,
 ) -> str:
     """Filters that draw `picture` of the frames `source` over the frames `below`, into `out`, in the
     order of docs/adr/0007: crop, scale, flip, its Matte's `cut` (docs/adr/0015: the Matte at the
@@ -2005,7 +2005,7 @@ def _picture(
     steps.append(f"scale={picture.width}:{picture.height}:flags=lanczos")
     steps += ["hflip"] * picture.flip_h + ["vflip"] * picture.flip_v
     if cut is not None:
-        source = _cut_picture(picture, source, steps, cut, name)
+        source = _matted_picture(picture, source, steps, cut, name)
         steps = []
     if graded:
         steps.append(graded)
@@ -2029,7 +2029,7 @@ def _picture(
     return f"{source}{','.join(steps)}{after}[{name}];" + _laid(below, name, at, laid, out, blend, shows, spanned)
 
 
-def _cut_picture(picture: Picture, source: str, steps: list[str], cut: _Cut, name: str) -> str:
+def _matted_picture(picture: Picture, source: str, steps: list[str], cut: _PictureMatte, name: str) -> str:
     """Filters that cut the frames `source`, drawn by `steps` (its crop, scale and flips), by the
     Matte `cut` drawn alike from its item's size, feathered: its alpha, or one multiplying the
     picture's own. They end on the cut picture's frames, for more filters to follow."""

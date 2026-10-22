@@ -51,7 +51,7 @@ from app.jobs import Job, JobConflict, JobStatus, JobStore, JobWarning
 from app.layer_pictures import PICTURES_DIR, make_pictures
 from app.logos import LOGOS_DIR, LogoStore
 from app.media import MEDIA_DIR, MediaItem, MediaKind, MediaNotFound, MediaStore
-from app.matte import MATTES_DIR, MatteRunner, Mattes, ModelAbsent, Part, Reversed, matte_pieces
+from app.matte import MATTES_DIR, MatteRunner, Mattes, ModelAbsent, PieceOrCopy, Reversed, matte_pieces
 from app.media_words import MediaWordsFailed, MediaWordsStatus, MediaWordsStore
 from app.planner import Join, MediaInfo, SegmentInput, RenderPlan, edit_shown, plan_render, reframes
 from app.renderer import Renderer, RenderStopped, picture_layouts
@@ -186,18 +186,18 @@ def media_mattes(media: MediaStore | None) -> MediaMattes:
     return of
 
 
-def matte_parts(mattes: Mattes, start: float, end: float, reverse: bool, hold: float | None) -> list[Part]:
+def pieces_and_copy(mattes: Mattes, start: float, end: float, reverse: bool, hold: float | None) -> list[PieceOrCopy]:
     """What of an item's Matte a cut-out picture of it playing `start` to `end` (backwards when
     `reverse`, or its first frame held when `hold`) reads: the pieces holding its frames
     (`matte_pieces`; an image's one), then, when reversed, the reversed copy of its range made from them."""
     held = hold is not None
-    pieces: list[Part] = list(mattes.pieces(start, start if held else end))
+    pieces: list[PieceOrCopy] = list(mattes.pieces(start, start if held else end))
     return pieces + [Reversed(start, end)] if reverse and not held and not mattes.still else pieces
 
 
 def matte_wanted(candidate: Candidate, mattes: Mattes, media: MediaMattes = lambda media_id: None) -> dict[str, list[tuple]]:
     """The Matte pieces (and reversed copies) each of the Candidate's cut-out items reads
-    (`matte_parts`), by its id: its Source Segments' of the Source's Matte (`mattes`), its videos'
+    (`pieces_and_copy`), by its id: its Source Segments' of the Source's Matte (`mattes`), its videos'
     Segments' and its Overlays' of their items' (`media`, an item without one left out). What
     `MatteRunner` asks for, makes and reports on."""
     wanted = {}
@@ -205,37 +205,37 @@ def matte_wanted(candidate: Candidate, mattes: Mattes, media: MediaMattes = lamb
         removal = segment.background_removal
         own = mattes if segment.media is None else media(segment.media)
         if removal is not None and own is not None:
-            parts = matte_parts(own, segment.start, segment.end, segment.reverse, segment.hold)
+            parts = pieces_and_copy(own, segment.start, segment.end, segment.reverse, segment.hold)
             wanted[segment.id] = [(own, removal.subject, part) for part in parts]
     for overlay in candidate.overlays:
         removal = overlay.background_removal
         if removal is None or (own := media(overlay.media)) is None:
             continue
         time = overlay_time(overlay.offset, overlay.secs, overlay.speed, overlay.reverse, math.inf if own.still else own.duration)
-        parts = matte_parts(own, time.start, time.end, overlay.reverse, None)
+        parts = pieces_and_copy(own, time.start, time.end, overlay.reverse, None)
         wanted[overlay.id] = [(own, removal.subject, part) for part in parts]
     return wanted
 
 
 # A cut-out picture of a Render Plan: ("segment", its place among its Segments), ("overlay", among
 # its Overlays) or ("behind", among its Behind Overlays).
-Cut = tuple[str, int]
+MattePlace = tuple[str, int]
 
 
-def matte_reads(plan: RenderPlan, mattes: Mattes, media: MediaMattes = lambda media_id: None) -> dict[Cut, tuple[Mattes, list[Part]]]:
+def matte_reads(plan: RenderPlan, mattes: Mattes, media: MediaMattes = lambda media_id: None) -> dict[MattePlace, tuple[Mattes, list[PieceOrCopy]]]:
     """The plan's cut-out pictures (its Segments' and its Overlays', those behind too) and what each
-    reads of its item's Matte (`matte_parts`): a Segment of the Source of `mattes`, a video's Segment
+    reads of its item's Matte (`pieces_and_copy`): a Segment of the Source of `mattes`, a video's Segment
     and an Overlay of their items' (`media`; one without is left out, and isn't cut)."""
-    reads: dict[Cut, tuple[Mattes, list[Part]]] = {}
+    reads: dict[MattePlace, tuple[Mattes, list[PieceOrCopy]]] = {}
     for i, segment in enumerate(plan.segments):
         own = mattes if segment.media is None else media(segment.media)
         if segment.background_removal is not None and own is not None:
-            reads[("segment", i)] = (own, matte_parts(own, segment.source_start, segment.source_end, segment.reverse, segment.hold))
+            reads[("segment", i)] = (own, pieces_and_copy(own, segment.source_start, segment.source_end, segment.reverse, segment.hold))
     for kind, events in (("overlay", plan.overlays), ("behind", plan.behind)):
         for i, event in enumerate(events):
             if event.background_removal is not None and (own := media(event.media)) is not None:
                 time = event.time
-                reads[(kind, i)] = (own, matte_parts(own, time.start, time.end, event.reverse, None))
+                reads[(kind, i)] = (own, pieces_and_copy(own, time.start, time.end, event.reverse, None))
     return reads
 
 
@@ -255,7 +255,7 @@ def matted(
         return plan, {}
     total = sum(len(parts) for _, parts in reads.values())
     done, files = 0, {}
-    found: dict[Cut, dict] = {}
+    found: dict[MattePlace, dict] = {}
     for cut, (own, parts) in reads.items():
         kind, i = cut
         item = plan.segments[i] if kind == "segment" else (plan.overlays if kind == "overlay" else plan.behind)[i]

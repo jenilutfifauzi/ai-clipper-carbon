@@ -1180,7 +1180,7 @@ def plan_render(
                 moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate) for scene in moved]
             plans.extend(moved)
             fade_in, fade_out = fades_within(given.fade_in, given.fade_out, length)
-            cut = _cut_out(given, framed[0], source.duration, source.fps)
+            cut = _segment_removal(given, framed[0], source.duration, source.fps)
             segments.append(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
@@ -1240,7 +1240,7 @@ def plan_render(
     )
 
 
-def _cut_out(given: SegmentInput, shown: ScenePlan, duration: float, fps: float) -> dict:
+def _segment_removal(given: SegmentInput, shown: ScenePlan, duration: float, fps: float) -> dict:
     """A Segment's Background removal as its SegmentPlan carries it (docs/adr/0015): its feather times
     its picture's scale in `shown`, the first of its Scenes (`overlay_scale` of the Framing a video's
     or a Manual Scene's picture is placed by: a video's own, a Manual Layout Override's or a Manual
