@@ -22,7 +22,15 @@ from app.templates import (
     capture,
 )
 from app.jobs import CANDIDATES_FILE
+from fontfiles import font_file
+from test_fonts import imported as imported_face
+from test_imported_looks import imported as imported_look
 from test_jobs_api import create_job
+from test_media_library import make
+from test_media_library import upload as upload_media
+from test_render import preview
+from test_watermark import red_logo  # noqa: F401 (fixture)
+from test_watermark import upload as upload_logo
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp, reviewed  # noqa: F401 (fixtures)
 from test_review import candidates, patch
 from test_selection import analyzed, clip
@@ -459,6 +467,80 @@ def test_a_candidates_marks_are_kept_through_edits_and_one_saved_before_marks_lo
     unmarked = candidates_of(client, job, source)
     assert unmarked["revision"] == source["revision"]
     assert [layer["template"] for layer in unmarked["text_layers"]] == [None, None]
+
+
+# Library guards (.scratch/templates/issues/09-library-guards.md)
+
+
+@pytest.fixture(scope="session")
+def song(tmp_path_factory) -> bytes:
+    """3 s of a 440 Hz tone."""
+    return make(tmp_path_factory.mktemp("song") / "song.wav", "-f", "lavfi", "-i", "sine=frequency=440:duration=3")
+
+
+def test_a_template_naming_a_missing_media_item_or_face_is_refused(client, settings, from_episode, llm, wait_for_status):
+    job, source = branded(client, wait_for_status, llm)
+    body = {"name": "x", "job_id": job["id"], "candidate_id": source["id"]}
+    gone = {"id": "bed", "media": "cd" * 16, "start": 0.0, "secs": 1.0}
+    unknown_face = {**LOWER_THIRD, "style": {"font": "no-such-face"}}
+
+    for edits in ({"music": [gone]}, {"text_layers": [unknown_face]}, {"style_overrides": {"watermark": {"kind": "logo", "logo": "ab" * 16}}}):
+        response = client.post(URL, json={**body, "edits": edits})
+        assert response.status_code == 422, edits
+    # Nor from a Candidate that holds one already, as saved.
+    path = settings.data_dir / "jobs" / job["id"] / CANDIDATES_FILE
+    stored = json.loads(path.read_text())
+    [held] = [candidate for candidate in stored if candidate["id"] == source["id"]]
+    held["music"] = [gone]
+    path.write_text(json.dumps(stored))
+    response = client.post(URL, json=body)
+    assert response.status_code == 422 and "cd" * 16 in response.json()["detail"], response.text
+    assert client.get(URL).json() == []
+
+
+def test_a_song_look_or_face_used_only_by_a_template_cant_be_deleted_until_it_is(
+    client, from_episode, llm, wait_for_status, song
+):
+    item = upload_media(client, song, "song.wav").json()
+    look = imported_look(client)
+    face = imported_face(client, font_file("Testp"))["faces"][0]
+    job, source = branded(client, wait_for_status, llm)
+    branded_with = patch(
+        client, job, source,
+        music=[{"id": "bed", "media": item["id"], "start": 0.0, "secs": 1.0}],
+        adjustment_layers=[{"id": "warm", "start": 0.0, "secs": 2.0, "grade": {"look": look["id"]}}],
+        text_layers=[{**LOWER_THIRD, "style": {"font": face["id"]}}],
+    )
+    template = saved(client, job, branded_with)
+    # Its Job, and with it the Candidate and its Revision History, is gone: only the Template uses them.
+    assert client.delete(f"/api/jobs/{job['id']}").status_code == 204
+
+    for url in (f"/api/media/{item['id']}", f"/api/looks/{look['id']}", f"/api/fonts/{face['id']}"):
+        refused = client.delete(url)
+        assert refused.status_code == 409, url
+        detail = refused.json()["detail"]
+        assert "Template Brand" in detail["message"], detail
+        [use] = detail["uses"]
+        assert (use["kind"], use["title"]) == ("template", "Brand"), use
+        assert use.get("template_id", use.get("id")) == template["id"]
+
+    assert client.delete(f"{URL}/{template['id']}").status_code == 204
+    for url in (f"/api/media/{item['id']}", f"/api/looks/{look['id']}", f"/api/fonts/{face['id']}"):
+        assert client.delete(url).status_code == 204, url
+
+
+def test_a_templates_logo_can_be_deleted_and_it_then_applies_with_no_watermark(
+    client, from_episode, llm, wait_for_status, red_logo
+):
+    logo = upload_logo(client, red_logo).json()
+    job, source = branded(client, wait_for_status, llm)
+    watermark = {"style_overrides": {"watermark": {"kind": "logo", "logo": logo["id"]}}}
+    template = saved(client, job, source, edits=watermark)
+
+    assert client.delete(f"/api/logos/{logo['id']}").status_code == 204
+    target = added(client, job, 700.0, 712.0)
+    applied(client, job, template, [target])
+    assert preview(client, job, candidates_of(client, job, target))["plan"]["watermark"] is None
 
 
 # Through MCP

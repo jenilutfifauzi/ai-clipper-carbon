@@ -367,10 +367,15 @@ export interface MediaWords {
   words: Word[] | null;
 }
 
-// A Candidate that uses a Media Library item, as a refused delete names it.
+// What uses a Media Library item or a Look, as a refused delete names it: a Candidate, or a Template.
 export interface MediaUse {
-  job_id: string;
-  candidate_id: string;
+  kind: "candidate" | "template";
+  // The Candidate's Job and the Candidate; null for a Template.
+  job_id: string | null;
+  candidate_id: string | null;
+  // The Template's; null for a Candidate.
+  template_id: string | null;
+  // The Clip's title, or the Template's name.
   title: string;
 }
 
