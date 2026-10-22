@@ -9,17 +9,22 @@ from datetime import UTC, datetime
 
 import pytest
 
+from app.audio_effects import AudioEffect
 from app.candidates import (
     WHOLE,
+    Adjust,
     AdjustmentLayer,
     CueEdit,
     Framing,
+    Grade,
     Keyframe,
+    Layout,
     MusicClip,
     Segment,
     Shape,
     ShapeStyle,
     TextLayer,
+    Transform,
     Transition,
     TransitionKind,
     WordEdit,
@@ -36,13 +41,23 @@ from app.templates import (
     LayerKind,
     Template,
     TemplatePart,
+    Treatment,
     apply,
     boundaries,
     capture,
 )
 from app.api import POSTER_SIZE, POSTERS_DIR
 from app.jobs import CANDIDATES_FILE
+from app.styles import StyleOverrides
+from app.video_effects import VideoEffect
+from fontfiles import font_file
+from test_fonts import imported as imported_face
+from test_imported_looks import imported as imported_look
 from test_jobs_api import create_job
+from test_media_library import upload as upload_media
+from test_render import preview
+from test_watermark import red_logo  # noqa: F401 (fixture)
+from test_watermark import upload as upload_logo
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, make, manual, mcp, reviewed  # noqa: F401 (fixtures)
 from test_render import probe
 from test_review import candidates, patch
@@ -95,9 +110,7 @@ def wrapped(secs: float, intro: float = 3.0, outro: float = 2.0, **edits):
 
 def saved_from(source, overrides=(), template_id: str = "brand") -> Template:
     """The Template `capture` makes of `source`, as the store would save it."""
-    captured = capture(source, overrides)
-    parts = {name: getattr(captured, name) for name in ("intro", "outro", "word_edits", "cue_edits", "hook_offset", "hook_secs")}
-    return Template(template_id, template_id.title(), NOW, NOW, captured.layers, **parts)
+    return Template(template_id, template_id.title(), NOW, NOW, **capture(source, overrides).contents())
 
 
 def anchor_of(layers, kind: LayerKind, item_id: str) -> Anchor:
@@ -434,6 +447,111 @@ def test_an_intro_segment_changed_by_hand_is_counted_and_replaced():
     assert applied.notices == ["1 Template item changed by hand replaced."]
 
 
+# Style, look and text from the Candidate
+
+WARM = Grade(Adjust(temperature=9000))
+GREY = Grade(Adjust(saturation=-100))
+ECHO = AudioEffect("echo", {"delay": 0.5, "decay": 0.4})
+BLUR = VideoEffect("gaussian-blur", {"radius": 6})
+HOUSE = StyleOverrides(caption={"size": 80})
+MANUAL = Framing(Transform(x=400.0))
+
+
+def styled(**edits):
+    """A Candidate styled as a channel's: a house Style Preset, a Manual Layout, warm, quieter, its
+    first Source Segment with the voice treatment, and a Kicker."""
+    track = [Segment("s1", 100.0, 110.0, grade=GREY, audio_effects=[ECHO], video_effects=[BLUR]), Segment("s2", 120.0, 130.0)]
+    return candidate(20, **{
+        "segments": track, "preset_id": "house", "style_overrides": HOUSE, "layout": Layout.MANUAL, "framing": MANUAL,
+        "grade": WARM, "source_volume": 0.6, "hook_kicker": "EPISODE BARU", **edits,
+    })
+
+
+def test_the_style_look_main_slot_treatment_and_kicker_are_captured():
+    template = saved_from(styled())
+
+    assert (template.preset_id, template.style_overrides, template.layout, template.framing) == ("house", HOUSE, Layout.MANUAL, MANUAL)
+    assert (template.grade, template.source_volume, template.kicker) == (WARM, 0.6, "EPISODE BARU")
+    # The Main Slot treatment is the first Source Segment's.
+    assert template.treatment == Treatment(GREY, [BLUR], [ECHO])
+
+
+def test_the_style_layout_grade_and_clip_volume_are_replaced():
+    template = saved_from(styled())
+
+    change = apply(template, candidate(30, preset_id="bold", style_overrides=StyleOverrides(hook={"size": 50}), grade=GREY)).change
+
+    assert (change.preset_id, change.style_overrides, change.layout, change.framing) == ("house", HOUSE, Layout.MANUAL, MANUAL)
+    assert (change.grade, change.source_volume) == (WARM, 0.6)
+
+
+def test_the_treatment_reaches_every_source_segment_keeping_their_speed_and_fades():
+    template = saved_from(candidate(20, segments=[video("sting", STING, 3.0), Segment("s1", 100.0, 120.0, grade=GREY, audio_effects=[ECHO], video_effects=[BLUR])]))
+    own = [
+        Segment("a", 200.0, 210.0, speed=2.0, fade_in=0.5),
+        Segment("b", 220.0, 230.0, volume=1.5, fade_out=1.0, audio_effects=[AudioEffect("echo", {"delay": 0.2})]),
+        Segment("c", 240.0, 250.0, reverse=True),
+    ]
+
+    change = apply(template, candidate(25, start=200.0, end=250.0, segments=own)).change
+
+    [sting, *treated] = change.segments
+    assert (sting.grade, sting.audio_effects) == (Grade(), [])
+    assert treated == [replace(segment, grade=GREY, audio_effects=[ECHO], video_effects=[BLUR]) for segment in own]
+
+
+def test_an_implicit_segment_is_made_explicit_to_take_the_treatment():
+    template = saved_from(styled())
+
+    [whole] = apply(template, candidate(30)).change.segments
+
+    assert whole == Segment(WHOLE, 100.0, 130.0, grade=GREY, audio_effects=[ECHO], video_effects=[BLUR])
+
+
+def test_the_kicker_is_replaced_only_when_the_template_has_one_and_the_hook_text_never():
+    with_kicker, without = saved_from(styled()), saved_from(styled(hook_kicker=""))
+    mine = candidate(30, hook_text="Aku *kaget*", hook_kicker="TERBONGKAR!")
+
+    assert apply(with_kicker, mine).change.hook_kicker == "EPISODE BARU"
+    assert apply(without, mine).change.hook_kicker is None
+    assert apply(with_kicker, mine).change.hook_text is None
+
+
+def test_no_template_leaves_the_style_look_and_kicker_as_they_are():
+    template = saved_from(styled())
+    once = apply(template, candidate(30)).change
+
+    change = apply(None, candidate(30, segments=once.segments, preset_id="house", grade=WARM, hook_kicker="EPISODE BARU"), {"brand": template}).change
+
+    assert (change.preset_id, change.style_overrides, change.layout, change.grade, change.source_volume, change.hook_kicker) == (None,) * 6
+
+
+def test_template_fields_are_filled_from_the_candidate():
+    card = TextLayer("card", "{title} | {kicker}", start=2.0, secs=3.0)
+    quote = TextLayer("quote", "“{hook}”", start=6.0, secs=3.0)
+    template = saved_from(styled(text_layers=[card, quote]))
+    # Saved as typed.
+    assert [layer.item.text for layer in template.layers.text_layers] == ["{title} | {kicker}", "“{hook}”"]
+    mine = candidate(30, title="Rahasia dapur", hook_text="Aku *kaget* sekali")
+
+    applied = apply(template, mine)
+
+    assert [layer.text for layer in applied.change.text_layers] == ["Rahasia dapur | EPISODE BARU", "“Aku kaget sekali”"]
+    assert applied.notices == []
+    # Applied again, unchanged: nothing counts as changed by hand.
+    again = apply(template, replace(mine, text_layers=applied.change.text_layers, segments=applied.change.segments), {"brand": template})
+    assert again.notices == []
+
+
+def test_an_empty_kicker_leaves_nothing_with_a_notice():
+    template = saved_from(styled(hook_kicker="", text_layers=[TextLayer("card", "{kicker} {title}", start=2.0, secs=3.0)]))
+
+    applied = apply(template, candidate(30, title="Rahasia dapur"))
+
+    assert [layer.text for layer in applied.change.text_layers] == [" Rahasia dapur"]
+    assert applied.notices == ["{kicker} left empty: this clip has no Kicker."]
+
+
 # Through the API
 
 URL = "/api/templates"
@@ -722,6 +840,33 @@ def test_a_job_not_in_review_is_refused(client, video_source, from_episode, llm,
         video_source.release()
 
 
+def test_a_template_carries_the_style_and_one_whose_style_preset_was_deleted_applies_default(client, from_episode, llm, wait_for_status):
+    job, source = branded(client, wait_for_status, llm)
+    house = client.post("/api/presets", json={"name": "House", "caption": {"active_colour": "#00AAFF", "size": 90}})
+    assert house.status_code == 201, house.text
+    card = {"id": "card", "text": "{kicker}: {title}", "start": 0.5, "secs": 2.0}
+    source = patch(
+        client, job, source, preset_id=house.json()["id"], style_overrides={"caption": {"position": "top"}}, layout="blur",
+        source_volume=0.5, hook_kicker="EPISODE BARU", text_layers=[card],
+    )
+    template = saved(client, job, source)
+    assert (template["preset_id"], template["kicker"]) == (house.json()["id"], "EPISODE BARU")
+    assert template["layers"]["text_layers"][0]["item"]["text"] == "{kicker}: {title}"
+    target = patch(client, job, added(client, job, 700.0, 712.0), hook_text="Aku *kaget*")
+    assert client.delete(f"/api/presets/{house.json()['id']}").status_code == 204
+
+    applied(client, job, template, [target])
+
+    now = candidates_of(client, job, target)
+    assert (now["layout"], now["source_volume"], now["hook_kicker"], now["hook_text"]) == ("blur", 0.5, "EPISODE BARU", "Aku *kaget*")
+    assert [layer["text"] for layer in now["text_layers"]] == [f"EPISODE BARU: {now['title']}"]
+    planned = client.post(f"/api/jobs/{job['id']}/candidates/{target['id']}/preview-plan")
+    assert planned.status_code == 200, planned.text
+    caption = planned.json()["plan"]["caption_style"]
+    # Default's, the House Preset being gone, with the Template's Style Overrides.
+    assert (caption["active_colour"], caption["size"], caption["position"]) == ("#FF9F0A", 110, "top")
+
+
 def test_a_candidates_marks_are_kept_through_edits_and_one_saved_before_marks_loads_unchanged(
     client, settings, from_episode, llm, wait_for_status
 ):
@@ -743,6 +888,80 @@ def test_a_candidates_marks_are_kept_through_edits_and_one_saved_before_marks_lo
     unmarked = candidates_of(client, job, source)
     assert unmarked["revision"] == source["revision"]
     assert [layer["template"] for layer in unmarked["text_layers"]] == [None, None]
+
+
+# Library guards (.scratch/templates/issues/09-library-guards.md)
+
+
+@pytest.fixture(scope="session")
+def song(tmp_path_factory) -> bytes:
+    """3 s of a 440 Hz tone."""
+    return make(tmp_path_factory.mktemp("song") / "song.wav", "-f", "lavfi", "-i", "sine=frequency=440:duration=3").read_bytes()
+
+
+def test_a_template_naming_a_missing_media_item_or_face_is_refused(client, settings, from_episode, llm, wait_for_status):
+    job, source = branded(client, wait_for_status, llm)
+    body = {"name": "x", "job_id": job["id"], "candidate_id": source["id"]}
+    gone = {"id": "bed", "media": "cd" * 16, "start": 0.0, "secs": 1.0}
+    unknown_face = {**LOWER_THIRD, "style": {"font": "no-such-face"}}
+
+    for edits in ({"music": [gone]}, {"text_layers": [unknown_face]}, {"style_overrides": {"watermark": {"kind": "logo", "logo": "ab" * 16}}}):
+        response = client.post(URL, json={**body, "edits": edits})
+        assert response.status_code == 422, edits
+    # Nor from a Candidate that holds one already, as saved.
+    path = settings.data_dir / "jobs" / job["id"] / CANDIDATES_FILE
+    stored = json.loads(path.read_text())
+    [held] = [candidate for candidate in stored if candidate["id"] == source["id"]]
+    held["music"] = [gone]
+    path.write_text(json.dumps(stored))
+    response = client.post(URL, json=body)
+    assert response.status_code == 422 and "cd" * 16 in response.json()["detail"], response.text
+    assert client.get(URL).json() == []
+
+
+def test_a_song_look_or_face_used_only_by_a_template_cant_be_deleted_until_it_is(
+    client, from_episode, llm, wait_for_status, song
+):
+    item = upload_media(client, song, "song.wav").json()
+    look = imported_look(client)
+    face = imported_face(client, font_file("Testp"))["faces"][0]
+    job, source = branded(client, wait_for_status, llm)
+    branded_with = patch(
+        client, job, source,
+        music=[{"id": "bed", "media": item["id"], "start": 0.0, "secs": 1.0}],
+        adjustment_layers=[{"id": "warm", "start": 0.0, "secs": 2.0, "grade": {"look": look["id"]}}],
+        text_layers=[{**LOWER_THIRD, "style": {"font": face["id"]}}],
+    )
+    template = saved(client, job, branded_with)
+    # Its Job, and with it the Candidate and its Revision History, is gone: only the Template uses them.
+    assert client.delete(f"/api/jobs/{job['id']}").status_code == 204
+
+    for url in (f"/api/media/{item['id']}", f"/api/looks/{look['id']}", f"/api/fonts/{face['id']}"):
+        refused = client.delete(url)
+        assert refused.status_code == 409, url
+        detail = refused.json()["detail"]
+        assert "Template Brand" in detail["message"], detail
+        [use] = detail["uses"]
+        assert (use["kind"], use["title"]) == ("template", "Brand"), use
+        assert use.get("template_id", use.get("id")) == template["id"]
+
+    assert client.delete(f"{URL}/{template['id']}").status_code == 204
+    for url in (f"/api/media/{item['id']}", f"/api/looks/{look['id']}", f"/api/fonts/{face['id']}"):
+        assert client.delete(url).status_code == 204, url
+
+
+def test_a_templates_logo_can_be_deleted_and_it_then_applies_with_no_watermark(
+    client, from_episode, llm, wait_for_status, red_logo
+):
+    logo = upload_logo(client, red_logo).json()
+    job, source = branded(client, wait_for_status, llm)
+    watermark = {"style_overrides": {"watermark": {"kind": "logo", "logo": logo["id"]}}}
+    template = saved(client, job, source, edits=watermark)
+
+    assert client.delete(f"/api/logos/{logo['id']}").status_code == 204
+    target = added(client, job, 700.0, 712.0)
+    applied(client, job, template, [target])
+    assert preview(client, job, candidates_of(client, job, target))["plan"]["watermark"] is None
 
 
 # Through MCP
@@ -779,9 +998,9 @@ async def test_templates_are_saved_listed_with_their_anchors_applied_and_deleted
     length = source["end"] - source["start"]
     ids = {"job_id": job["id"], "candidate_id": source["id"]}
     await call(mcp, "edit_candidate", **ids, changes={"text_layers": [
-        {"id": "name", "text": "Jeni", "start": 0.1, "secs": 0.3},
+        {"id": "name", "text": "{kicker}", "start": 0.1, "secs": 0.3},
         {"id": "cta", "text": "Follow", "start": length - 0.5, "secs": 0.4},
-    ]})
+    ], "hook_kicker": "BARU", "layout": "split"})
 
     template = await call(mcp, "save_preset", kind="template", preset={
         "name": "Brand", **ids, "anchors": [{"kind": "text_layers", "id": "cta", "anchor": "span"}],
@@ -792,6 +1011,9 @@ async def test_templates_are_saved_listed_with_their_anchors_applied_and_deleted
     assert [(layer["kind"], layer["id"], layer["anchor"]) for layer in listed["layers"]] == [
         ("text_layers", "name", "start"), ("text_layers", "cta", "span"),
     ]
+    # Its Template Fields as typed, and its style.
+    assert listed["layers"][0]["text"] == "{kicker}"
+    assert (listed["preset_id"], listed["layout"], listed["kicker"]) == ("default", "split", "BARU")
     assert listed["layers"][0]["edges"] == [{"boundary": "main_start", "offset": 0.1}, {"boundary": "main_start", "offset": 0.4}]
 
     # Saved over by its id, which is kept; renamed alone.
@@ -806,8 +1028,11 @@ async def test_templates_are_saved_listed_with_their_anchors_applied_and_deleted
     assert (await call(mcp, "get_candidate", job_id=job["id"], candidate_id=target["id"]))["text_layers"] == []
 
     await call(mcp, "apply_template", job_id=job["id"], candidate_ids=[target["id"]], template_id=template["id"])
-    marked = (await call(mcp, "get_candidate", job_id=job["id"], candidate_id=target["id"]))["text_layers"]
+    shown = await call(mcp, "get_candidate", job_id=job["id"], candidate_id=target["id"])
+    marked = shown["text_layers"]
     assert [(layer["id"], layer["template"]) for layer in marked] == [("name", template["id"]), ("cta", template["id"])]
+    # Filled on the Candidate.
+    assert (marked[0]["text"], shown["layout"], shown["hook_kicker"]) == ("BARU", "split", "BARU")
 
     shown = await call(mcp, "get_candidate", job_id=job["id"], candidate_id=target["id"])
     assert shown["template_items"] == [

@@ -455,10 +455,15 @@ export interface MediaWords {
   words: Word[] | null;
 }
 
-// A Candidate that uses a Media Library item, as a refused delete names it.
+// What uses a Media Library item or a Look, as a refused delete names it: a Candidate, or a Template.
 export interface MediaUse {
-  job_id: string;
-  candidate_id: string;
+  kind: "candidate" | "template";
+  // The Candidate's Job and the Candidate; null for a Template.
+  job_id: string | null;
+  candidate_id: string | null;
+  // The Template's; null for a Candidate.
+  template_id: string | null;
+  // The Clip's title, or the Template's name.
   title: string;
 }
 
@@ -1910,13 +1915,13 @@ export const api = {
   renameTemplate: (id: string, name: string) =>
     request<TemplateInfo>(`/templates/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
   deleteTemplate: (id: string) => request<void>(`/templates/${id}`, { method: "DELETE" }),
-  // A Template (or with null, "No Template") applied to Candidates of a Job, all or none; with
-  // `dry_run`, each one's result without saving it.
-  applyTemplate: (jobId: string, apply: { template_id: string | null; candidate_ids: string[]; dry_run?: boolean }) =>
-    request<{ candidates: AppliedTemplate[] }>(`/jobs/${jobId}/templates/apply`, { method: "POST", body: JSON.stringify(apply) }),
   // Make a Template the default for new Jobs, or with null, have none.
   useTemplateAsDefault: (templateId: string | null) =>
     request<{ template_id: string | null }>("/templates/default", { method: "PUT", body: JSON.stringify({ template_id: templateId }) }),
+  // Applies a Template (null: "No Template", taking Template items off) to these Candidates, all of
+  // them or none (409 unless the Job is in review or rendering); with dry_run, nothing is saved.
+  applyTemplate: (jobId: string, body: { template_id: string | null; candidate_ids: string[]; dry_run: boolean }) =>
+    request<{ candidates: AppliedTemplate[] }>(`/jobs/${jobId}/templates/apply`, { method: "POST", body: JSON.stringify(body) }),
   // Every Audio Effect an item's stack can name, by group and order.
   listAudioEffects: () => request<AudioEffectKind[]>("/audio-effects"),
   listVideoEffects: () => request<VideoEffectKind[]>("/video-effects"),

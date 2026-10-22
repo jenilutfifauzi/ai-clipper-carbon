@@ -13,6 +13,7 @@ Presets are. There are no built-in ones.
 """
 
 import math
+import re
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
@@ -22,13 +23,19 @@ from pathlib import Path
 from typing import Annotated, Any, NamedTuple
 from uuid import uuid4
 
-from pydantic import Field, FiniteFloat, TypeAdapter, computed_field
+from pydantic import Field, FiniteFloat, StringConstraints, TypeAdapter, computed_field
 
+from app.audio_effects import AUDIO_EFFECTS_MAX, AudioEffect
 from app.candidates import (
+    KICKER_MAX_CHARS,
+    TEXT_LAYER_MAX_CHARS,
     AdjustmentLayer,
     Candidate,
     CueEdit,
+    Framing,
+    Grade,
     ItemId,
+    Layout,
     MusicClip,
     Overlay,
     Segment,
@@ -36,7 +43,9 @@ from app.candidates import (
     TemplateId,
     TextLayer,
     Transition,
+    Volume,
     WordEdit,
+    grades_of,
     timeline_length,
 )
 from app.jobs import DEFAULT_TEMPLATE
@@ -44,7 +53,8 @@ from app.keyframes import rewindow
 from app.review import CandidateChange, Episode, update
 from app.segment_time import overlay_time, segment_time, transition_overlap
 from app.storage import write_atomic
-from app.styles import Name
+from app.styles import DEFAULT_PRESET, Name, StyleOverrides
+from app.video_effects import VIDEO_EFFECTS_MAX, VideoEffect
 
 # In DATA_DIR.
 TEMPLATES_FILE = "templates.json"
@@ -227,6 +237,17 @@ class TemplatePart:
 
 
 @dataclass(frozen=True)
+class Treatment:
+    """The Main Slot's treatment (GLOSSARY.md, Main Slot): the first Source Segment's Grade, Video
+    Effects and Audio Effects when the Template was saved, given to every Source Segment it is applied
+    to."""
+
+    grade: Grade = Grade()
+    video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
+    audio_effects: Annotated[list[AudioEffect], Field(max_length=AUDIO_EFFECTS_MAX)] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class Template:
     """A named, global Advanced Edit saved for reuse (GLOSSARY.md, Template)."""
 
@@ -243,6 +264,47 @@ class Template:
     # Where the hook comes on, in seconds from the Main Slot's start (negative: before it), and how long it stays.
     hook_offset: Annotated[FiniteFloat, Field(ge=-3600, le=3600)] = 0.0
     hook_secs: Annotated[FiniteFloat, Field(ge=HOOK_SECS[0], le=HOOK_SECS[1])] = 3.0
+    # Its style: a Style Preset (Default's, as on a Candidate, once that is deleted) and the fields of
+    # it replaced; the Layout, and the Framing of a Manual one.
+    preset_id: str = DEFAULT_PRESET
+    style_overrides: StyleOverrides = field(default_factory=StyleOverrides)
+    layout: Layout = Layout.AUTO
+    framing: Framing | None = None
+    # The Candidate's own Grade, over its whole Main Track, and its Clip volume.
+    grade: Grade = Grade()
+    source_volume: Volume = 1.0
+    treatment: Treatment = Treatment()
+    # The Kicker it gives each Candidate; "" for none, leaving theirs.
+    kicker: Annotated[str, StringConstraints(max_length=KICKER_MAX_CHARS)] = ""
+
+    # What it names in the libraries, as a Candidate's `media_ids`, `looks` and `faces` give them: the
+    # Media Library, Imported Looks and Faces won't delete an item while a Template names it.
+
+    def media_ids(self) -> set[str]:
+        """The Media Library items it uses."""
+        return {layer.item.media for layer in self.layers.music if layer.item.media} | {
+            layer.item.media for layer in self.layers.overlays
+        }
+
+    def grades(self) -> Iterator[tuple[str, Grade]]:
+        """Each of its Grades, with the part it is."""
+        overlays = [layer.item for layer in self.layers.overlays]
+        return grades_of(None, [], overlays, [layer.item for layer in self.layers.adjustment_layers])
+
+    def looks(self) -> dict[str, list[str]]:
+        """The Looks its Grades name (app/looks.py), each with the parts that name it."""
+        named: dict[str, list[str]] = {}
+        for part, grade in self.grades():
+            if grade.look is not None:
+                named.setdefault(grade.look, []).append(part)
+        return named
+
+    def faces(self) -> dict[str, list[str]]:
+        """The Faces it names (app/fonts.py), each with the parts that name it."""
+        named: dict[str, list[str]] = {}
+        for layer in self.layers.text_layers:
+            named.setdefault(layer.item.style.font, []).append(f"Text Layer {layer.item.id}")
+        return named
 
 
 # What a Template holds beyond its name and times: what `capture` gives.
@@ -271,6 +333,14 @@ class Captured:
     cue_edits: list[CueEdit] = field(default_factory=list)
     hook_offset: float = 0.0
     hook_secs: float = 3.0
+    preset_id: str = DEFAULT_PRESET
+    style_overrides: StyleOverrides = field(default_factory=StyleOverrides)
+    layout: Layout = Layout.AUTO
+    framing: Framing | None = None
+    grade: Grade = Grade()
+    source_volume: float = 1.0
+    treatment: Treatment = Treatment()
+    kicker: str = ""
 
     def contents(self) -> dict[str, Any]:
         """The Template's fields it gives, by name."""
@@ -292,7 +362,9 @@ def capture(candidate: Candidate, overrides: Sequence[AnchorOverride] = ()) -> C
     layers, each edge hanging from its nearest boundary but where `overrides` chooses its Anchor.
     Left out, with a notice: media Segments between Segments of the Source, and Music Clips of the
     Source's sound, which another Job's Clips can't play. InvalidTemplate for a Candidate with no
-    Segment of the Source, or for an override of a layer the Candidate hasn't."""
+    Segment of the Source, or for an override of a layer the Candidate hasn't. Its style, Layout,
+    Grade, Clip volume and Kicker are the Candidate's, and its Main Slot treatment its first Segment of
+    the Source's. Template Fields in its Text Layers are kept as typed."""
     bounds = boundaries(candidate)
     chosen = {(override.kind, override.id): override.anchor for override in overrides}
     for kind, item_id in chosen.keys() - {(kind, item.id) for kind, item in _layers_of(candidate)}:
@@ -330,6 +402,14 @@ def capture(candidate: Candidate, overrides: Sequence[AnchorOverride] = ()) -> C
         cue_edits=[replace(edit, template=None) for edit in candidate.cue_edits if edit.media is not None and edit.media in shown],
         hook_offset=round(candidate.hook_start - bounds.main_start, 6),
         hook_secs=min(max(candidate.hook_secs, HOOK_SECS[0]), HOOK_SECS[1]),
+        preset_id=candidate.preset_id,
+        style_overrides=candidate.style_overrides,
+        layout=candidate.layout,
+        framing=candidate.framing if candidate.layout is Layout.MANUAL else None,
+        grade=candidate.grade,
+        source_volume=candidate.source_volume,
+        treatment=Treatment(track[first].grade, track[first].video_effects, track[first].audio_effects),
+        kicker=candidate.hook_kicker,
     )
 
 
@@ -376,12 +456,17 @@ def apply(template: Template | None, candidate: Candidate, named: Mapping[str, T
     moved, as a ripple at Timeline 0 would (one wholly on the old intro is left out); then the hook is
     put at the Template's distance from the Main Slot's start, as long as the Template's. Each of the
     Template's layers is placed by its Anchor on the new boundaries and marked. A layer reaching past
-    the Clip is cut short at its edge, or left out when shorter than ITEM_MIN_SECS there. `named` holds
+    the Clip is cut short at its edge, or left out when shorter than ITEM_MIN_SECS there; its Text
+    Layers' Template Fields are filled from the Candidate (an empty one with a notice). The Template's
+    style, Layout, Grade and Clip volume replace the Candidate's, its Kicker too when it has one (the
+    hook text is the Candidate's), and every Segment of the Source takes its Main Slot treatment,
+    keeping its cut, Speed, Reverse, volume, fades and Keyframes. "No Template" leaves these be. `named` holds
     the Templates the Candidate's marks may name, by id: an item taken off that differs from a fresh
     application of its Template was changed by hand, and is counted; so is every item of a Template
     not there (deleted)."""
     notices = _replaced(candidate, named or {}, "removed" if template is None else "replaced")
     wrap = _wrapped(template, candidate)
+    look: dict[str, Any] = {}
     shift = round(wrap.bounds.main_start - _main_start(candidate), 6)
     kept, dropped = _shifted(candidate, shift)
     if dropped:
@@ -389,16 +474,23 @@ def apply(template: Template | None, candidate: Candidate, named: Mapping[str, T
     hook = _moved(candidate.hook_start, candidate.hook_secs, shift)
     if template is not None:
         hook = (wrap.bounds.main_start + template.hook_offset, template.hook_secs)
-        placed = _placed(template, wrap.bounds, kept)
+        placed = _placed(template, wrap.bounds, kept, _field_values(template, candidate))
         told = [placed.trimmed and f"{_count(placed.trimmed, 'layer')} cut short to fit", placed.left_out and f"{placed.left_out} left out, falling outside the clip"]
         if placed.trimmed or placed.left_out:
             notices.append(f"{'; '.join(part for part in told if part)}.")
+        notices.extend(f"{{{name}}} left empty: this clip has no {_FIELD_NAMES[name]}." for name in placed.empty)
         kept = placed.layers
+        wrap = wrap._replace(segments=[_treated(segment, template.treatment) if segment.media is None else segment for segment in wrap.segments])
+        look = {
+            "preset_id": template.preset_id, "style_overrides": template.style_overrides, "layout": template.layout,
+            "framing": template.framing if template.layout is Layout.MANUAL else None,
+            "grade": template.grade, "source_volume": template.source_volume, **({"hook_kicker": template.kicker} if template.kicker else {}),
+        }
     hook_secs = min(max(hook[1], HOOK_SECS[0]), HOOK_SECS[1], max(wrap.bounds.clip_end, HOOK_SECS[0]))
     hook_start = round(max(0.0, min(hook[0], wrap.bounds.clip_end - hook_secs)), 6)
     track = _track(template, candidate, wrap)
     change = CandidateChange(
-        **{kind.value: listed for kind, listed in kept.items()}, **track, hook_start=hook_start, hook_secs=round(hook_secs, 6)
+        **{kind.value: listed for kind, listed in kept.items()}, **track, **look, hook_start=hook_start, hook_secs=round(hook_secs, 6)
     )
     return Applied(change, notices)
 
@@ -466,11 +558,11 @@ def _main_start(candidate: Candidate) -> float:
 
 
 def _track(template: Template | None, candidate: Candidate, wrap: _Wrapped) -> dict[str, Any]:
-    """The fields of the change that `wrap` sets: none when neither the Candidate has an intro's or
-    outro's items to take off nor `template` any to put in."""
+    """The fields of the change that `wrap` sets: none when the Candidate has no intro's or outro's
+    items to take off, `template` none to put in, and its Segments are as they were."""
     marked = any(item.template is not None for item in [*candidate.segments, *candidate.transitions, *candidate.word_edits, *candidate.cue_edits])
     brings = template is not None and bool(template.intro.segments or template.outro.segments or template.word_edits or template.cue_edits)
-    if not (marked or brings):
+    if not (marked or brings or wrap.segments != candidate.main_track()):
         return {}
     return {"segments": wrap.segments, "transitions": wrap.transitions, "word_edits": wrap.word_edits, "cue_edits": wrap.cue_edits}
 
@@ -512,11 +604,16 @@ class _Placed(NamedTuple):
     layers: dict[LayerKind, list[Any]]
     trimmed: int
     left_out: int
+    # The Template Fields left empty, by name, in the order of _FIELD_NAMES.
+    empty: list[str]
 
 
-def _placed(template: Template, bounds: Boundaries, kept: Mapping[LayerKind, list[Any]]) -> _Placed:
+def _placed(template: Template, bounds: Boundaries, kept: Mapping[LayerKind, list[Any]], values: Mapping[str, str]) -> _Placed:
+    """`template`'s layers placed by their Anchors on `bounds` and marked beside the `kept` ones, its
+    Text Layers' Template Fields filled with `values`."""
     layers = {kind: list(listed) for kind, listed in kept.items()}
     trimmed = left_out = 0
+    empty: set[str] = set()
     for kind, layer in template.layers.items():
         start = bounds.at(layer.anchor.start.boundary) + layer.anchor.start.offset
         end = bounds.at(layer.anchor.end.boundary) + layer.anchor.end.offset
@@ -526,9 +623,42 @@ def _placed(template: Template, bounds: Boundaries, kept: Mapping[LayerKind, lis
             continue
         item, cut = fitted
         trimmed += cut
+        if isinstance(item, TextLayer):
+            item = replace(item, text=_filled(item.text, values, empty))
         item_id = _free_id(item.id, {other.id for other in layers[kind]})
         layers[kind].append(replace(item, id=item_id, template=template.id))
-    return _Placed(layers, trimmed, left_out)
+    return _Placed(layers, trimmed, left_out, [name for name in _FIELD_NAMES if name in empty])
+
+
+# The Template Fields (GLOSSARY.md, Template Field), by the name typed in braces, and what is told
+# when one is empty.
+_FIELD_NAMES = {"title": "title", "hook": "hook text", "kicker": "Kicker"}
+_FIELD = re.compile(r"\{(title|hook|kicker)\}")
+
+
+def _field_values(template: Template, candidate: Candidate) -> dict[str, str]:
+    """What the Template Fields hold on `candidate` once `template` is applied: its title, its hook
+    text without its Emphasis marks, and its Kicker (the Template's, when it has one)."""
+    return {"title": candidate.title.strip(), "hook": candidate.hook_text.replace("*", "").strip(), "kicker": template.kicker or candidate.hook_kicker}
+
+
+def _filled(text: str, values: Mapping[str, str], empty: set[str]) -> str:
+    """`text` with its Template Fields filled from `values`, an empty one leaving nothing (its name
+    added to `empty`), kept within a Text Layer's longest text."""
+
+    def value(match: re.Match[str]) -> str:
+        if not values[match[1]]:
+            empty.add(match[1])
+        return values[match[1]]
+
+    return _FIELD.sub(value, text)[:TEXT_LAYER_MAX_CHARS]
+
+
+def _treated(segment: Segment, treatment: Treatment) -> Segment:
+    """A Segment of the Source given the Main Slot's treatment: its Grade, Video Effects and Audio
+    Effects (none on a Freeze frame, which is silent); the rest of it as it was."""
+    audio_effects = [] if segment.hold is not None else treatment.audio_effects
+    return replace(segment, grade=treatment.grade, video_effects=treatment.video_effects, audio_effects=audio_effects)
 
 
 def _replaced(candidate: Candidate, named: Mapping[str, Template], done: str) -> list[str]:
@@ -545,7 +675,7 @@ def _replaced(candidate: Candidate, named: Mapping[str, Template], done: str) ->
             continue
         template = named[template_id]
         wrap = _wrapped(template, candidate)
-        layers = _placed(template, wrap.bounds, {kind: [] for kind in LayerKind}).layers
+        layers = _placed(template, wrap.bounds, {kind: [] for kind in LayerKind}, _field_values(template, candidate)).layers
         fresh: dict[str, list[Any]] = {}
         for kind, item in _marked(wrap.segments, wrap.transitions, wrap.word_edits, wrap.cue_edits, layers):
             fresh.setdefault(kind, []).append(item)

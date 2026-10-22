@@ -1,4 +1,4 @@
-import { AlertCircle, ArrowLeft, Check, Loader2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, Loader2, Stamp } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import {
@@ -14,6 +14,8 @@ import {
 } from "../../api";
 import { Button } from "../../components/Button";
 import { Panel } from "../../components/Panel";
+import { appliedText } from "./applyTemplate";
+import { ApplyTemplateDialog } from "./ApplyTemplateDialog";
 import { CandidateEditor } from "./CandidateEditor";
 import { CandidateList } from "./CandidateList";
 import { Clips } from "./Clips";
@@ -79,6 +81,11 @@ export function Review({
   const [notice, setNotice] = useState<Notice | null>(null);
   const closeNotice = useCallback(() => setNotice(null), []);
   const [deleted, setDeleted] = useState(false);
+  // The Apply Template dialog is open.
+  const [applying, setApplying] = useState(false);
+  // The Revision a Template applied here gave each Candidate: its event refreshes the card without
+  // being told as a change from elsewhere.
+  const appliedHere = useRef(new Map<string, number>());
 
   const wanted = params.get("candidate");
   const index = Math.max(0, candidates.findIndex((candidate) => candidate.id === wanted));
@@ -106,7 +113,8 @@ export function Review({
       return;
     }
     taken(next);
-    tell(next.id, source, parts, next.revision);
+    if (appliedHere.current.get(next.id) === next.revision) appliedHere.current.delete(next.id);
+    else tell(next.id, source, parts, next.revision);
   }
 
   // The notice of a change from elsewhere to the open Candidate, whose Restore brings back what it
@@ -326,6 +334,12 @@ export function Review({
               />
             </div>
           </div>
+          {candidates.length > 0 && (
+            <Button size="sm" className="mb-3" onClick={() => setApplying(true)}>
+              <Stamp aria-hidden size={16} />
+              Apply Template…
+            </Button>
+          )}
           <CandidateList
             jobId={job.id}
             candidates={candidates}
@@ -391,6 +405,16 @@ export function Review({
         sourceFps={sourceFps}
         onRender={(candidateIds, exportPresetId) => render(candidateIds, exportPresetId)}
         onManageExport={onManageExport}
+      />
+      <ApplyTemplateDialog
+        open={applying}
+        jobId={job.id}
+        candidates={candidates}
+        onClose={() => setApplying(false)}
+        onApplied={(name, applied) => {
+          for (const { candidate_id, revision } of applied) appliedHere.current.set(candidate_id, revision);
+          setNotice({ id: Date.now(), text: appliedText(name, applied.length) });
+        }}
       />
       <ChangeNotice notice={notice} onClose={closeNotice} />
     </div>

@@ -21,11 +21,11 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Pure tests:
+- [x] Pure tests:
   - The style, Layout, Grade and Clip volume are replaced.
   - The treatment reaches three Source Segments, and their Speed and fades are kept.
   - The Kicker is replaced only when the Template has one, and the hook text is never touched.
   - `{title}` and `{kicker}` are filled, an empty Kicker leaves nothing with a notice, and `{hook}` drops the `*` marks.
-- [ ] HTTP: a Template naming a deleted Style Preset applies Default.
+- [x] HTTP: a Template naming a deleted Style Preset applies Default.

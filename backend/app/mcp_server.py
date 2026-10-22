@@ -249,6 +249,12 @@ Edits:
   new Job gets it unless its options.template is another's id or null ("default" when not given),
   and each of the Job's new Candidates (Selection's and add_candidate's) arrives with the Job's
   Template applied. A Job whose Template was deleted makes them plain, with a warning.
+  A Template also carries the Candidate's Style Preset (Default once deleted), Style Overrides,
+  Layout (and Manual Framing), grade, source_volume and Kicker, and its first episode Segment's grade,
+  video_effects and audio_effects, which every episode Segment gets (their cuts, speed, volume and
+  fades kept); applying replaces those, the Kicker only when the Template has one, never the hook
+  text; null leaves them. {{title}}, {{hook}} (no * marks) and {{kicker}} in its Text Layers are
+  filled from each Candidate; an empty one leaves nothing, with a notice.
 - The caption and hook styles' shadow is a Text Style's; a Style Override of it sets the fields it
   names ({{"shadow": {{"blur": 8}}}}). The hook's box (block or strips) and the caption highlight box
   have padding_x and padding_y, the highlight box radius too, in output pixels at the style's size;
@@ -1243,7 +1249,8 @@ def _compact(view: dict) -> dict:
 
 def _template_view(template: dict) -> dict:
     """A Template as the tools list it: each layer by its list, id, times as saved and Anchor, with
-    the edges it is made of; a Text Layer's text too."""
+    the edges it is made of; a Text Layer's text too, its Template Fields as typed; and its Style
+    Preset, Layout and Kicker."""
     layers = [
         {
             "kind": kind, "id": layer["item"]["id"], **({"text": layer["item"]["text"]} if "text" in layer["item"] else {}),
@@ -1255,6 +1262,7 @@ def _template_view(template: dict) -> dict:
     ]
     view = {key: template[key] for key in ("id", "name", "created_at", "updated_at")}
     view |= {"intro_secs": template["intro"]["secs"], "outro_secs": template["outro"]["secs"], "layers": layers}
+    view |= {key: template[key] for key in ("preset_id", "layout", "kicker")}
     view |= {"default": template["default"]} if "default" in template else {}
     return view | ({"notices": template["notices"]} if template.get("notices") else {})
 

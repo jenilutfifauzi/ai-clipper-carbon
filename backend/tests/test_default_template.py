@@ -174,3 +174,16 @@ async def test_a_template_is_made_the_default_and_a_job_started_with_one_through
     plain = await reviewed(mcp, template=None)
     added = await manual(mcp, plain, *HALO_KABAR)
     assert (await call(mcp, "get_candidate", job_id=plain["id"], candidate_id=added["id"]))["text_layers"] == []
+
+
+def test_a_new_jobs_candidates_arrive_with_the_default_templates_style_and_kicker(client, from_episode, llm, wait_for_status):
+    first, source = branded(client, wait_for_status, llm)
+    source = patch(client, first, source, layout="blur", source_volume=0.5, hook_kicker="EPISODE BARU")
+    made_default(client, saved(client, first, source))
+
+    job = analyzed(client, wait_for_status)
+
+    assert job["candidates"]
+    for candidate in job["candidates"]:
+        assert (candidate["layout"], candidate["source_volume"], candidate["hook_kicker"]) == ("blur", 0.5, "EPISODE BARU")
+        assert (candidate["revision"], candidate["edited"]) == (1, False)

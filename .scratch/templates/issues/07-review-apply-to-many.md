@@ -15,12 +15,12 @@
 
 **Blocked by:** 02.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Vitest:
+- [x] Vitest:
   - The selected Candidates are pre-ticked.
   - Unticking one leaves it out of the request.
   - One request is sent for all of them.
   - Notices from the dry run are shown per Candidate.
   - "No Template" is offered.
-- [ ] Checked in the running app: applying to five Candidates updates their cards, and a rendered one shows as changed.
+- [x] Checked in the running app: applying to five Candidates updates their cards, and a rendered one shows as changed.
