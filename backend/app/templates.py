@@ -45,6 +45,7 @@ from app.candidates import (
     Transition,
     Volume,
     WordEdit,
+    grades_of,
     timeline_length,
 )
 from app.jobs import DEFAULT_TEMPLATE
@@ -275,6 +276,35 @@ class Template:
     treatment: Treatment = Treatment()
     # The Kicker it gives each Candidate; "" for none, leaving theirs.
     kicker: Annotated[str, StringConstraints(max_length=KICKER_MAX_CHARS)] = ""
+
+    # What it names in the libraries, as a Candidate's `media_ids`, `looks` and `faces` give them: the
+    # Media Library, Imported Looks and Faces won't delete an item while a Template names it.
+
+    def media_ids(self) -> set[str]:
+        """The Media Library items it uses."""
+        return {layer.item.media for layer in self.layers.music if layer.item.media} | {
+            layer.item.media for layer in self.layers.overlays
+        }
+
+    def grades(self) -> Iterator[tuple[str, Grade]]:
+        """Each of its Grades, with the part it is."""
+        overlays = [layer.item for layer in self.layers.overlays]
+        return grades_of(None, [], overlays, [layer.item for layer in self.layers.adjustment_layers])
+
+    def looks(self) -> dict[str, list[str]]:
+        """The Looks its Grades name (app/looks.py), each with the parts that name it."""
+        named: dict[str, list[str]] = {}
+        for part, grade in self.grades():
+            if grade.look is not None:
+                named.setdefault(grade.look, []).append(part)
+        return named
+
+    def faces(self) -> dict[str, list[str]]:
+        """The Faces it names (app/fonts.py), each with the parts that name it."""
+        named: dict[str, list[str]] = {}
+        for layer in self.layers.text_layers:
+            named.setdefault(layer.item.style.font, []).append(f"Text Layer {layer.item.id}")
+        return named
 
 
 # What a Template holds beyond its name and times: what `capture` gives.
