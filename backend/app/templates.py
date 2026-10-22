@@ -46,6 +46,7 @@ from app.candidates import (
     Transition,
     Volume,
     WordEdit,
+    grades_of,
     timeline_length,
 )
 from app.jobs import DEFAULT_TEMPLATE
@@ -281,6 +282,47 @@ class Template:
     treatment: Treatment = Treatment()
     # The Kicker it gives each Candidate; "" for none, leaving theirs.
     kicker: Annotated[str, StringConstraints(max_length=KICKER_MAX_CHARS)] = ""
+
+    # What it names in the libraries, as a Candidate's `media_ids`, `looks` and `faces` give them: the
+    # Media Library, Imported Looks and Faces won't delete an item while a Template names it. (Its
+    # Watermark's Logo isn't held: a Logo deleted later shows no Watermark, as a Preset's does.)
+
+    def media_ids(self) -> set[str]:
+        """The Media Library items it uses: its layers' and its intro's and outro's videos."""
+        return (
+            {layer.item.media for layer in self.layers.music if layer.item.media}
+            | {layer.item.media for layer in self.layers.overlays}
+            | {segment.media for segment in self.intro.segments + self.outro.segments if segment.media}
+        )
+
+    def grades(self) -> Iterator[tuple[str, Grade]]:
+        """Each of its Grades, with the part it is: its own, its Main Slot treatment's, its intro's and
+        outro's Segments' and its layers'."""
+        yield "its grade", self.grade
+        yield "its Main Slot treatment", self.treatment.grade
+        overlays = [layer.item for layer in self.layers.overlays]
+        segments = self.intro.segments + self.outro.segments
+        yield from grades_of(None, segments, overlays, [layer.item for layer in self.layers.adjustment_layers])
+
+    def looks(self) -> dict[str, list[str]]:
+        """The Looks its Grades name (app/looks.py), each with the parts that name it."""
+        named: dict[str, list[str]] = {}
+        for part, grade in self.grades():
+            if grade.look is not None:
+                named.setdefault(grade.look, []).append(part)
+        return named
+
+    def faces(self) -> dict[str, list[str]]:
+        """The Faces it names (app/fonts.py), each with the parts that name it: its Text Layers, and
+        its Style Overrides by section."""
+        named: dict[str, list[str]] = {}
+        for layer in self.layers.text_layers:
+            named.setdefault(layer.item.style.font, []).append(f"Text Layer {layer.item.id}")
+        for section in ("caption", "hook", "watermark"):
+            face = getattr(self.style_overrides, section).get("font")
+            if isinstance(face, str):
+                named.setdefault(face, []).append(f"{section} style")
+        return named
 
 
 # What a Template holds beyond its name and times: what `capture` gives.

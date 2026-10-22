@@ -46,12 +46,22 @@ from app.templates import (
     boundaries,
     capture,
 )
+from app.api import POSTER_SIZE, POSTERS_DIR
 from app.jobs import CANDIDATES_FILE
 from app.styles import StyleOverrides
 from app.video_effects import VideoEffect
+from fontfiles import font_file
+from test_fonts import imported as imported_face
+from test_imported_looks import imported as imported_look
 from test_jobs_api import create_job
+from test_media_library import upload as upload_media
+from test_render import preview
+from test_watermark import red_logo  # noqa: F401 (fixture)
+from test_watermark import upload as upload_logo
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, make, manual, mcp, reviewed  # noqa: F401 (fixtures)
+from test_render import probe
 from test_review import candidates, patch
+from test_save_frame import pixels_of
 from test_selection import analyzed, clip
 
 SONG = "a" * 32
@@ -733,6 +743,37 @@ def test_templates_are_saved_listed_renamed_saved_over_and_deleted(client, from_
     assert client.patch(f"{URL}/{template['id']}", json={"name": "x"}).status_code == 404
 
 
+def test_the_poster_is_the_drafts_frame_at_the_playhead_replaced_on_save_over_and_deleted_with_it(
+    client, settings, from_episode, llm, wait_for_status
+):
+    job, source = branded(client, wait_for_status, llm)
+
+    template = saved(client, job, source, poster_at=1.0)
+    poster = client.get(f"{URL}/{template['id']}/poster")
+    assert poster.status_code == 200, poster.text
+    assert poster.headers["content-type"] == "image/png"
+    # Kept beside the Template store, by the Template's id, at a card's size.
+    path = settings.data_dir / POSTERS_DIR / f"{template['id']}.png"
+    assert path.read_bytes() == poster.content
+    [stream] = probe(settings, path)["streams"]
+    assert (stream["width"], stream["height"]) == POSTER_SIZE
+
+    # Saved over from a draft with a green card over the frame: the poster is drawn again from it.
+    green = {"id": "card", "start": 0.0, "secs": 5.0, "transform": {"x": 540, "y": 960}, "style": {"width": 1080, "height": 1920, "fill": "#00FF00"}}
+    over = client.put(
+        f"{URL}/{template['id']}",
+        json={"name": "Brand", "job_id": job["id"], "candidate_id": source["id"], "edits": {"shapes": [green]}, "poster_at": 1.0},
+    )
+    assert over.status_code == 200, over.text
+    replaced = client.get(f"{URL}/{template['id']}/poster")
+    assert replaced.status_code == 200 and replaced.content != poster.content
+    assert pixels_of(settings, path)[POSTER_SIZE[1] // 2, POSTER_SIZE[0] // 2][1] > 200
+
+    assert client.delete(f"{URL}/{template['id']}").status_code == 204
+    assert not path.exists()
+    assert client.get(f"{URL}/{template['id']}/poster").status_code == 404
+
+
 def test_a_template_of_an_unknown_candidate_or_anchor_is_refused(client, from_episode, llm, wait_for_status):
     job, source = branded(client, wait_for_status, llm)
 
@@ -971,6 +1012,175 @@ def test_a_candidates_marks_are_kept_through_edits_and_one_saved_before_marks_lo
     unmarked = candidates_of(client, job, source)
     assert unmarked["revision"] == source["revision"]
     assert [layer["template"] for layer in unmarked["text_layers"]] == [None, None]
+
+
+# Library guards (.scratch/templates/issues/09-library-guards.md)
+
+
+@pytest.fixture(scope="session")
+def song(tmp_path_factory) -> bytes:
+    """3 s of a 440 Hz tone."""
+    return make(tmp_path_factory.mktemp("song") / "song.wav", "-f", "lavfi", "-i", "sine=frequency=440:duration=3").read_bytes()
+
+
+def test_a_template_naming_a_missing_media_item_or_face_is_refused(client, settings, from_episode, llm, wait_for_status):
+    job, source = branded(client, wait_for_status, llm)
+    body = {"name": "x", "job_id": job["id"], "candidate_id": source["id"]}
+    gone = {"id": "bed", "media": "cd" * 16, "start": 0.0, "secs": 1.0}
+    unknown_face = {**LOWER_THIRD, "style": {"font": "no-such-face"}}
+
+    for edits in ({"music": [gone]}, {"text_layers": [unknown_face]}, {"style_overrides": {"watermark": {"kind": "logo", "logo": "ab" * 16}}}):
+        response = client.post(URL, json={**body, "edits": edits})
+        assert response.status_code == 422, edits
+    # Nor from a Candidate that holds one already, as saved.
+    path = settings.data_dir / "jobs" / job["id"] / CANDIDATES_FILE
+    stored = json.loads(path.read_text())
+    [held] = [candidate for candidate in stored if candidate["id"] == source["id"]]
+    held["music"] = [gone]
+    path.write_text(json.dumps(stored))
+    response = client.post(URL, json=body)
+    assert response.status_code == 422 and "cd" * 16 in response.json()["detail"], response.text
+    assert client.get(URL).json() == []
+
+
+def test_a_song_look_or_face_used_only_by_a_template_cant_be_deleted_until_it_is(
+    client, from_episode, llm, wait_for_status, song
+):
+    item = upload_media(client, song, "song.wav").json()
+    look = imported_look(client)
+    face = imported_face(client, font_file("Testp"))["faces"][0]
+    job, source = branded(client, wait_for_status, llm)
+    branded_with = patch(
+        client, job, source,
+        music=[{"id": "bed", "media": item["id"], "start": 0.0, "secs": 1.0}],
+        adjustment_layers=[{"id": "warm", "start": 0.0, "secs": 2.0, "grade": {"look": look["id"]}}],
+        text_layers=[{**LOWER_THIRD, "style": {"font": face["id"]}}],
+    )
+    template = saved(client, job, branded_with)
+    # Its Job, and with it the Candidate and its Revision History, is gone: only the Template uses them.
+    assert client.delete(f"/api/jobs/{job['id']}").status_code == 204
+
+    for url in (f"/api/media/{item['id']}", f"/api/looks/{look['id']}", f"/api/fonts/{face['id']}"):
+        refused = client.delete(url)
+        assert refused.status_code == 409, url
+        detail = refused.json()["detail"]
+        assert "Template Brand" in detail["message"], detail
+        [use] = detail["uses"]
+        assert (use["kind"], use["title"]) == ("template", "Brand"), use
+        assert use.get("template_id", use.get("id")) == template["id"]
+
+    assert client.delete(f"{URL}/{template['id']}").status_code == 204
+    for url in (f"/api/media/{item['id']}", f"/api/looks/{look['id']}", f"/api/fonts/{face['id']}"):
+        assert client.delete(url).status_code == 204, url
+
+
+def test_a_templates_logo_can_be_deleted_and_it_then_applies_with_no_watermark(
+    client, from_episode, llm, wait_for_status, red_logo
+):
+    logo = upload_logo(client, red_logo).json()
+    job, source = branded(client, wait_for_status, llm)
+    watermark = {"style_overrides": {"watermark": {"kind": "logo", "logo": logo["id"]}}}
+    template = saved(client, job, source, edits=watermark)
+    assert template["style_overrides"]["watermark"]["logo"] == logo["id"]
+    shown = added(client, job, 700.0, 712.0)
+    applied(client, job, template, [shown])
+    assert preview(client, job, candidates_of(client, job, shown))["plan"]["watermark"] is not None
+
+    # The Logo isn't held by the Template: it goes, and the Template's style then shows no Watermark.
+    assert client.delete(f"/api/logos/{logo['id']}").status_code == 204
+    target = added(client, job, 800.0, 812.0)
+    applied(client, job, template, [target])
+    now = candidates_of(client, job, target)
+    assert now["style_overrides"]["watermark"]["logo"] == logo["id"]
+    assert preview(client, job, now)["plan"]["watermark"] is None
+
+
+def test_a_template_whose_intro_or_style_names_a_missing_item_is_refused(
+    client, settings, tmp_path, from_episode, llm, wait_for_status
+):
+    job, source = branded(client, wait_for_status, llm)
+    sting = a_video(client, tmp_path)
+    source = patch(client, job, source, segments=[
+        {"id": "sting", "start": 0.0, "end": 1.5, "media": sting["id"], "framing": {}},
+        {"id": "s1", "start": source["start"], "end": source["end"]},
+    ], transitions=[])
+    body = {"name": "x", "job_id": job["id"], "candidate_id": source["id"]}
+    path = settings.data_dir / "jobs" / job["id"] / CANDIDATES_FILE
+    original = path.read_text()
+
+    def held(change) -> None:
+        stored = json.loads(original)
+        [candidate] = [c for c in stored if c["id"] == source["id"]]
+        change(candidate)
+        path.write_text(json.dumps(stored))
+
+    gone = "cd" * 16
+    changes = {
+        gone: lambda c: c["segments"][0].update(media=gone),
+        "no-such-look": lambda c: c["segments"][1].update(grade={"look": "no-such-look"}),
+        "no-such-face": lambda c: c["style_overrides"]["caption"].update(font="no-such-face"),
+    }
+    for missing, change in changes.items():
+        held(change)
+        response = client.post(URL, json=body)
+        assert response.status_code == 422, missing
+        assert missing in response.json()["detail"], response.text
+    assert client.get(URL).json() == []
+
+
+def test_a_video_used_only_as_a_templates_intro_cant_be_deleted_until_it_is(
+    client, tmp_path, from_episode, llm, wait_for_status
+):
+    job, source = branded(client, wait_for_status, llm)
+    sting = a_video(client, tmp_path)
+    source = patch(client, job, source, segments=[
+        {"id": "sting", "start": 0.0, "end": 1.5, "media": sting["id"], "framing": {}},
+        {"id": "s1", "start": source["start"], "end": source["end"]},
+    ], transitions=[])
+    template = saved(client, job, source)
+    assert client.delete(f"/api/jobs/{job['id']}").status_code == 204
+
+    refused = client.delete(f"/api/media/{sting['id']}")
+    assert refused.status_code == 409
+    [use] = refused.json()["detail"]["uses"]
+    assert (use["kind"], use["title"], use.get("template_id", use.get("id"))) == ("template", "Brand", template["id"])
+
+    assert client.delete(f"{URL}/{template['id']}").status_code == 204
+    assert client.delete(f"/api/media/{sting['id']}").status_code == 204
+
+
+def test_a_look_used_only_by_a_templates_main_slot_treatment_cant_be_deleted(client, from_episode, llm, wait_for_status):
+    look = imported_look(client)
+    job, source = branded(client, wait_for_status, llm)
+    source = patch(client, job, source, segments=[
+        {"id": "s1", "start": source["start"], "end": source["end"], "grade": {"look": look["id"]}},
+    ])
+    template = saved(client, job, source)
+    assert template["treatment"]["grade"]["look"] == look["id"]
+    assert template["grade"]["look"] is None
+    assert client.delete(f"/api/jobs/{job['id']}").status_code == 204
+
+    refused = client.delete(f"/api/looks/{look['id']}")
+    assert refused.status_code == 409
+    assert "Template Brand" in refused.json()["detail"]["message"]
+
+    assert client.delete(f"{URL}/{template['id']}").status_code == 204
+    assert client.delete(f"/api/looks/{look['id']}").status_code == 204
+
+
+def test_a_face_used_only_by_a_templates_style_overrides_cant_be_deleted(client, from_episode, llm, wait_for_status):
+    face = imported_face(client, font_file("Testp"))["faces"][0]
+    job, source = branded(client, wait_for_status, llm)
+    template = saved(client, job, source, edits={"style_overrides": {"hook": {"font": face["id"]}}})
+    assert client.delete(f"/api/jobs/{job['id']}").status_code == 204
+
+    refused = client.delete(f"/api/fonts/{face['id']}")
+    assert refused.status_code == 409
+    [use] = refused.json()["detail"]["uses"]
+    assert (use["kind"], use["parts"]) == ("template", ["hook style"])
+
+    assert client.delete(f"{URL}/{template['id']}").status_code == 204
+    assert client.delete(f"/api/fonts/{face['id']}").status_code == 204
 
 
 # Through MCP

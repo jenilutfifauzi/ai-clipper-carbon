@@ -3,8 +3,9 @@
 import shutil
 import tempfile
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -59,7 +60,7 @@ from app.derived import PEAKS_FORMAT, PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION
 from app.editor import PreviewPlan, captions_pending, preview_plan
 from app.encoding import Codec, ExportSettings, estimated_bytes
 from app.events import candidate_events, job_events
-from app.export_files import SavedExport, draw_frame, save_audio, save_frame, saved_export
+from app.export_files import SavedExport, draw_frame, draw_poster, save_audio, save_frame, saved_export
 from app.export_presets import BuiltinExportPreset, ExportPreset, ExportPresetNotFound, ExportPresetStore
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
 from app.effected import EFFECTED_DIR, NoCopy, copies_used as effected_used, effected_copy, sweep as sweep_effected
@@ -494,9 +495,16 @@ class TemplateCapture(BaseModel):
 
 
 class TemplateBody(TemplateCapture):
-    """A Template as the owner saves it: a name, and what it is saved from."""
+    """A Template as the owner saves it: a name, and what it is saved from; with `poster_at`, its
+    poster is that frame (Timeline time, the editor's playhead) of the draft."""
 
     name: Name
+    poster_at: Annotated[FiniteFloat, Field(ge=0)] | None = None
+
+
+# Each Template's poster: a PNG beside the Template store, named by the Template's id, at a card's size.
+POSTERS_DIR = "template-posters"
+POSTER_SIZE = (270, 480)
 
 
 @dataclass(frozen=True)
@@ -626,14 +634,15 @@ class FontImported(BaseModel):
 
 
 class FaceUse(BaseModel):
-    """What names a Face: a Candidate, as it is or in its Revision History, a Style Preset or a Text Preset."""
+    """What names a Face: a Candidate, as it is or in its Revision History, a Style Preset, a Text
+    Preset or a Template."""
 
-    kind: Literal["candidate", "style_preset", "text_preset"]
-    # The Candidate's or the Preset's.
+    kind: Literal["candidate", "style_preset", "text_preset", "template"]
+    # The Candidate's, the Preset's or the Template's.
     id: str
     # The Candidate's Job.
     job_id: str | None = None
-    # The Clip's title, or the Preset's name.
+    # The Clip's title, or the Preset's or the Template's name.
     title: str
     # The parts that name it: such as "Text Layer t1", "hook style" or "Revision 3" (a state in its
     # Revision History).
@@ -1549,12 +1558,14 @@ def emoji_image(codepoints: str) -> FileResponse:
 
 
 @router.delete("/fonts/{font_id}", status_code=204)
-def delete_font(font_id: str, faces: FaceRegistry, store: Store, presets: Presets, text_presets: TextPresets) -> None:
+def delete_font(
+    font_id: str, faces: FaceRegistry, store: Store, presets: Presets, text_presets: TextPresets, templates: Templates
+) -> None:
     """Delete an imported Face and its file. 409 for a bundled one, and while a Candidate (as it is,
-    or in its Revision History), a Style Preset or a Text Preset names it, listing where."""
+    or in its Revision History), a Style Preset, a Text Preset or a Template names it, listing where."""
     if faces.find(font_id) is None:
         raise HTTPException(404, f"No font {font_id}")
-    if uses := face_uses(store, presets, text_presets, font_id):
+    if uses := face_uses(store, presets, text_presets, templates, font_id):
         message = f"Font {font_id} is used by {'; '.join(use.where for use in uses)}: change them first"
         raise HTTPException(409, {"message": message, "uses": [use.model_dump() for use in uses]})
     try:
@@ -1565,9 +1576,11 @@ def delete_font(font_id: str, faces: FaceRegistry, store: Store, presets: Preset
         raise HTTPException(404, f"No font {font_id}") from None
 
 
-def face_uses(store: JobStore, presets: PresetStore, text_presets: TextPresetStore, face_id: str) -> list[FaceUse]:
-    """The Candidates of every Job (with their Revision Histories), and the owner's Style Presets and
-    Text Presets that name the Face."""
+def face_uses(
+    store: JobStore, presets: PresetStore, text_presets: TextPresetStore, templates: TemplateStore, face_id: str
+) -> list[FaceUse]:
+    """The Candidates of every Job (with their Revision Histories), and the owner's Style Presets,
+    Text Presets and Templates that name the Face."""
     uses = []
     for job in store.all():
         for candidate in store.load_candidates(job.id) or []:
@@ -1593,6 +1606,12 @@ def face_uses(store: JobStore, presets: PresetStore, text_presets: TextPresetSto
             uses.append(FaceUse(
                 kind="text_preset", id=text_preset.id, title=text_preset.name, parts=["Text Style"],
                 where=f"Text Preset {text_preset.name}",
+            ))
+    for template in templates.all():
+        if parts := template.faces().get(face_id, []):
+            uses.append(FaceUse(
+                kind="template", id=template.id, title=template.name, parts=parts,
+                where=f"Template {template.name} ({', '.join(parts)})",
             ))
     return uses
 
@@ -1646,17 +1665,17 @@ def import_look(file: UploadFile, imported: ImportedLookStore) -> Look:
 
 
 @router.delete("/looks/{look_id}", status_code=204)
-def delete_look(look_id: str, imported: ImportedLookStore, store: Store) -> None:
-    """Delete an Imported Look and its table. 409 for a built-in one, and while a Candidate's Grade
-    names it, listing them."""
+def delete_look(look_id: str, imported: ImportedLookStore, store: Store, templates: Templates) -> None:
+    """Delete an Imported Look and its table. 409 for a built-in one, and while a Candidate's or a
+    Template's Grade names it, listing them."""
     if any(look.id == look_id for look in builtin_looks()):
         raise HTTPException(409, f"Look {look_id} comes with the app and can't be deleted")
     try:
         look = imported.get(look_id)
     except LookNotFound:
         raise HTTPException(404, f"No Look {look_id}") from None
-    if uses := look_uses(store, look_id):
-        where = "; ".join(f"{use.title} (Job {use.job_id}, Candidate {use.candidate_id})" for use in uses)
+    if uses := look_uses(store, templates, look_id):
+        where = "; ".join(use.where for use in uses)
         message = f"Look {look.name} is used by {where}: change their grades first"
         raise HTTPException(409, {"message": message, "uses": [use.model_dump() for use in uses]})
     try:
@@ -1665,13 +1684,16 @@ def delete_look(look_id: str, imported: ImportedLookStore, store: Store) -> None
         raise HTTPException(404, f"No Look {look_id}") from None
 
 
-def look_uses(store: JobStore, look_id: str) -> list["MediaUse"]:
-    """The Candidates, of every Job, whose Grades name the Look."""
+def look_uses(store: JobStore, templates: TemplateStore, look_id: str) -> list["MediaUse"]:
+    """The Candidates, of every Job, and the Templates whose Grades name the Look."""
     return [
-        MediaUse(job_id=job.id, candidate_id=candidate.id, title=candidate.title or f"Clip {candidate.id}")
-        for job in store.all()
-        for candidate in store.load_candidates(job.id) or []
-        if look_id in candidate.looks()
+        *(
+            MediaUse.of_candidate(job.id, candidate)
+            for job in store.all()
+            for candidate in store.load_candidates(job.id) or []
+            if look_id in candidate.looks()
+        ),
+        *(MediaUse.of_template(template) for template in templates.all() if look_id in template.looks()),
     ]
 
 
@@ -1754,26 +1776,85 @@ def capture_template(
 
 @router.post("/templates", status_code=201)
 def create_template(
-    body: TemplateBody, store: Store, settings: AppSettings, presets: Presets, library: Media, templates: Templates
+    body: TemplateBody,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    library: Media,
+    faces: FaceRegistry,
+    logos: Logos,
+    templates: Templates,
+    media_words: MediaWordsDep,
 ) -> SavedTemplate:
     """Save a Candidate (as its draft edits would make it) as a new Template, as `capture_template`
-    would capture it."""
-    captured = _captured(body, store, settings, presets, library)
-    return SavedTemplate(**vars(templates.create(body.name, captured)), notices=captured.notices)
+    would capture it, and its poster when `poster_at` is given. 422 for one naming media, a Look, a
+    Face or a Logo that isn't there, or media it can't use so (`_saveable`)."""
+    captured = _saveable(body, store, settings, presets, library, faces, logos)
+    template = templates.create(body.name, captured)
+    notices = [*captured.notices, *_poster(template.id, body, store, settings, presets, logos, library, media_words, templates)]
+    return SavedTemplate(**vars(template), notices=notices)
 
 
 @router.put("/templates/{template_id}")
 def save_over_template(
-    template_id: str, body: TemplateBody, store: Store, settings: AppSettings, presets: Presets, library: Media, templates: Templates
+    template_id: str,
+    body: TemplateBody,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    library: Media,
+    faces: FaceRegistry,
+    logos: Logos,
+    templates: Templates,
+    media_words: MediaWordsDep,
 ) -> SavedTemplate:
-    """Save a Candidate over one of the Templates, keeping its id. The Candidates it was applied to
+    """Save a Candidate over one of the Templates, keeping its id, validated as `create_template`
+    validates it, its poster drawn again when `poster_at` is given. The Candidates it was applied to
     keep their copies."""
-    captured = _captured(body, store, settings, presets, library)
+    captured = _saveable(body, store, settings, presets, library, faces, logos)
     try:
         template = templates.save_over(template_id, body.name, captured)
     except TemplateNotFound:
         raise HTTPException(404, f"No Template {template_id}") from None
-    return SavedTemplate(**vars(template), notices=captured.notices)
+    notices = [*captured.notices, *_poster(template.id, body, store, settings, presets, logos, library, media_words, templates)]
+    return SavedTemplate(**vars(template), notices=notices)
+
+
+@router.get("/templates/{template_id}/poster", response_class=FileResponse)
+def template_poster(template_id: str, templates: Templates) -> FileResponse:
+    """A Template's poster, a PNG; 404 when it has none."""
+    path = _poster_path(templates, template_id)
+    if not path.is_file():
+        raise HTTPException(404, f"Template {template_id} has no poster")
+    return FileResponse(path, media_type="image/png")
+
+
+def _poster_path(templates: TemplateStore, template_id: str) -> Path:
+    return templates.path.parent / POSTERS_DIR / f"{template_id}.png"
+
+
+def _poster(
+    template_id: str,
+    body: TemplateBody,
+    store: JobStore,
+    settings: Settings,
+    presets: PresetStore,
+    logos: LogoStore,
+    library: MediaStore,
+    media_words: MediaWordsStore,
+    templates: TemplateStore,
+) -> list[str]:
+    """Draw the Template's poster from `body`'s draft at `poster_at`, if given, in place of the one it
+    had; what the owner is told when it couldn't be (the Template is saved all the same)."""
+    if body.poster_at is None:
+        return []
+    planned = _draft_plan(body.job_id, body.candidate_id, store, settings, presets, logos, library, media_words, body.edits)
+    job, job_dir = store.get(body.job_id), store.job_dir(body.job_id)
+    try:
+        draw_poster(job, job_dir, planned.plan, body.poster_at, _poster_path(templates, template_id), POSTER_SIZE, settings, library, logos)
+    except RuntimeError as exc:
+        return [f"Its poster couldn't be made: {exc}"]
+    return []
 
 
 @router.patch("/templates/{template_id}")
@@ -1792,6 +1873,7 @@ def delete_template(template_id: str, templates: Templates) -> None:
         templates.delete(template_id)
     except TemplateNotFound:
         raise HTTPException(404, f"No Template {template_id}") from None
+    _poster_path(templates, template_id).unlink(missing_ok=True)
 
 
 @router.post("/jobs/{job_id}/templates/apply")
@@ -1844,6 +1926,26 @@ def _captured(body: TemplateCapture, store: JobStore, settings: Settings, preset
         return capture(candidate, body.anchors)
     except InvalidTemplate as exc:
         raise HTTPException(422, str(exc)) from None
+
+
+def _saveable(
+    body: TemplateBody, store: JobStore, settings: Settings, presets: PresetStore, library: MediaStore, faces: Faces, logos: LogoStore
+) -> Captured:
+    """What `body` would save, validated as an edit is, the Candidate's saved items with its draft's:
+    422 for media that isn't in the Media Library or can't be used so (its layers' and its intro's and
+    outro's), or a Look, a Face or a Logo that isn't there (its layers' and its style's). (A Logo
+    deleted later shows no Watermark, as a Preset's does.)"""
+    captured = _captured(body, store, settings, presets, library)
+    _check_logo(logos, captured.style_overrides.watermark.get("logo"))
+    now = datetime.now(UTC)
+    template = Template("", "", now, now, **captured.contents())
+    segments = captured.intro.segments + captured.outro.segments
+    _check_media(library, [layer.item for layer in captured.layers.music], segments, [layer.item for layer in captured.layers.overlays])
+    _check_looks(template.grades())
+    for face_id, parts in template.faces().items():
+        if faces.find(face_id) is None:
+            raise HTTPException(422, f"{parts[0]}: no font {face_id}")
+    return captured
 
 
 @router.get("/export-presets")
@@ -1990,11 +2092,30 @@ class MediaChange(BaseModel):
 
 
 class MediaUse(BaseModel):
-    """A Candidate that uses a Media Library item."""
+    """What uses a Media Library item or a Look: a Candidate, or a Template."""
 
-    job_id: str
-    candidate_id: str
+    kind: Literal["candidate", "template"]
+    # The Candidate's Job and the Candidate; null for a Template.
+    job_id: str | None = None
+    candidate_id: str | None = None
+    # The Template's; null for a Candidate.
+    template_id: str | None = None
+    # The Clip's title, or the Template's name.
     title: str
+
+    @classmethod
+    def of_candidate(cls, job_id: str, candidate: Candidate) -> "MediaUse":
+        return cls(kind="candidate", job_id=job_id, candidate_id=candidate.id, title=candidate.title or f"Clip {candidate.id}")
+
+    @classmethod
+    def of_template(cls, template: Template) -> "MediaUse":
+        return cls(kind="template", template_id=template.id, title=template.name)
+
+    @property
+    def where(self) -> str:
+        if self.kind == "template":
+            return f"Template {self.title}"
+        return f"{self.title} (Job {self.job_id}, Candidate {self.candidate_id})"
 
 
 @router.get("/media")
@@ -2126,14 +2247,18 @@ def _ask_retimed(
 
 
 @router.delete("/media/{media_id}", status_code=204)
-def delete_media(media_id: str, library: Media, store: Store) -> None:
-    """Delete an item and its files. 409 while a Candidate uses it, naming them."""
+def delete_media(media_id: str, library: Media, store: Store, templates: Templates) -> None:
+    """Delete an item and its files. 409 while a Candidate or a Template uses it, naming them."""
     try:
         library.get(media_id)
     except MediaNotFound:
         raise HTTPException(404, f"No media {media_id}") from None
-    if uses := media_uses(store, media_id):
-        raise HTTPException(409, {"message": "Used by clips: remove it from them first", "uses": [use.model_dump() for use in uses]})
+    in_templates = [MediaUse.of_template(template) for template in templates.all() if media_id in template.media_ids()]
+    if uses := [*media_uses(store, media_id), *in_templates]:
+        kinds = {use.kind for use in uses}
+        what = " and ".join(name for kind, name in (("candidate", "clips"), ("template", "Templates")) if kind in kinds)
+        message = f"Used by {what}: remove it from them first ({'; '.join(use.where for use in uses)})"
+        raise HTTPException(409, {"message": message, "uses": [use.model_dump() for use in uses]})
     library.delete(media_id)
 
 
@@ -2353,22 +2478,27 @@ def sweep_unused_effected(
 
 
 def media_uses(store: JobStore, media_id: str) -> list[MediaUse]:
-    """The Candidates, of every Job, that use the item."""
+    """The Candidates, of every Job, that use the item. (`delete_media` adds the Templates that do.)"""
     uses = []
     for job in store.all():
         for candidate in store.load_candidates(job.id) or []:
             if media_id in candidate.media_ids():
-                uses.append(MediaUse(job_id=job.id, candidate_id=candidate.id, title=candidate.title or f"Clip {candidate.id}"))
+                uses.append(MediaUse.of_candidate(job.id, candidate))
     return uses
 
 
 def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
-    """422 for an edit naming Media Library items that aren't there, or can't be used so: music must
+    """422 for an edit naming Media Library items that aren't there, or can't be used so (`_check_media`)."""
+    _check_media(library, body.music or [], body.segments or [], body.overlays or [])
+
+
+def _check_media(library: MediaStore, music: Iterable[MusicClip], segments: Iterable[Segment], overlays: Iterable[Overlay]) -> None:
+    """422 for items naming Media Library items that aren't there, or can't be used so: music must
     be a song or a video with sound, within its length at its Speed, a Segment a video, within its
     length, and an Overlay within its video's at its Speed, an image's having no Speed, Reverse nor
     Audio Effects.
     (Music of the Source is kept within it by `review.update`.)"""
-    for clip in body.music or []:
+    for clip in music:
         if clip.media is None:
             continue
         item = library.find(clip.media)
@@ -2378,7 +2508,7 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
             at_speed = f" at {clip.speed:g}x" if clip.speed != 1 else ""
             song = "song" if item.kind is MediaKind.AUDIO else "video"
             raise HTTPException(422, f"Music Clip {clip.id} runs past the end of its {song} ({item.duration:g} s){at_speed}")
-    for segment in body.segments or []:
+    for segment in segments:
         if segment.media is None:
             continue
         item = library.find(segment.media)
@@ -2386,7 +2516,7 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
             raise HTTPException(422, f"Segment {segment.id}: no video {segment.media} in the Media Library")
         if item.duration is not None and segment.end > item.duration + 0.05:
             raise HTTPException(422, f"Segment {segment.id} runs past the end of its video ({item.duration:g} s)")
-    for overlay in body.overlays or []:
+    for overlay in overlays:
         item = library.find(overlay.media)
         if item is None or item.kind is MediaKind.AUDIO:
             raise HTTPException(422, f"Overlay {overlay.id}: no video or image {overlay.media} in the Media Library")
@@ -2403,7 +2533,12 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
 
 def _check_looks_of(body: CandidateUpdate) -> None:
     """422 for an edit giving a Grade a Look that isn't one of the Looks."""
-    for what, grade in grades_of(body.grade, body.segments or [], body.overlays or [], body.adjustment_layers or []):
+    _check_looks(grades_of(body.grade, body.segments or [], body.overlays or [], body.adjustment_layers or []))
+
+
+def _check_looks(grades: Iterable[tuple[str, Grade]]) -> None:
+    """422 for a Grade naming a Look that isn't one of the Looks."""
+    for what, grade in grades:
         if grade.look is None:
             continue
         try:

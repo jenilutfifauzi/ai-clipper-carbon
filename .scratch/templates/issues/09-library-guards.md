@@ -11,11 +11,11 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] HTTP:
+- [x] HTTP:
   - Saving a Template naming a missing media item or Face gives 422.
   - Deleting a song, a Look or a Face used only by a Template gives 409 with a `template` use naming it.
   - After the Template is deleted, the item can be deleted.
   - A Template with a deleted Logo applies with no Watermark.
-- [ ] Vitest: the Media Library's "in use" message names a Template.
+- [x] Vitest: the Media Library's "in use" message names a Template.
