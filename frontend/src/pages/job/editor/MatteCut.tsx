@@ -535,8 +535,9 @@ export function CutVideo({
   }, [matte, videoRef]);
   return (
     <CutGroup mattes={matte ? [matte] : []} playback={playback} cutNow={() => !!matte} shownMatte={() => matte ?? undefined}>
-      <div className="absolute inset-0 group-data-[cut]/cut:opacity-0">{children}</div>
-      <canvas ref={canvas} aria-hidden data-cut-picture={name} className="absolute inset-0 size-full opacity-0 group-data-[cut]/cut:opacity-100" />
+      {/* By its own group's flag alone (its direct children): a Behind Overlay's is inside a cut-out Segment's group too. */}
+      <div className="absolute inset-0 [[data-cut]>&]:opacity-0">{children}</div>
+      <canvas ref={canvas} aria-hidden data-cut-picture={name} className="absolute inset-0 size-full opacity-0 [[data-cut]>&]:opacity-100" />
     </CutGroup>
   );
 }
