@@ -65,6 +65,9 @@ PIECE_SECS = 10
 WARM_UP_SECS = 1.0
 # The longest side of a Matte's frames (and of the frames the model is given).
 MATTE_SIDE = 1280
+# The frame rate an item's Matte is kept and read at when the item's own isn't known (0), as the
+# planner draws keyed pictures at (`matte_rate`).
+FALLBACK_FPS = 30.0
 # The longest side RVM works on inside (its `downsample_ratio`): its README's choice for HD video.
 RVM_INNER_SIDE = 480
 # A piece has a keyframe each second, so that the preview's seeks in it are quick.
@@ -138,13 +141,20 @@ class Reversed:
 Part = int | Reversed
 
 
+def matte_rate(fps: float) -> float:
+    """The frame rate of the Matte of an item at `fps` frames a second: its own, or FALLBACK_FPS when it
+    isn't known (0). The one rule `Mattes`, `matte_pieces` and `matte_frame` (and through the Preview
+    Plan's pieces, the preview) read an item's Matte by."""
+    return fps if fps > 0 else FALLBACK_FPS
+
+
 def matte_pieces(start: float, end: float, duration: float, fps: float) -> list[int]:
     """The starts of the pieces of a Matte of an item `duration` seconds long at `fps` frames a second
     that hold its frames from `start` to `end` (a held frame's: from its frame, a moment), chosen by
     frame as `matte_frame` chooses one: from the frame the preview shows at `start` (`round(start ×
     fps)`) to the last the render reads (the last before `end`; a held frame's, the first at or after
     `start`), so that a time rounded into the next piece reads it."""
-    fps = fps if fps > 0 else 30
+    fps = matte_rate(fps)
     final = max(1, round(duration * fps)) - 1
     first = min(math.floor(start * fps + 0.5), final)
     last = min(max(first, math.ceil(start * fps - 1e-6), math.ceil(min(end, duration) * fps - 1e-6) - 1), final)
@@ -157,6 +167,7 @@ def matte_frame(source: float, fps: float) -> tuple[int, int]:
     rounded up), in the piece whose first frame is `round(piece × fps)`, as `Mattes.frames` counts a
     piece's. The preview finds a Matte frame by the same rule (frontend/src/pages/job/editor/
     matteTime.ts); both are tested on tests/fixtures/matte_frames.json."""
+    fps = matte_rate(fps)
     index = math.floor(source * fps + 0.5)
     piece = int(index / fps // PIECE_SECS) * PIECE_SECS
     # A piece's first frame is rounded, so a frame near its start may be the piece before's or after's.
@@ -169,14 +180,14 @@ def matte_frame(source: float, fps: float) -> tuple[int, int]:
 
 class Mattes:
     """The Matte pieces of one item (the Source, or a Media Library video), in `folder`, made from its
-    `video`, whose picture is `frame` (width, height, frames a second), `duration` seconds long. With
-    `still`, the item is an image (`video` its file, `duration` and the frame rate unused), whose
+    `video`, whose picture is `frame` (width, height, frames a second: its Matte's, `matte_rate`),
+    `duration` seconds long. With `still`, the item is an image (`video` its file, `duration` and the frame rate unused), whose
     Matte is one PNG: its piece 0."""
 
     def __init__(self, folder: Path, video: Path, frame: tuple[int, int, float], duration: float, still: bool = False) -> None:
         self.folder = folder
         self.video = video
-        self.frame = frame
+        self.frame = (frame[0], frame[1], matte_rate(frame[2]))
         self.duration = duration
         self.still = still
 

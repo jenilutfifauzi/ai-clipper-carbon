@@ -3,22 +3,26 @@
 import { describe, expect, test } from "vitest";
 import cases from "../../../../../backend/tests/fixtures/matte_frames.json";
 import type { MatteCopy, MattePiece } from "../../../api";
+import { DeckMatte } from "./MatteCut";
 import { copyClock, copyFrame, itemPieces, matteAt, matteCopyOf, matteFrame, matteSeek, segmentMatte, SOURCE_CLOCK } from "./matteTime";
 import type { SegmentRange } from "./segmentTime";
+
+// The pieces' length the shared cases are of: the backend's, as the Preview Plan's pieces say it.
+const PIECE_SECS = cases.piece_secs;
 
 describe("a cut-out Segment's Matte", () => {
   for (const { name, fps, segment, offset, source, piece, frame, pieces } of cases.cases) {
     test(`${name}: shows the frame of the piece the shared cases say`, () => {
-      expect(segmentMatte(segment as SegmentRange, offset, fps)).toEqual({ piece, frame });
-      expect(matteFrame(source, fps)).toEqual({ piece, frame });
+      expect(segmentMatte(segment as SegmentRange, offset, fps, PIECE_SECS)).toEqual({ piece, frame });
+      expect(matteFrame(source, fps, PIECE_SECS)).toEqual({ piece, frame });
       // One of the pieces the plan lists for the Segment.
-      expect(matteAt(source, fps, pieces)).toEqual({ piece, frame });
+      expect(matteAt(source, fps, PIECE_SECS, pieces)).toEqual({ piece, frame });
     });
   }
 
   test("is found only in the pieces the plan lists", () => {
-    expect(matteAt(12, 30, [10, 20])).toEqual({ piece: 10, frame: 60 });
-    expect(matteAt(32, 30, [10, 20])).toBeNull();
+    expect(matteAt(12, 30, 10, [10, 20])).toEqual({ piece: 10, frame: 60 });
+    expect(matteAt(32, 30, 10, [10, 20])).toBeNull();
   });
 
   test("is sought in the middle of its frame, so that the frame shown is it", () => {
@@ -61,9 +65,23 @@ describe("a cut-out Segment played from a Retimed copy follows it", () => {
 });
 
 describe("a Media Library item's Matte (background-removal 06)", () => {
-  const source: MattePiece = { start: 0, url: "/media/j/mattes/person-v-0.mp4" };
-  const video: MattePiece = { start: 0, url: "/api/media/v/mattes/person-v-0.mp4", media: "v" };
-  const image: MattePiece = { start: 0, url: "/api/media/i/mattes/person-v.png", media: "i" };
+  const source: MattePiece = { start: 0, url: "/media/j/mattes/person-v-0.mp4", fps: 29.97, piece_secs: 10 };
+  const video: MattePiece = { start: 0, url: "/api/media/v/mattes/person-v-0.mp4", media: "v", fps: 25, piece_secs: 10 };
+  const image: MattePiece = { start: 0, url: "/api/media/i/mattes/person-v.png", media: "i", fps: 30, piece_secs: 10 };
+
+  test("is found at its own frame rate and pieces' length, as the plan's pieces say (ADR 0001)", () => {
+    const matte = new DeckMatte();
+    matte.setPieces(itemPieces([source, video, image], "v"));
+    expect([matte.fps, matte.pieceSecs]).toEqual([25, 10]);
+    // A 25 fps video's frame 1 s in is its 25th, and 9.98 s in rounds to the next piece's first;
+    // read at 30 fps they would be its 30th and the first piece's last.
+    expect(matteFrame(1, matte.fps, matte.pieceSecs)).toEqual({ piece: 0, frame: 25 });
+    expect(matteFrame(9.98, matte.fps, matte.pieceSecs)).toEqual({ piece: 10, frame: 0 });
+    expect(matteFrame(9.98, 30, 10)).toEqual({ piece: 0, frame: 299 });
+    // Another item's pieces bring their own.
+    matte.setPieces(itemPieces([source, video, image]));
+    expect([matte.fps, matte.pieceSecs]).toEqual([29.97, 10]);
+  });
 
   test("is read in its own pieces, apart from the Source's", () => {
     expect(itemPieces([source, video, image])).toEqual([source]);

@@ -236,9 +236,9 @@ export function CopiedSourceSegment({
   const copyAt = copy?.url ? copy.at : null;
   const matteCopy = matteCopyOf(matteCopies, rangeOf(segment));
   useEffect(() => {
-    matte.setPieces(removal ? mattes : undefined, plan.source_fps || plan.fps);
+    matte.setPieces(removal ? mattes : undefined);
     matte.setClock(removal ? copyClock(rangeOf(segment), range, copyAt, matteCopy) : null);
-  }, [matte, removal, mattes, plan.source_fps, plan.fps, segment, range, copyAt, matteCopy]);
+  }, [matte, removal, mattes, segment, range, copyAt, matteCopy]);
   useEffect(() => {
     matte.attachMaster(master.current);
     return () => matte.dispose();

@@ -1180,7 +1180,7 @@ def plan_render(
                 moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate) for scene in moved]
             plans.extend(moved)
             fade_in, fade_out = fades_within(given.fade_in, given.fade_out, length)
-            cut = _cut_out(given, given.framing if given.media is not None else framing if layout is Layout.MANUAL else None, source.duration, source.fps)
+            cut = _cut_out(given, framed[0], source.duration, source.fps)
             segments.append(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
@@ -1240,17 +1240,20 @@ def plan_render(
     )
 
 
-def _cut_out(given: SegmentInput, framing: Framing | None, duration: float, fps: float) -> dict:
+def _cut_out(given: SegmentInput, shown: ScenePlan, duration: float, fps: float) -> dict:
     """A Segment's Background removal as its SegmentPlan carries it (docs/adr/0015): its feather times
-    its picture's scale (`overlay_scale` of its `framing`: a video's own, a Manual Candidate's; 1 in
-    Track, Split and Blur, whose pictures fill their panels). A Source Segment's also has the
-    Background in force (its own, else the picture blurred) and the pieces of the Source's Matte
-    (`duration` long, at `fps`) its range reads; a video's Background is its Framing's, in its Scene,
-    and its pieces are its item's, found by the renderer. Nothing without one."""
+    its picture's scale in `shown`, the first of its Scenes (`overlay_scale` of the Framing a video's
+    or a Manual Scene's picture is placed by: a video's own, a Manual Layout Override's or a Manual
+    Candidate's; 1 in Track, Split and Blur, whose pictures fill their panels, even in a Manual
+    Candidate). A Source Segment's also has the Background in force (its own, else the picture
+    blurred) and the pieces of the Source's Matte (`duration` long, at `fps`) its range reads; a
+    video's Background is its Framing's, in its Scene, and its pieces are its item's, found by the
+    renderer. Nothing without one."""
     removal = given.background_removal
     if removal is None:
         return {}
-    scale = overlay_scale(framing.transform) if framing is not None else 1.0
+    placed = shown.layout in (SceneLayout.MANUAL, SceneLayout.MEDIA)
+    scale = overlay_scale(shown.framing.transform) if placed and shown.framing is not None else 1.0
     if given.media is not None:
         return {"background_removal": replace(removal, feather=round(removal.feather * scale, 3))}
     end = given.start if given.hold is not None else given.end

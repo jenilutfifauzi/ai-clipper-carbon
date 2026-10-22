@@ -3,6 +3,7 @@ Segment and an Overlay (a video's or an image's) cut out by their item's Matte, 
 from the planner (Seam B) to the rendered frame through the API with the fake matter (Seam A), the
 editor's Preview Plan, the sweep, and MCP."""
 
+import subprocess
 from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,7 +23,7 @@ from app.styles import PresetStore
 from app.video_source import SourceMetadata
 from test_background_removal import client, cut_out, disc_video, matter, patch_mean, person_model, reds, settled  # noqa: F401
 from test_media_library import make
-from test_mcp import anyio_backend, call, manual  # noqa: F401
+from test_mcp import anyio_backend, call, fails, manual  # noqa: F401
 from test_mcp import reviewed as reviewed_by_mcp
 from test_render import add, reviewed
 from test_review import patch
@@ -264,6 +265,30 @@ def test_a_cut_out_overlay_at_a_speed_or_reversed_keeps_its_moving_subject_whole
             assert reds(whole) > 3000 and abs(reds(cut) - reds(whole)) < reds(whole) * 0.04, (played, at, reds(cut), reds(whole))
 
 
+def test_an_item_at_its_own_frame_rate_is_cut_on_its_own_frames(client, settings, items, monkeypatch):
+    """A video kept at 25 fps (the Library's rate when it was added) has a 25 fps Matte, read at 25 fps
+    by the render and, through the Preview Plan, by the preview, whatever the Library's rate is now."""
+    with monkeypatch.context() as then:
+        then.setattr("app.media.FPS", 25)
+        moving = uploaded(client, items["moving"], "moving.mp4")
+    assert moving["fps"] == 25
+    job = reviewed(client)
+    [episode] = ranges(job, ("halo", "kabar"))
+    region = (slice(0, 304), slice(0, 540))
+    saved = patch(client, job, add(client, job, "halo", "ya"), layout="track", segments=[episode], overlays=[overlay(moving["id"]) | {"secs": 1.8}])
+    assert settled(client, job, saved)["overlays"]["o"]["state"] == "ready"
+    piece = settings.data_dir / "media" / f"{moving['id']}.mattes" / "person-fake-1-0.mp4"
+    probe = [str(settings.ffprobe_bin), "-v", "error", "-select_streams", "v", "-count_frames", "-show_entries", "stream=r_frame_rate,nb_read_frames", "-of", "csv=p=0", str(piece)]
+    assert subprocess.run(probe, capture_output=True, text=True, check=True).stdout.split() == ["25/1,50"]
+    for at in (0.2, 0.7, 1.1):
+        cut = frame(client, settings, job, saved, at)[region]
+        whole = frame(client, settings, job, saved, at, overlays=[overlay(moving["id"], cut=False) | {"secs": 1.8}])[region]
+        # The whole disc kept: a Matte read at another rate drifts off it (by a fifth of a frame a frame).
+        assert reds(whole) > 3000 and abs(reds(cut) - reds(whole)) < reds(whole) * 0.04, (at, reds(cut), reds(whole))
+    response = client.post(f"/api/jobs/{job['id']}/candidates/{saved['id']}/preview-plan")
+    assert [(piece["start"], piece["fps"], piece["piece_secs"]) for piece in response.json()["mattes"]] == [(0, 25.0, 10)]
+
+
 def test_two_overlays_of_one_item_over_the_same_time_share_its_pieces(client, settings, items):
     disc = uploaded(client, items["disc"], "disc.mp4")
     job = reviewed(client)
@@ -292,7 +317,11 @@ def test_the_preview_plan_says_where_an_items_pieces_are_served(client, settings
     shown = response.json()
     video, image = f"/api/media/{disc['id']}/mattes/person-fake-1-0.mp4", f"/api/media/{still['id']}/mattes/person-fake-1.png"
     assert sorted(shown["mattes"], key=lambda piece: piece["url"]) == sorted(
-        [{"start": 0, "url": video, "media": disc["id"]}, {"start": 0, "url": image, "media": still["id"]}], key=lambda piece: piece["url"]
+        [
+            {"start": 0, "url": video, "media": disc["id"], "fps": 30.0, "piece_secs": 10},
+            {"start": 0, "url": image, "media": still["id"], "fps": 30.0, "piece_secs": 10},
+        ],
+        key=lambda piece: piece["url"],
     )
     [copy] = shown["matte_copies"]
     assert copy["media"] == disc["id"] and copy["url"] == f"/api/media/{disc['id']}/mattes/person-fake-1/reversed-full-0-1000.mp4"
@@ -318,6 +347,24 @@ def test_unused_pieces_of_an_item_are_swept_and_removing_the_model_removes_them(
     assert matte_pieces_of(settings, disc["id"]) == ["person-fake-1-0.mp4"]
     assert client.delete("/api/models/person").status_code == 204
     assert not folder.exists()
+
+
+def test_the_pieces_of_an_item_no_candidate_uses_are_swept_but_not_those_another_job_needs(client, settings, items):
+    disc, still, blue = (uploaded(client, items[name], f"{name}.{kind}") for name, kind in (("disc", "mp4"), ("still", "png"), ("blue", "png")))
+    job, other = reviewed(client), reviewed(client)
+    [episode] = ranges(job, ("halo", "kabar"))
+    settled(client, job, patch(client, job, add(client, job, "halo", "ya"), segments=[episode], overlays=[overlay(disc["id"])]))
+    [theirs] = ranges(other, ("halo", "kabar"))
+    settled(client, other, patch(client, other, add(client, other, "halo", "ya"), segments=[theirs], overlays=[overlay(still["id"])]))
+    # The blue image's Matte, made for a draft or a Candidate since gone: nothing uses it.
+    unused = settings.data_dir / "media" / f"{blue['id']}.mattes"
+    unused.mkdir()
+    (unused / "person-fake-1.png").write_bytes(b"unused")
+    assert client.get(f"/api/jobs/{job['id']}").status_code == 200
+    assert matte_pieces_of(settings, blue["id"]) == []
+    # The image only the other Job uses keeps its Matte, as its Retimed copies would be kept.
+    assert matte_pieces_of(settings, still["id"]) == ["person-fake-1.png"]
+    assert matte_pieces_of(settings, disc["id"]) == ["person-fake-1-0.mp4"]
 
 
 def test_a_render_needing_an_items_failed_matte_fails_naming_the_overlay(client, matter, items):
@@ -355,3 +402,22 @@ async def test_the_agent_cuts_out_an_overlay_follows_its_matte_and_sees_it_in_th
     plan = await call(mcp, "edit_candidate", **ids, changes={"hook_text": "Coba"}, dry_run=True)
     # Its feather as drawn: at its default scale.
     assert plan["overlays"][0]["background_removal"]["subject"] == "person" and plan["overlays"][0]["background_removal"]["feather"] > 0
+
+
+@pytest.mark.anyio
+async def test_the_agent_is_refused_a_keyed_cut_out_media_segment_naming_it(mcp, items, tmp_path):
+    job = await reviewed_by_mcp(mcp)
+    candidate = await manual(mcp, job, 0.1, 1.6)
+    ids = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    (tmp_path / "disc.mp4").write_bytes(items["disc"])
+    item = await call(mcp, "add_asset", path=str(tmp_path / "disc.mp4"), kind="media")
+    growing = {"scale": [{"at": 0, "value": 1}, {"at": 1, "value": 1.5}]}
+    intro = {"id": "m", "start": 0, "end": 1.5, "media": item["id"], "framing": {"transform": {"scale": 1}}, "keys": growing}
+    await call(mcp, "edit_candidate", **ids, changes={"segments": [intro, {"id": "a", "start": 0.1, "end": 1.6}]})
+    message = await fails(mcp, "merge_candidate_items", **ids, segments=[{"id": "m", "background_removal": {"subject": "person", "feather": 4}}])
+    assert "Segment m is cut out (Background removal) but its picture has Keyframes" in message
+    # Its volume Keyframes alone don't move its picture.
+    heard = await call(mcp, "merge_candidate_items", **ids, segments=[
+        {"id": "m", "keys": {"scale": [], "volume": [{"at": 0, "value": 1}]}, "background_removal": {"subject": "person", "feather": 4}},
+    ])
+    assert heard["segments"][0]["background_removal"]["feather"] == 4.0

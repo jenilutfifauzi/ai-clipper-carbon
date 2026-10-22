@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from app.candidates import (
     DEFAULT_DUCK,
+    PICTURE_KEYS,
     AdjustmentLayer,
     Candidate,
     CueEdit,
@@ -272,6 +273,8 @@ def update(
         overlays=_pick(change.overlays, old.overlays),
         transitions=_joined(transitions, segments),
     )
+    if change.segments is not None or change.layout_overrides is not None:
+        _check_cut_out_pictures(new)
     if change.text_layers is not None or change.shapes is not None:
         _check_inside(new, old)
     if change.music is not None:
@@ -388,6 +391,29 @@ def _check_framing(what: str, layout: Layout, framing: Framing | None) -> None:
         raise InvalidEdit(f"{what} needs its framing: the transform, crop and background it frames the episode by")
     if layout is not Layout.MANUAL and framing is not None:
         raise InvalidEdit(f"{what} has no framing: only the Manual Layout frames the episode by hand")
+
+
+def _check_cut_out_pictures(candidate: Candidate) -> None:
+    """InvalidEdit for a cut-out Segment (docs/adr/0015) whose picture has Keyframes: a video's own,
+    or those of a Manual Layout Override that frames a Scene of its range (a Freeze frame holds one
+    unkeyed). The render can't cut out a keyed picture yet (its frames are drawn by a frame process),
+    so the preview, which could, would show a cut the render wouldn't: refused when it is saved or
+    drafted, naming the Segment, rather than when the Clip is rendered."""
+    for segment in candidate.segments:
+        if segment.background_removal is None:
+            continue
+        if segment.media is not None:
+            keyed = any(keys for prop, keys in segment.keys.items() if prop in PICTURE_KEYS)
+        else:
+            keyed = segment.hold is None and any(
+                override.layout is Layout.MANUAL and any(override.keys.values()) and segment.start <= override.at <= segment.end
+                for override in candidate.layout_overrides
+            )
+        if keyed:
+            raise InvalidEdit(
+                f"Segment {segment.id} is cut out (Background removal) but its picture has Keyframes, which Background removal "
+                "can't draw yet: remove its Keyframes or switch Background removal off"
+            )
 
 
 def _check_detached(music: list[MusicClip], old: list[MusicClip], segments: list[Segment]) -> None:

@@ -58,7 +58,7 @@ The `background-removal` feature (roadmap #13, `.scratch/advanced-edit-v2/roadma
     - It sits on a new Behind Track under the Video Track, handled as the Overlay Track is (lanes, hide, mute, lock, Magnetic timeline, Ripple delete, Split all).
     - Being part of the Main Track's picture, it is under the Candidate's Grade and every Adjustment Layer.
 - **The preview composites the Matte on a canvas.**
-  - The Matte's pieces play on hidden videos following the decks (0006). Their frame is worked out from the deck's time.
+  - The Matte's pieces play on hidden videos following the decks (0006). Their frame is worked out from the deck's time, by the item's Matte frame rate and its pieces' length, which the Preview Plan gives with each piece (0001; amended by ticket 10).
   - On each frame (`requestVideoFrameCallback`), a 2D canvas draws the picture and the Matte (luminance to alpha, blurred by the feather).
   - The canvas replaces the picture's element, so the Grade's and the effects' SVG filters still apply. Until a Matte is ready, the picture is shown whole.
 

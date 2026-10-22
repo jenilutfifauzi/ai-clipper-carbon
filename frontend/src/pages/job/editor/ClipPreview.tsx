@@ -154,10 +154,9 @@ export function ClipPreview({
   const mattes = useMemo(() => [new DeckMatte(), new DeckMatte()], []);
   const pieces = useMemo(() => itemPieces(preview?.mattes), [preview?.mattes]);
   const itemMattes = useMemo(() => ({ pieces: preview?.mattes, copies: preview?.matte_copies }), [preview?.mattes, preview?.matte_copies]);
-  const sourceFps = plan ? plan.source_fps || plan.fps : 0;
   useEffect(() => {
-    for (const matte of mattes) matte.setPieces(pieces, sourceFps);
-  }, [mattes, pieces, sourceFps]);
+    for (const matte of mattes) matte.setPieces(pieces);
+  }, [mattes, pieces]);
   useEffect(() => {
     mattes.forEach((matte, slot) => matte.attachMaster(decks[slot][0].current));
     return () => mattes.forEach((matte) => matte.dispose());

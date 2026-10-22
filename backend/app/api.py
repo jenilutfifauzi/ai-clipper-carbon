@@ -987,12 +987,21 @@ def candidate_preview_plan(
     library: Media,
     media_words: MediaWordsDep,
     mattes: MatteMaker,
+    background: BackgroundTasks,
     body: CandidateUpdate | None = None,
 ) -> PreviewPlan:
     """The Candidate's Preview Plan (app/editor.py): its Render Plan, or that of `body`, a draft of
     edits applied as an update would apply them but not saved, with the Matte pieces its cut-out
-    Segments read. 422 for a draft that isn't a valid edit; 409 for a Job without Candidates."""
-    return _draft_plan(job_id, candidate_id, store, settings, presets, logos, library, media_words, body, matte_version=mattes.version)
+    Segments read. A draft asks for the pieces its cut-out items lack (`ask_mattes`), as a save does,
+    so that switching Background removal on or changing a range starts its Matte before the save.
+    422 for a draft that isn't a valid edit; 409 for a Job without Candidates."""
+
+    def ask(draft: Candidate) -> None:
+        background.add_task(ask_mattes, store, mattes, job_id, draft, library)
+
+    return _draft_plan(
+        job_id, candidate_id, store, settings, presets, logos, library, media_words, body, matte_version=mattes.version, drafted=ask,
+    )
 
 
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/frame")
@@ -1069,10 +1078,14 @@ def _draft_plan(
     body: CandidateUpdate | None,
     fps: float | None = None,
     matte_version: str | None = None,
+    drafted: Callable[[Candidate], None] | None = None,
 ) -> PreviewPlan:
-    """The Preview Plan of the Candidate, or of `body`, a draft of edits not saved, at `fps` (the
-    Source's when None), listing the Matte pieces made by `matte_version` that it reads."""
+    """The Preview Plan of the Candidate, or of `body`, a draft of edits not saved (given to `drafted`
+    once it is made), at `fps` (the Source's when None), listing the Matte pieces made by
+    `matte_version` that it reads."""
     job, transcript, candidate = _drafted(job_id, candidate_id, body, store, settings, presets, library)
+    if body is not None and drafted is not None:
+        drafted(candidate)
     try:
         return preview_plan(
             job, store.job_dir(job_id), transcript, candidate, settings, presets, logos, library, media_words, fps, matte_version
@@ -2229,8 +2242,8 @@ def sweep_unused(store: JobStore, library: MediaStore, mattes: MatteRunner, job_
     other Job's Candidates use (`media_uses`), that none of its Candidates nor any state in their Revision
     History plays from; the Job's picture layers' pictures (app/layer_pictures.py) none of them shows,
     and the folder they were kept in before (OLD_PICTURES_DIR), whole; and the Matte pieces (app/matte.py)
-    none of them reads (`MatteRunner.sweep`), of the Source and of the videos and images no other
-    Job's Candidates use."""
+    none of them reads (`MatteRunner.sweep`), of the Source and of every video and image no other
+    Job's Candidates use, whether this Job uses it or not."""
     states = []
     for candidate in store.load_candidates(job_id) or []:
         states += [candidate, *(entry.candidate for entry in store.revision_history(job_id, candidate.id))]
@@ -2255,10 +2268,17 @@ def sweep_unused(store: JobStore, library: MediaStore, mattes: MatteRunner, job_
             for pieces, subject, piece in wanted
         }
         mattes.sweep(source.folder, read)
-        pictured = {item.id for item in library.all() if item.kind is not MediaKind.AUDIO}
-        for media_id in sorted(set().union(*(state.media_ids() for state in states)) & pictured):
-            if all(use.job_id == job_id for use in media_uses(store, media_id)):
-                mattes.sweep(library.mattes(media_id).folder, read)
+        # Every video's and image's, but those another Job's Candidates use: those this Job's states
+        # read are kept, and an item none of them uses any more (or ever did) loses its pieces.
+        elsewhere = {
+            media_id
+            for other in store.all() if other.id != job_id
+            for candidate in store.load_candidates(other.id) or []
+            for media_id in candidate.media_ids()
+        }
+        for item in library.all():
+            if item.kind is not MediaKind.AUDIO and item.id not in elsewhere and (folder := library.mattes(item.id).folder).is_dir():
+                mattes.sweep(folder, read)
 
 
 def sweep_unused_effected(

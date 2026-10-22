@@ -15,7 +15,7 @@ from app.candidates import Candidate, WordEdit
 from app.config import BLAZE_FACE_MODEL, Settings
 from app.jobs import Job
 from app.layer_pictures import PICTURES_DIR, make_pictures
-from app.matte import Mattes, Reversed
+from app.matte import PIECE_SECS, Mattes, Reversed
 from app.logos import LogoStore
 from app.media import MediaStore
 from app.media_words import MediaWordsStatus, MediaWordsStore
@@ -89,11 +89,15 @@ class PreviewWord:
 class MattePiece:
     """A piece of an item's Matte a cut-out picture reads (app/matte.py), by its `start` in seconds, and
     where the preview reads it: served once it is made, missing until then. Its item is the Source,
-    or the Media Library's `media` (an image's one piece, 0, a PNG)."""
+    or the Media Library's `media` (an image's one piece, 0, a PNG). The preview finds a frame in it
+    by its item's Matte's frame rate `fps` (`matte_rate`: the Source's, or the video's own) and the
+    length of the item's pieces, `piece_secs` (docs/adr/0001: neither is copied into the frontend)."""
 
     start: int
     url: str
     media: str | None = None
+    fps: float = 0.0
+    piece_secs: int = PIECE_SECS
 
 
 @dataclass(frozen=True)
@@ -259,6 +263,6 @@ def preview_mattes(
             if isinstance(part, Reversed):
                 copies[(media_id, part.start, part.end)] = MatteCopy(part.start, part.end, url, own.reversed_copy(subject, version, part)[1], media_id)
             else:
-                pieces[(media_id, str(subject), part)] = MattePiece(part, url, media_id)
+                pieces[(media_id, str(subject), part)] = MattePiece(part, url, media_id, own.frame[2])
     ordered = sorted(pieces.items(), key=lambda found: (found[0][0] or "", found[0][2], found[0][1]))
     return [piece for _, piece in ordered], list(copies.values())

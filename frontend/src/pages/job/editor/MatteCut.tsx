@@ -23,7 +23,6 @@ import {
   matteCopyOf,
   matteFrame,
   matteSeek,
-  MATTE_PIECE_SECS,
   SOURCE_CLOCK,
   type MatteClock,
   type MatteFrame,
@@ -49,8 +48,6 @@ import type { SegmentRange } from "./segmentTime";
  * Blend Mode, as the render draws them.
  */
 
-// The longest side of the canvases a picture is cut on: the Matte's own (the backend's MATTE_SIDE).
-const MATTE_SIDE = 1280;
 // The next piece is loaded this long before its time comes, so that it is ready.
 const LOOKAHEAD_SECS = 2;
 // A piece not served yet (or that failed to load) is asked for again after this long.
@@ -62,8 +59,6 @@ const PLAYING_FRAMES = 3;
 const BACKDROP_SHRINK = 8;
 // The rates a browser plays a video at.
 const RATES = { min: 0.0625, max: 16 };
-// The frame rate Media Library videos are kept at (the backend's media.FPS), which their Mattes have.
-const MEDIA_FPS = 30;
 
 /** The Preview Plan's Matte pieces and reversed copies (ADR 0015), of every item: what the pictures of Media Library items are cut by. */
 export const PreviewMattes = createContext<{ pieces?: MattePiece[]; copies?: MatteCopy[] }>({});
@@ -121,7 +116,9 @@ interface ShownMatte {
  * at its rate times the copy's Speed, or to a reversed Matte copy's, played as one piece.
  */
 export class DeckMatte {
-  fps = 30;
+  // Its item's Matte's frame rate and pieces' length, as the plan's pieces give them (ADR 0001).
+  fps = 0;
+  pieceSecs = 0;
   good = false;
   // The plan's pieces, and those read now: they, or the clock's reversed copy (as the piece at 0).
   private planned = new Map<number, string>();
@@ -142,10 +139,11 @@ export class DeckMatte {
   private framed = new Set<() => void>();
   private goodListeners = new Set<() => void>();
 
-  /** The plan's pieces (none: nothing is cut) and the Source's frame rate. */
-  setPieces(pieces: MattePiece[] | undefined, fps: number) {
+  /** The plan's pieces of its item's Matte (none: nothing is cut), which say its frame rate and its pieces' length. */
+  setPieces(pieces: MattePiece[] | undefined) {
     this.planned = new Map((pieces ?? []).map(({ start, url }) => [start, url]));
-    this.fps = fps > 0 ? fps : 30;
+    const [first] = pieces ?? [];
+    if (first) Object.assign(this, { fps: first.fps, pieceSecs: first.piece_secs });
     this.read();
   }
 
@@ -163,10 +161,10 @@ export class DeckMatte {
 
   // The Matte frame its master's time `time` shows, in the pieces read now.
   private locate(time: number): MatteFrame | null {
-    if (!this.clock) return null;
+    if (!this.clock || !this.pieces.size) return null;
     const at = this.clock.at(time);
-    if (!this.clock.copy) return matteAt(at, this.fps, this.pieces.keys());
-    return this.pieces.size ? copyFrame(at, this.fps) : null;
+    if (!this.clock.copy) return matteAt(at, this.fps, this.pieceSecs, this.pieces.keys());
+    return copyFrame(at, this.fps);
   }
 
   get cutting(): boolean {
@@ -283,7 +281,7 @@ export class DeckMatte {
     const at = this.locate(time);
     // The next piece, in the Source's pieces (a reversed copy is one).
     const source = this.clock && !this.clock.copy ? this.clock.at(time) : null;
-    const next = source === null ? null : matteFrame(source, this.fps).piece + MATTE_PIECE_SECS;
+    const next = source === null ? null : matteFrame(source, this.fps, this.pieceSecs).piece + this.pieceSecs;
     const ahead = next !== null && source !== null && this.pieces.has(next) && (next - source) / (this.clock?.rate ?? 1) < LOOKAHEAD_SECS;
     this.mount([...(at ? [at.piece] : []), ...(ahead && next !== null ? [next] : [])]);
     if (at) this.keep(this.videos.get(at.piece), matteSeek(at.frame, this.fps), master);
@@ -391,9 +389,9 @@ export function cutSlot(matte: DeckMatte, video: HTMLVideoElement, canvas: HTMLC
 }
 
 /**
- * Draws `picture` onto `canvas` (at the Matte's size, `size`), keeping only where `matte` is light:
- * its luminance made alpha on `mask`, blurred by `feather` output pixels, masks it (an image's own
- * transparency kept within it). False when it can't yet.
+ * Draws `picture` onto `canvas` at the Matte's own size (`size`, its frame's), keeping only where
+ * `matte` is light: its luminance made alpha on `mask`, blurred by `feather` output pixels, masks it
+ * (an image's own transparency kept within it). False when it can't yet.
  */
 function cut(
   picture: CanvasImageSource,
@@ -403,8 +401,7 @@ function cut(
   mask: HTMLCanvasElement,
   feather: number,
 ): boolean {
-  const width = Math.min(size[0], MATTE_SIDE);
-  const height = Math.round((size[1] * width) / Math.max(1, size[0]));
+  const [width, height] = size;
   if (!width || !height) return false;
   if (canvas.width !== width || canvas.height !== height) Object.assign(canvas, { width, height });
   if (mask.width !== width || mask.height !== height) Object.assign(mask, { width, height });
@@ -496,7 +493,7 @@ export function useItemMatte(
   const matteCopy = matteCopyOf(copies, { start, end }, media);
   const cut = !!removal && !!media;
   useEffect(() => {
-    matte.setPieces(cut ? own : undefined, MEDIA_FPS);
+    matte.setPieces(cut ? own : undefined);
     matte.setClock(!cut ? null : range ? copyClock({ start, end, speed, reverse }, range, at, matteCopy) : SOURCE_CLOCK);
   }, [matte, cut, own, range, start, end, speed, reverse, at, matteCopy]);
   useEffect(() => {

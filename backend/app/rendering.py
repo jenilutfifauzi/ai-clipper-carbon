@@ -273,7 +273,7 @@ def matted(
         files |= {str(path): path for path in paths}
         pieces = [part for part in parts if not isinstance(part, Reversed)]
         start = item.source_start if kind == "segment" else item.time.start
-        fps = own.frame[2] if own.frame[2] > 0 else 30
+        fps = own.frame[2]
         found[cut] = {
             "matte": pieces,
             "matte_files": [str(path) for path, (_, _, part) in zip(paths, wanted) if not isinstance(part, Reversed)],

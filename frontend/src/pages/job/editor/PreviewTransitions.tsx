@@ -110,8 +110,7 @@ function Ghost({
   const removal = own ? null : segment.background_removal;
   const matte = useMemo(() => new DeckMatte(), []);
   const masters = useMemo(() => [master], []);
-  const sourceFps = plan.source_fps || plan.fps;
-  useEffect(() => matte.setPieces(removal ? mattes : [], sourceFps), [matte, removal, mattes, sourceFps]);
+  useEffect(() => matte.setPieces(removal ? mattes : []), [matte, removal, mattes]);
   useEffect(() => {
     matte.attachMaster(master.current);
     return () => matte.dispose();

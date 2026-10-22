@@ -14,12 +14,12 @@ from fastapi.testclient import TestClient
 from mcp import Client
 from pydantic import TypeAdapter
 
-from app.candidates import Background, BackgroundRemoval, Candidate, Framing, Layout, Segment, Transform, manual_candidate
+from app.candidates import Background, BackgroundRemoval, Candidate, Framing, Layout, LayoutOverride, Segment, Transform, manual_candidate
 from app.config import CameraTuning, load_settings
 from app.main import create_app
 from app.matte import MATTES_DIR, MatteRunner, Mattes, matte_pieces
 from app.person_model import PersonModel
-from app.planner import SegmentInput, plan_render
+from app.planner import SceneLayout, SegmentInput, plan_render
 from app.ports import Ports
 from app.renderer import Renderer
 from app.rendering import candidate_plan, matted
@@ -63,6 +63,21 @@ def test_the_feather_grows_with_a_manual_pictures_scale_and_with_the_output():
     assert planned.segments[0].background_removal.feather == 12
     # At 720p, two thirds.
     assert scaled_plan(planned, (720, 1280)).segments[0].background_removal.feather == 8
+
+
+def test_the_feather_is_scaled_by_the_framing_of_the_scene_that_shows_it():
+    """A Segment in a Manual Layout Override is drawn at its override's scale; one in a Track or Split
+    override of a Manual Candidate isn't drawn at the Candidate's."""
+    removal = BackgroundRemoval(feather=6)
+    overridden = plan_render(10, 12, SOURCE, layout=Layout.TRACK, main_track=[
+        SegmentInput(10, 12, background_removal=removal, layout_overrides=[LayoutOverride(1.0, Layout.MANUAL, Framing(Transform(scale=1.5)))]),
+    ])
+    assert overridden.scenes[0].layout is SceneLayout.MANUAL and overridden.segments[0].background_removal.feather == 9
+    for layout in (Layout.TRACK, Layout.SPLIT):
+        tracked = plan_render(10, 12, SOURCE, layout=Layout.MANUAL, framing=Framing(Transform(scale=2.0)), main_track=[
+            SegmentInput(10, 12, background_removal=removal, layout_overrides=[LayoutOverride(1.0, layout)]),
+        ])
+        assert tracked.scenes[0].layout is not SceneLayout.MANUAL and tracked.segments[0].background_removal.feather == 6, layout
 
 
 def test_a_candidates_segment_brings_it_to_the_plan_and_one_saved_before_it_plans_as_before(tmp_path):
@@ -258,11 +273,26 @@ def test_the_preview_plan_says_where_the_pieces_its_cut_out_segments_read_are_se
     assert mattes() == []
     # A draft cutting it out lists its piece before it is made; the preview draws the picture whole until it is served.
     url = f"/media/{job['id']}/{MATTES_DIR}/person-fake-1-0.mp4"
-    assert mattes({"segments": [cut_out(first)]}) == [{"start": 0, "url": url, "media": None}]
+    # Each piece says what the preview reads it by (ADR 0001): its item's frame rate and its pieces' length.
+    listed = {"start": 0, "url": url, "media": None, "fps": 25.0, "piece_secs": 10}
+    assert mattes({"segments": [cut_out(first)]}) == [listed]
     settled(client, job, patch(client, job, candidate, segments=[cut_out(first)]))
-    assert mattes() == [{"start": 0, "url": url, "media": None}]
+    assert mattes() == [listed]
     served = client.get(url)
     assert served.status_code == 200 and served.content[4:8] == b"ftyp"
+
+
+def test_a_draft_cutting_a_segment_out_asks_for_its_pieces_as_a_save_does(client, settings):
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    [first] = ranges(job, ("halo", "kabar"))
+    response = client.post(f"/api/jobs/{job['id']}/candidates/{candidate['id']}/preview-plan", json={"segments": [cut_out(first)]})
+    assert response.status_code == 200, response.text
+    # Nothing saved, nor its Matte asked after: the draft alone starts it.
+    deadline = time.monotonic() + 30
+    while pieces(settings, job) != ["person-fake-1-0.mp4"]:
+        assert time.monotonic() < deadline, pieces(settings, job)
+        time.sleep(0.05)
 
 
 def patch_mean(frame: np.ndarray, y: int, x: int, size: int = 40) -> np.ndarray:
@@ -395,6 +425,26 @@ def test_it_is_saved_kept_on_a_lone_segment_and_bad_values_are_refused(client):
     assert refused.status_code == 422 and "Segment e's background_removal feather is 50; it is 0 to 40" in refused.text
     refused = client.patch(candidate_url(job, saved), json={"segments": [whole | {"background_removal": {"subject": "cat"}}]})
     assert refused.status_code == 422 and "subject" in refused.text and "person" in refused.text
+
+
+def test_a_cut_out_segment_shown_by_a_keyed_manual_override_is_refused_on_save_naming_it(client):
+    """The render can't cut a keyed picture yet, so the preview mustn't either: refused at once."""
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "soal")
+    first, second = ranges(job, ("halo", "kabar"), ("kita", "soal"))
+    framing = {"transform": {"scale": 1}}
+    keyed = lambda at: {"at": at, "layout": "manual", "framing": framing, "keys": {"scale": [{"at": 0, "value": 1}, {"at": 0.5, "value": 1.5}]}}  # noqa: E731
+    within, beyond = (first["start"] + first["end"]) / 2, (second["start"] + second["end"]) / 2
+    saved = patch(client, job, candidate, segments=[cut_out(first), second], layout_overrides=[keyed(beyond)])
+    message = "Segment s0 is cut out (Background removal) but its picture has Keyframes"
+    refused = client.patch(candidate_url(job, saved), json={"layout_overrides": [keyed(within)]})
+    assert refused.status_code == 422 and message in refused.text, refused.text
+    unkeyed = patch(client, job, saved, layout_overrides=[keyed(within) | {"keys": {}}])
+    refused = client.patch(candidate_url(job, unkeyed), json={"segments": [cut_out(first), second], "layout_overrides": [keyed(within)]})
+    assert refused.status_code == 422 and message in refused.text, refused.text
+    # A draft is refused alike, so the preview never cuts what the render won't.
+    drafted = client.post(f"/api/jobs/{job['id']}/candidates/{candidate['id']}/preview-plan", json={"layout_overrides": [keyed(within)]})
+    assert drafted.status_code == 422 and message in drafted.text
 
 
 # MCP

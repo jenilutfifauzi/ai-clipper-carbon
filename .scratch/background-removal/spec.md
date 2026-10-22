@@ -92,6 +92,7 @@ Recorded in ADR 0015 (`docs/adr/0015-background-removal-reads-a-cached-matte.md`
   - `subject` is the enum `person`, the only value for now.
   - `feather` is in output pixels at the picture's fitted size, 0–40, default 4.
   - Values out of range, or an unknown subject, are refused on save.
+  - A cut-out Segment whose picture has Keyframes (a video's own, or a keyed Manual Layout Override's in its range) is refused on save and in a draft, naming it: the render can't cut a keyed picture yet, so the preview mustn't either (ticket 10).
 - **`Background`** gains the kind `image` with a Media Library image id.
   - It fills 1080×1920 (cover, centred), with no Transform and no Keyframes.
   - A Media Library image a Background uses counts as used: it can't be deleted.
@@ -104,12 +105,12 @@ Recorded in ADR 0015 (`docs/adr/0015-background-removal-reads-a-cached-matte.md`
 
 **Matte store and runner**
 - **A Matte module owns the derived files,** beside the Job (the Source) or the media item. It holds:
-  - pieces of 10 s aligned to the item's own timeline, keyed by item, subject, model version and piece start. Each piece is a grayscale video at a 1280 px long edge, at the item's own frame rate, one Matte frame per video frame;
+  - pieces of 10 s aligned to the item's own timeline, keyed by item, subject, model version and piece start. Each piece is a grayscale video at a 1280 px long edge (a smaller item at its own size), at the item's own frame rate (a Media Library video's as it was kept, recorded on the item), one Matte frame per video frame;
   - a still image's single PNG;
   - a remembered failure per piece.
 - **Its interface:** given an item and a range, it answers which pieces exist, are missing, in progress or failed. It enqueues the missing ones, gives progress for a range, retries, and sweeps.
 - **The model sits behind a narrow "matter" seam.** It takes frames at model size and gives alpha frames, keeping its recurrent state across a run.
-  - The real implementation runs RVM MobileNetV3 through onnxruntime, with the CoreML provider ahead of the CPU.
+  - The real implementation runs RVM MobileNetV3 through onnxruntime on the CPU. CoreML's default conversion gives a wrong Matte (ADR 0015's measured figures); CoreML in the MLProgram format on a fixed-shape copy of the model is ticket 13's.
   - Each piece runs from 1 s before its start (warm-up), discarding the warm-up frames.
   - Frames come from ffmpeg decoding at model size. The Matte is written through ffmpeg.
 - **The runner works like the Retimed copies' runner.**
@@ -143,7 +144,7 @@ Recorded in ADR 0015 (`docs/adr/0015-background-removal-reads-a-cached-matte.md`
 - **A render whose Matte failed or whose model is absent fails** with a message naming the item and the cause.
 
 **Preview**
-- **A pure mapping from deck time to Matte piece and frame,** in TypeScript, follows 0009's per-Segment mapping (Speed, Reverse, hold).
+- **A pure mapping from deck time to Matte piece and frame,** in TypeScript, follows 0009's per-Segment mapping (Speed, Reverse, hold). It reads the item's Matte frame rate and its pieces' length from the Preview Plan's pieces (ADR 0001), and draws at the Matte frame's own size.
 - **A Matte compositor component replaces a cut-out picture's `<video>`/`<img>` with a `<canvas>`.**
   - The Matte pieces play on hidden videos following the picture's deck.
   - On each `requestVideoFrameCallback`, it draws the picture, turns the Matte's luminance into alpha, blurs it by the feather, and masks the picture with it.

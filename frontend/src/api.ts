@@ -296,6 +296,8 @@ export interface MediaItem {
   created: string;
   // A video's Media Words are transcribed in this language in every Job; null: each Job's.
   language?: string | null;
+  // A video's frame rate, as it is kept (none: recorded before it was, 30).
+  fps?: number | null;
 }
 
 // A built-in speaker of a speech engine (GLOSSARY.md, Voice; backend/app/voices.py).
@@ -1195,12 +1197,15 @@ export interface MatteCopy {
 }
 
 // A piece of an item's Matte (backend/app/matte.py; the Source's, or the Media Library item
-// `media`'s), by its `start` in seconds (10 s long; an image's one, 0, a PNG), and where it is
-// served once it is made.
+// `media`'s), by its `start` in seconds (an image's one, 0, a PNG), and where it is served once it
+// is made; with what its frames are found by (ADR 0001): the frame rate of its item's Matte (the
+// Source's, or the video's own) and how long its item's pieces are.
 export interface MattePiece {
   start: number;
   url: string;
   media?: string | null;
+  fps: number;
+  piece_secs: number;
 }
 
 export interface NewPreset {

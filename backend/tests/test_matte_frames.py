@@ -6,11 +6,24 @@ from pathlib import Path
 
 import pytest
 
-from app.matte import Mattes, matte_frame, matte_pieces
+from app.matte import PIECE_SECS, Mattes, matte_frame, matte_pieces
 from app.segment_time import SegmentTime
 
 FIXTURES = Path(__file__).parent / "fixtures"
-CASES = json.loads((FIXTURES / "matte_frames.json").read_text())["cases"]
+SHARED = json.loads((FIXTURES / "matte_frames.json").read_text())
+CASES = SHARED["cases"]
+
+
+def test_the_shared_cases_pieces_are_the_mattes():
+    """The preview reads a piece's length from the Preview Plan (ADR 0001); the shared cases are of it."""
+    assert SHARED["piece_secs"] == PIECE_SECS
+
+
+def test_an_item_whose_frame_rate_is_unknown_is_read_and_made_at_one_rate():
+    """One fallback, in one place: the pieces a range reads, the frame shown and the Matte made."""
+    assert matte_frame(19.99, 0) == matte_frame(19.99, 30) == (20, 0)
+    assert matte_pieces(8, 12, 60.0, 0) == matte_pieces(8, 12, 60.0, 30) == [0, 10]
+    assert Mattes(Path("unused"), Path("unused.mp4"), (1920, 1080, 0), 60.0).frames(10) == (300, 30)
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case["name"])
