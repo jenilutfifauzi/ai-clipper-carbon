@@ -80,7 +80,7 @@ from app.rendering import source_copies
 from app.retimed import CopySize, Retime
 from app.segment_time import SegmentTime
 from app.styles import LINE_LIMITS, StyleOverrides
-from app.templates import Anchor, AnchorOverride, LayerKind, TemplateNotFound
+from app.templates import AnchorOverride, LayerKind, TemplateNotFound
 from app.transcript import Language
 from app.uploads import UPLOADS_DIR, BadUpload, NotEnoughSpace, stage
 
@@ -236,7 +236,8 @@ Edits:
   moves the Candidate's own layers and hook by as much as its Segments' start moved, and puts the
   hook at the Template's distance from that start. Each layer keeps its place by its Anchor: each of
   its edges keeps its distance (offset) from the Clip's start or end, or the Main Slot's
-  (clip_start, main_start, main_end, clip_end), guessed from the nearest; one wholly on the intro or
+  (clip_start, main_start, main_end, clip_end), guessed from the nearest: start when both edges
+  are nearest a start, end when both are nearest an end, else span; one wholly on the intro or
   outro stays on it. An anchors entry {{kind (its list: text_layers...), id, anchor}} sets one:
   start (both edges from the start: a lower-third), end (both from the end: a call to action) or
   span (one from each, stretched with the Clip: a music bed). One past a shorter Clip's end is cut
@@ -587,9 +588,9 @@ def build_mcp(app: FastAPI) -> MCPServer:
         Job keeps a clone or copy of it). Follow it with wait_for_job."""
         settings, store = app.state.settings, app.state.store
         try:
-            options = dataclasses.replace(options, template=app.state.templates.for_new_job(options.template))
-        except TemplateNotFound:
-            raise ToolError(f"No Template {options.template}") from None
+            options = app.state.templates.for_new_job(options)
+        except TemplateNotFound as exc:
+            raise ToolError(str(exc)) from None
         file = Path(path).expanduser()
         try:
             staged = await to_thread.run_sync(stage, file, settings.data_dir / UPLOADS_DIR, settings.upload_reserve_bytes)
@@ -1255,7 +1256,7 @@ def _template_view(template: dict) -> dict:
         {
             "kind": kind, "id": layer["item"]["id"], **({"text": layer["item"]["text"]} if "text" in layer["item"] else {}),
             "start": layer["item"]["start"], "secs": layer["item"]["secs"],
-            "anchor": _ANCHOR.validate_python(layer["anchor"]).kind.value, "edges": [layer["anchor"]["start"], layer["anchor"]["end"]],
+            "anchor": layer["anchor"]["kind"], "edges": [layer["anchor"]["start"], layer["anchor"]["end"]],
         }
         for kind, listed in template["layers"].items()
         for layer in listed
@@ -1266,8 +1267,6 @@ def _template_view(template: dict) -> dict:
     view |= {"default": template["default"]} if "default" in template else {}
     return view | ({"notices": template["notices"]} if template.get("notices") else {})
 
-
-_ANCHOR = TypeAdapter(Anchor)
 
 
 def _template_items(candidate: dict, names: dict[str, str]) -> list[dict]:

@@ -137,6 +137,29 @@ def test_each_edge_hangs_from_its_nearest_boundary():
     assert captured.notices == []
 
 
+def test_the_guess_is_always_start_end_or_span_never_two_boundaries_of_one_side():
+    # On a Clip with a 3 s intro and a 2 s outro (Main Slot 3..23, Clip 0..25): one from the Clip's
+    # start into the Main Slot is nearest the Clip's start at one edge and the Main Slot's at the
+    # other, but is guessed Start from the Clip's start, keeping its length; one from the Main Slot
+    # into the outro is End from the Clip's end.
+    opener = TextLayer("opener", "Halo", start=0.0, secs=6.0)
+    closer = TextLayer("closer", "Bye", start=20.0, secs=4.5)
+    layers = capture(wrapped(20, text_layers=[opener, closer])).layers
+
+    assert anchor_of(layers, LayerKind.TEXT_LAYERS, "opener") == Anchor(Edge(Boundary.CLIP_START, 0.0), Edge(Boundary.CLIP_START, 6.0))
+    assert anchor_of(layers, LayerKind.TEXT_LAYERS, "closer") == Anchor(Edge(Boundary.CLIP_END, -5.0), Edge(Boundary.CLIP_END, -0.5))
+    assert [anchor_of(layers, LayerKind.TEXT_LAYERS, item_id).kind for item_id in ("opener", "closer")] == [AnchorKind.START, AnchorKind.END]
+    # Choosing what was guessed changes nothing.
+    chosen = [AnchorOverride(LayerKind.TEXT_LAYERS, "opener", AnchorKind.START), AnchorOverride(LayerKind.TEXT_LAYERS, "closer", AnchorKind.END)]
+    assert capture(wrapped(20, text_layers=[opener, closer]), chosen).layers == layers
+
+
+def test_an_anchor_hanging_its_edges_from_two_boundaries_is_a_span():
+    assert Anchor(Edge(Boundary.CLIP_START, 0.5), Edge(Boundary.MAIN_START, -0.5)).kind is AnchorKind.SPAN
+    assert Anchor(Edge(Boundary.MAIN_END, 0.5), Edge(Boundary.CLIP_END, -0.5)).kind is AnchorKind.SPAN
+    assert Anchor(Edge(Boundary.MAIN_END, 0.5), Edge(Boundary.MAIN_END, 1.0)).kind is AnchorKind.END
+
+
 def test_a_start_end_or_span_override_is_stored_as_its_edges():
     middle = TextLayer("middle", "Halo", start=8.0, secs=3.0)
     overrides = [
@@ -651,6 +674,24 @@ def test_template_fields_are_filled_from_the_candidate():
     assert again.notices == []
 
 
+def test_a_field_whose_value_changed_since_isnt_counted_as_changed_by_hand():
+    card = TextLayer("card", "{title} | {kicker}", start=2.0, secs=3.0)
+    quote = TextLayer("quote", "“{hook}”", start=6.0, secs=3.0)
+    template = saved_from(styled(hook_kicker="", text_layers=[card, quote]))
+    mine = candidate(30, title="Rahasia dapur", hook_text="Aku *kaget*", hook_kicker="BARU")
+    once = apply(template, mine).change
+
+    # The owner retitles the Candidate and rewrites its hook and Kicker after applying.
+    renamed = replace(mine, title="Dapur baru", hook_text="Ternyata *mudah*", hook_kicker="LAMA", text_layers=once.text_layers, segments=once.segments)
+    again = apply(template, renamed, {"brand": template})
+
+    assert again.notices == []
+    assert [layer.text for layer in again.change.text_layers] == ["Dapur baru | LAMA", "“Ternyata mudah”"]
+    # Its text changed by hand still counts.
+    typed = replace(renamed, text_layers=[replace(once.text_layers[0], text="Dapur baru!"), once.text_layers[1]])
+    assert apply(template, typed, {"brand": template}).notices == ["1 Template item changed by hand replaced."]
+
+
 def test_an_empty_kicker_leaves_nothing_with_a_notice():
     template = saved_from(styled(hook_kicker="", text_layers=[TextLayer("card", "{kicker} {title}", start=2.0, secs=3.0)]))
 
@@ -711,6 +752,8 @@ def test_a_capture_preview_gives_the_guessed_anchors_without_saving(client, from
     layers = response.json()["layers"]
     assert [layer["anchor"]["start"]["boundary"] for layer in layers["text_layers"]] == ["main_start", "main_end"]
     assert layers["shapes"][0]["anchor"]["end"]["boundary"] == "main_end"
+    # Each Anchor's name, which the save dialog shows.
+    assert [layer["anchor"]["kind"] for layer in layers["text_layers"]] == ["start", "end"]
     assert client.get(URL).json() == []
 
 
@@ -720,6 +763,7 @@ def test_templates_are_saved_listed_renamed_saved_over_and_deleted(client, from_
     template = saved(client, job, source, anchors=[{"kind": "text_layers", "id": "name", "anchor": "span"}])
     assert (template["name"], template["notices"]) == ("Brand", [])
     assert template["layers"]["text_layers"][0]["anchor"]["end"]["boundary"] == "main_end"
+    assert [layer["anchor"]["kind"] for layer in client.get(URL).json()[0]["layers"]["text_layers"]][0] == "span"
     assert [listed["id"] for listed in client.get(URL).json()] == [template["id"]]
 
     renamed = client.patch(f"{URL}/{template['id']}", json={"name": "Brand 2"})
@@ -885,6 +929,28 @@ def test_applying_to_three_candidates_changes_each_by_one_revision_in_one_reques
         assert (newest["revision"], newest["parts"]) == (now["revision"], ["Text Layers", "Shapes"])
     # Its own hand-made layers became Template items' copies beside them: none of them is marked.
     assert [layer["template"] for layer in candidates_of(client, job, source)["text_layers"]] == [None, None, template["id"], template["id"]]
+
+
+def test_reapplying_a_template_that_changes_nothing_gives_no_new_revision(client, tmp_path, from_episode, llm, wait_for_status):
+    job, source = branded(client, wait_for_status, llm)
+    shown = {"media": a_video(client, tmp_path)["id"], "framing": {}}
+    source = patch(client, job, source, segments=[
+        {"id": "sting", "start": 0.0, "end": 1.5, **shown},
+        {"id": "s1", "start": source["start"], "end": source["end"]},
+        {"id": "card", "start": 0.0, "end": 1.0, **shown},
+    ], transitions=[{"after": "sting", "kind": "fade", "secs": 0.5}], hook_kicker="BARU", layout="split")
+    template = saved(client, job, source)
+    target = added(client, job, 700.0, 712.0)
+    applied(client, job, template, [target])
+    once = candidates_of(client, job, target)
+    history = client.get(f"/api/jobs/{job['id']}/candidates/{target['id']}/revisions").json()["revisions"]
+
+    [entry] = applied(client, job, template, [once])["candidates"]
+
+    assert entry["notices"] == []
+    assert entry["revision"] == once["revision"]
+    assert candidates_of(client, job, target) == once
+    assert client.get(f"/api/jobs/{job['id']}/candidates/{target['id']}/revisions").json()["revisions"] == history
 
 
 def test_a_dry_run_saves_nothing(client, from_episode, llm, wait_for_status):

@@ -1,8 +1,7 @@
-import { DEFAULT_TEMPLATE, type JobOptions, type TemplateInfo } from "../../api";
+import { DEFAULT_TEMPLATE, NO_TEMPLATE, type JobOptions, type TemplateInfo } from "../../api";
 
 // The New Job form's Template choice (.scratch/templates/issues/08): the default Template, another
 // of the owner's, or none.
-export const NO_TEMPLATE = "";
 
 // DEFAULT_TEMPLATE, NO_TEMPLATE or a Template's id.
 export type TemplateChoice = string;

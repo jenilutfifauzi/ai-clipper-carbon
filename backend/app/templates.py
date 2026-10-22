@@ -49,7 +49,7 @@ from app.candidates import (
     grades_of,
     timeline_length,
 )
-from app.jobs import DEFAULT_TEMPLATE
+from app.jobs import DEFAULT_TEMPLATE, JobOptions
 from app.keyframes import rewindow
 from app.review import CandidateChange, Episode, update
 from app.segment_time import overlay_time, segment_time, transition_overlap
@@ -97,7 +97,8 @@ _PREFERRED = (Boundary.MAIN_START, Boundary.MAIN_END, Boundary.CLIP_START, Bound
 
 class AnchorKind(StrEnum):
     """The names the editor and the agent give an Anchor: Start (both edges from one start-side
-    boundary), End (both from one end-side boundary) and Span (one edge from each side)."""
+    boundary), End (both from one end-side boundary) and Span (each edge from another boundary: one
+    from each side, or on the intro or outro that part's start and end)."""
 
     START = "start"
     END = "end"
@@ -123,11 +124,13 @@ class Anchor:
         if self.start.boundary in END_SIDE and self.end.boundary in START_SIDE:
             raise ValueError("An Anchor's start edge can't hang from an end-side boundary and its end edge from a start-side one")
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def kind(self) -> AnchorKind:
-        if self.end.boundary in START_SIDE:
-            return AnchorKind.START
-        return AnchorKind.END if self.start.boundary in END_SIDE else AnchorKind.SPAN
+        """Its name: Start or End when both edges hang from one boundary (by its side), else Span."""
+        if self.start.boundary != self.end.boundary:
+            return AnchorKind.SPAN
+        return AnchorKind.START if self.start.boundary in START_SIDE else AnchorKind.END
 
 
 class Boundaries(NamedTuple):
@@ -148,10 +151,17 @@ def boundaries(candidate: Candidate) -> Boundaries:
     Slot what is between; with no intro nor outro, its whole Clip. Measured on its Timeline, its
     Transitions' overlaps included. InvalidTemplate for one with no Segment of the Source."""
     track = candidate.main_track()
+    first, last = _main_slot(track)
+    return _bounds(track, candidate.transitions, first, last + 1)
+
+
+def _main_slot(track: Sequence[Segment]) -> tuple[int, int]:
+    """Where a Main Track's first and last Segments of the Source are in it. InvalidTemplate for one
+    with none."""
     sources = [i for i, segment in enumerate(track) if segment.media is None]
     if not sources:
         raise InvalidTemplate("A Template needs a Segment of the episode, whose place is its Main Slot: this clip shows only Media Library videos")
-    return _bounds(track, candidate.transitions, sources[0], sources[-1] + 1)
+    return sources[0], sources[-1]
 
 
 def _bounds(track: Sequence[Segment], transitions: Sequence[Transition], first: int, end: int) -> Boundaries:
@@ -401,8 +411,7 @@ def capture(candidate: Candidate, overrides: Sequence[AnchorOverride] = ()) -> C
         anchor = anchored(item.start, item.start + item.secs, bounds, chosen.get((kind, item.id)))
         layers[kind].append(Anchored(item, anchor))
     track = candidate.main_track()
-    sources = [i for i, segment in enumerate(track) if segment.media is None]
-    first, last = sources[0], sources[-1]
+    first, last = _main_slot(track)
     by_join = {transition.after: replace(transition, template=None) for transition in candidate.transitions}
     intro, outro = [_unmarked(segment) for segment in track[:first]], [_unmarked(segment) for segment in track[last + 1 :]]
     shown = {segment.media for segment in [*intro, *outro]}
@@ -441,26 +450,31 @@ def _between(segments: Sequence[Segment], by_join: Mapping[str, Transition]) -> 
 
 
 def anchored(start: float, end: float, bounds: Boundaries, kind: AnchorKind | None = None) -> Anchor:
-    """The Anchor of a layer from `start` to `end`: as `kind` names it, or each edge from its nearest
-    boundary. A layer wholly inside the intro or the outro hangs from that part's two boundaries:
+    """The Anchor of a layer from `start` to `end`: as `kind` names it, or guessed from the boundary
+    nearest each edge: Start when both are on the start side, End when both are on the end side,
+    else Span. A layer wholly inside the intro or the outro hangs from that part's two boundaries:
     there, Start hangs both edges from the one nearer its start edge, End from the one nearer its end
-    edge, and Span its start edge from the part's start and its end edge from its end."""
+    edge, and Span its start edge from the part's start and its end edge from its end; the guess hangs
+    each edge from its nearer one."""
     starts, ends, guessed = START_SIDE, END_SIDE, _PREFERRED
     if bounds.main_start > bounds.clip_start and end <= bounds.main_start + 1e-6:
         starts = ends = guessed = (Boundary.CLIP_START, Boundary.MAIN_START)
     elif bounds.clip_end > bounds.main_end and start >= bounds.main_end - 1e-6:
         starts = ends = guessed = (Boundary.MAIN_END, Boundary.CLIP_END)
+    if kind is None:
+        first, last = _nearest(start, bounds, guessed), _nearest(end, bounds, guessed)
+        if starts is ends:
+            return Anchor(_edge(start, bounds, first), _edge(end, bounds, last))
+        kind = AnchorKind.START if last in START_SIDE else AnchorKind.END if first in END_SIDE else AnchorKind.SPAN
     if kind is AnchorKind.START:
         boundary = _nearest(start, bounds, starts)
         return Anchor(_edge(start, bounds, boundary), _edge(end, bounds, boundary))
     if kind is AnchorKind.END:
         boundary = _nearest(end, bounds, ends)
         return Anchor(_edge(start, bounds, boundary), _edge(end, bounds, boundary))
-    if kind is AnchorKind.SPAN:
-        if starts is ends:
-            return Anchor(_edge(start, bounds, starts[0]), _edge(end, bounds, ends[1]))
-        return Anchor(_edge(start, bounds, _nearest(start, bounds, starts)), _edge(end, bounds, _nearest(end, bounds, ends)))
-    return Anchor(_edge(start, bounds, _nearest(start, bounds, guessed)), _edge(end, bounds, _nearest(end, bounds, guessed)))
+    if starts is ends:
+        return Anchor(_edge(start, bounds, starts[0]), _edge(end, bounds, ends[1]))
+    return Anchor(_edge(start, bounds, _nearest(start, bounds, starts)), _edge(end, bounds, _nearest(end, bounds, ends)))
 
 
 def apply(
@@ -718,6 +732,8 @@ def _ended[T: Layer](item: T, lengths: Mapping[str, float]) -> tuple[T, bool]:
 # when one is empty.
 _FIELD_NAMES = {"title": "title", "hook": "hook text", "kicker": "Kicker"}
 _FIELD = re.compile(r"\{(title|hook|kicker)\}")
+# The Template Fields' values that leave them as typed.
+_TYPED = {name: f"{{{name}}}" for name in _FIELD_NAMES}
 
 
 def _field_values(template: Template, candidate: Candidate) -> dict[str, str]:
@@ -749,7 +765,8 @@ def _replaced(candidate: Candidate, named: Mapping[str, Template], done: str, le
     """What the owner is told of the Candidate's Template items being taken off (`done`): those
     changed by hand since their Template put them there, as told by a fresh application of it with
     the same `lengths` (their ids and the Segment a Transition follows aside, which depend on the
-    hand-made items beside them), and those of a deleted Template."""
+    hand-made items beside them, and a Text Layer's Template Fields, whose values the Candidate's
+    title, hook text or Kicker may have changed since), and those of a deleted Template."""
     changed = gone = 0
     marks = _marked(candidate.segments, candidate.transitions, candidate.word_edits, candidate.cue_edits, dict(_layers_by_kind(candidate)))
     for template_id in dict.fromkeys(item.template for _, item in marks):
@@ -759,7 +776,7 @@ def _replaced(candidate: Candidate, named: Mapping[str, Template], done: str, le
             continue
         template = named[template_id]
         wrap = _wrapped(template, candidate)
-        layers = _placed(template, wrap.bounds, {kind: [] for kind in LayerKind}, _field_values(template, candidate), lengths).layers
+        layers = _placed(template, wrap.bounds, {kind: [] for kind in LayerKind}, _TYPED, lengths).layers
         fresh: dict[str, list[Any]] = {}
         for kind, item in _marked(wrap.segments, wrap.transitions, wrap.word_edits, wrap.cue_edits, layers):
             fresh.setdefault(kind, []).append(item)
@@ -791,8 +808,18 @@ def _marked(
 
 
 def _alike(put: Any, item: Any) -> bool:
-    """Whether `item` is as a fresh application put `put`, but for its id or the Segment it follows."""
-    return replace(put, **{name: getattr(item, name) for name in ("id", "after") if hasattr(put, name)}) == item
+    """Whether `item` is as a fresh application put `put`, but for its id or the Segment it follows,
+    or a Text Layer's text filled from its Template Fields as typed (`put`'s) with any values."""
+    same = {name: getattr(item, name) for name in ("id", "after") if hasattr(put, name)}
+    if isinstance(put, TextLayer) and isinstance(item, TextLayer) and _fills(put.text, item.text):
+        same["text"] = item.text
+    return replace(put, **same) == item
+
+
+def _fills(typed: str, text: str) -> bool:
+    """Whether `text` is `typed` with its Template Fields filled with some values."""
+    parts = _FIELD.split(typed)  # its text between the Fields, and each Field's name
+    return re.fullmatch("".join(".*" if i % 2 else re.escape(part) for i, part in enumerate(parts)), text, re.DOTALL) is not None
 
 
 def _layers_by_kind(candidate: Candidate) -> Iterator[tuple[LayerKind, list[Layer]]]:
@@ -907,12 +934,19 @@ class TemplateStore:
                 self._index(saved, template_id)
             self._save(replace(saved, default=template_id))
 
-    def for_new_job(self, choice: str | None) -> str | None:
-        """A new Job's Template as chosen (DEFAULT_TEMPLATE, an id or None) resolved to an id or None.
-        TemplateNotFound for an unknown id."""
-        if choice == DEFAULT_TEMPLATE:
-            return self.default()
-        return None if choice is None else self.get(choice).id
+    def for_new_job(self, options: JobOptions) -> JobOptions:
+        """A new Job's options with its Template as chosen (DEFAULT_TEMPLATE, an id or None) resolved
+        to an id or None. The one place every new Job's Template is resolved: the API's and the MCP's
+        when the Job is made, the Pipeline's for a Job made without them (the CLI's, the eval's).
+        TemplateNotFound, naming it, for an unknown id."""
+        if options.template == DEFAULT_TEMPLATE:
+            return replace(options, template=self.default())
+        if options.template is None:
+            return options
+        try:
+            return replace(options, template=self.get(options.template).id)
+        except TemplateNotFound:
+            raise TemplateNotFound(f"No Template {options.template}") from None
 
     def for_new_candidates(self, template_id: str | None) -> tuple[Template | None, list[str]]:
         """The Template a Job's new Candidates get, by its id (or None), and what the Job is told:

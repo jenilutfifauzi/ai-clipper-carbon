@@ -1,10 +1,7 @@
-import { api, type Candidate, type TemplateInfo } from "../../api";
+import { api, NO_TEMPLATE, type Candidate, type TemplateInfo } from "../../api";
 
 // The Review page's Apply Template (.scratch/templates/issues/07): a Template, or none, applied to
 // the ticked Candidates of the Job in one request.
-
-// The pick that takes the Template items off ("No Template").
-export const NO_TEMPLATE = "";
 
 // The Templates by name, the default marked, then "No Template".
 export function pickChoices(templates: readonly TemplateInfo[]): { value: string; label: string }[] {

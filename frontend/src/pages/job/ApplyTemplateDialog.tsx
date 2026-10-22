@@ -1,10 +1,10 @@
 import { Info, Loader2, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
-import { api, type AppliedTemplate, type Candidate, type TemplateInfo } from "../../api";
+import { api, NO_TEMPLATE, type AppliedTemplate, type Candidate, type TemplateInfo } from "../../api";
 import { Button } from "../../components/Button";
 import { Select } from "../../components/Select";
 import { cx, formatClock } from "../../format";
-import { applyToTicked, firstPick, NO_TEMPLATE, pickChoices, ticked, ticksOf } from "./applyTemplate";
+import { applyToTicked, firstPick, pickChoices, ticked, ticksOf } from "./applyTemplate";
 import { candidateName } from "./CandidateList";
 
 // How long the ticks and pick must rest before the dry run is asked for again.

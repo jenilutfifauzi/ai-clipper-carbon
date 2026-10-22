@@ -15,7 +15,7 @@ from app.audio import WINDOW_AUDIO_MIME_TYPE, SileroVad, chunks, window_audio
 from app.candidates import Candidate
 from app.config import LlmChoice, Settings
 from app.fewshot import FEWSHOT_DIR, few_shot_examples
-from app.jobs import TRANSCRIPT_FILE, Job, JobConflict, JobStatus, JobStore, JobWarning, QuotaWait
+from app.jobs import DEFAULT_TEMPLATE, TRANSCRIPT_FILE, Job, JobConflict, JobStatus, JobStore, JobWarning, QuotaWait
 from app.llm import DetailResponse, Llm, LlmRequest, Overloaded, PacedLlm, QuotaExceeded, ScoreResponse
 from app.media import MEDIA_DIR, MediaStore
 from app.ports import Ports
@@ -317,8 +317,11 @@ class Pipeline:
             job = self.store.update(job.id, warnings=[*self.store.get(job.id).warnings, warning])
 
         # Its new Candidates get the Job's Template before they are first saved; when that was
-        # deleted, they are plain and the Job is told.
+        # deleted, they are plain and the Job is told. A Job made outside the API and MCP (the CLI's,
+        # the eval's) still asks for the default: it is resolved now, and kept for its later Candidates.
         fresh = selection.candidates
+        if job.options.template == DEFAULT_TEMPLATE:
+            job = self.store.update(job.id, options=self.templates.for_new_job(job.options))
         template, notices = self.templates.for_new_candidates(job.options.template)
         if template is not None:
             episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, self.settings.selection)

@@ -780,9 +780,9 @@ def with_template(options: JobOptions, templates: TemplateStore) -> JobOptions:
     """A new Job's options with its Template resolved: the default's id when not chosen, the chosen
     one's, or None. 404 for an unknown one."""
     try:
-        return replace(options, template=templates.for_new_job(options.template))
-    except TemplateNotFound:
-        raise HTTPException(404, f"No Template {options.template}") from None
+        return templates.for_new_job(options)
+    except TemplateNotFound as exc:
+        raise HTTPException(404, str(exc)) from None
 
 
 @router.get("/jobs/upload/check", status_code=204)
@@ -1859,6 +1859,7 @@ def _poster(
 
 @router.patch("/templates/{template_id}")
 def rename_template(template_id: str, body: TemplateName, templates: Templates) -> Template:
+    """Rename one of the Templates, keeping all else of it. 404 for an unknown one."""
     try:
         return templates.rename(template_id, body.name)
     except TemplateNotFound:

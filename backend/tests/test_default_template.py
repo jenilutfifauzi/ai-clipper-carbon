@@ -4,6 +4,8 @@ first save. Seam A, through the API (Selection with the fake LLM) and MCP."""
 
 import pytest
 
+from app.jobs import JobOptions
+
 from test_jobs_api import create_job
 from test_mcp import HALO_KABAR, anyio_backend, call, manual, mcp, reviewed  # noqa: F401 (fixtures)
 from test_review import candidates, patch
@@ -187,3 +189,21 @@ def test_a_new_jobs_candidates_arrive_with_the_default_templates_style_and_kicke
     for candidate in job["candidates"]:
         assert (candidate["layout"], candidate["source_volume"], candidate["hook_kicker"]) == ("blur", 0.5, "EPISODE BARU")
         assert (candidate["revision"], candidate["edited"]) == (1, False)
+
+
+def test_a_job_made_outside_the_api_with_plain_options_gets_the_default_template(client, from_episode, llm, wait_for_status):
+    # As the CLI and the eval make one: JobOptions() as it is, its Template not resolved first.
+    first, source = branded(client, wait_for_status, llm)
+    template = saved(client, first, source)
+    made_default(client, template)
+    state = client.app.state
+
+    made = state.store.create("https://www.youtube.com/watch?v=x", JobOptions(), state.profiles.load())
+    state.worker.submit(made.id)
+    job = wait_for_status(made.id, "review", "error")
+
+    assert job["status"] == "review", job["error"]
+    assert job["warnings"] == []
+    assert job["options"]["template"] == template["id"]
+    assert job["candidates"]
+    assert all(marks(candidate) == [template["id"]] * 3 for candidate in job["candidates"])

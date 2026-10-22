@@ -3,9 +3,9 @@
 // No jsdom in this repo: the markup is checked with renderToStaticMarkup.
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { api, type Candidate, type TemplateInfo } from "../../api";
+import { api, NO_TEMPLATE, type Candidate, type TemplateInfo } from "../../api";
 import { ApplyTemplateDialog, ApplyTemplateForm } from "./ApplyTemplateDialog";
-import { appliedText, applyToTicked, firstPick, NO_TEMPLATE, pickChoices, ticked, ticksOf } from "./applyTemplate";
+import { appliedText, applyToTicked, firstPick, pickChoices, ticked, ticksOf } from "./applyTemplate";
 
 const AT = "2026-10-22T00:00:00Z";
 const template = (id: string, name: string, isDefault = false): TemplateInfo => ({

@@ -9,7 +9,7 @@ import { TemplateNote } from "./Inspector";
 import { picked } from "./pick";
 import { SaveTemplateForm } from "./SaveTemplateDialog";
 import { TemplateCards } from "./TemplatesPanel";
-import { anchorKind, anchorOverrides, appliedNotice, appliedTo, layerRows, partsLabel, pickedTemplate, saveAsTemplate, templateNote, withApplied } from "./templating";
+import { anchorOverrides, appliedNotice, appliedTo, layerRows, partsLabel, pickedTemplate, saveAsTemplate, templateNote, withApplied } from "./templating";
 import { stepped, undone, type Steps } from "./useEditHistory";
 
 const AT = "2026-10-22T00:00:00Z";
@@ -122,10 +122,10 @@ describe("applying a Template from the tab", () => {
 const CAPTURED: CapturedTemplate = {
   layers: {
     text_layers: [
-      { item: { id: "name", text: "Jeni", start: 2, secs: 3 }, anchor: { start: { boundary: "main_start", offset: 2 }, end: { boundary: "main_start", offset: 5 } } },
-      { item: { id: "cta", text: "Follow", start: 14, secs: 4 }, anchor: { start: { boundary: "main_end", offset: -6 }, end: { boundary: "main_end", offset: -2 } } },
+      { item: { id: "name", text: "Jeni", start: 2, secs: 3 }, anchor: { start: { boundary: "main_start", offset: 2 }, end: { boundary: "main_start", offset: 5 }, kind: "start" } },
+      { item: { id: "cta", text: "Follow", start: 14, secs: 4 }, anchor: { start: { boundary: "main_end", offset: -6 }, end: { boundary: "main_end", offset: -2 }, kind: "end" } },
     ],
-    shapes: [{ item: { id: "plate", start: 0, secs: 20 }, anchor: { start: { boundary: "main_start", offset: 0 }, end: { boundary: "main_end", offset: 0 } } }],
+    shapes: [{ item: { id: "plate", start: 0, secs: 20 }, anchor: { start: { boundary: "main_start", offset: 0 }, end: { boundary: "main_end", offset: 0 }, kind: "span" } }],
     music: [],
     overlays: [],
     adjustment_layers: [],
@@ -198,11 +198,17 @@ describe("the save dialog", () => {
     expect(saved.id).toBe("brand");
   });
 
-  test("names an Anchor by its edges", () => {
-    const edge = (boundary: "clip_start" | "main_start" | "main_end" | "clip_end") => ({ boundary, offset: 0 });
-    expect(anchorKind({ start: edge("clip_start"), end: edge("main_start") })).toBe("start");
-    expect(anchorKind({ start: edge("main_end"), end: edge("clip_end") })).toBe("end");
-    expect(anchorKind({ start: edge("main_start"), end: edge("clip_end") })).toBe("span");
+  test("guesses each Anchor as the backend names it", () => {
+    // A title card on the intro, from the Clip's start to the Main Slot's: both edges on the start
+    // side, but from two boundaries, so it stretches with the intro: a Span, as the backend says.
+    const card = { item: { id: "card", text: "Halo", start: 0.5, secs: 2 }, anchor: { start: { boundary: "clip_start", offset: 0.5 }, end: { boundary: "main_start", offset: -0.5 }, kind: "span" } } as const;
+    const rows = layerRows({ ...CAPTURED, layers: { ...CAPTURED.layers, text_layers: [card] } });
+    expect(rows.map((row) => [row.id, row.guessed])).toEqual([
+      ["card", "span"],
+      ["plate", "span"],
+    ]);
+    // Choosing Start for it is an override.
+    expect(anchorOverrides(rows, { "text_layers:card": "start" })).toEqual([{ kind: "text_layers", id: "card", anchor: "start" }]);
   });
 });
 

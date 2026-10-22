@@ -25,6 +25,8 @@ export interface JobOptions {
 
 // A Job's Template when none is chosen: the default Template, whichever it is then.
 export const DEFAULT_TEMPLATE = "default";
+// "No Template" where a choice among the Templates is a string (a select's value): sent as null.
+export const NO_TEMPLATE = "";
 
 // One of the owner's Templates as listed (backend/app/api.py's TemplateInfo), `default` on the one
 // new Jobs get.
@@ -47,10 +49,12 @@ export type AnchorBoundary = "clip_start" | "main_start" | "main_end" | "clip_en
 // The names an Anchor goes by: Start, End or Span.
 export type AnchorKind = "start" | "end" | "span";
 
-// How a Template's layer keeps its place on a Candidate of another length: by each of its edges.
+// How a Template's layer keeps its place on a Candidate of another length: by each of its edges, and
+// the name the backend gives it.
 export interface TemplateAnchor {
   start: { boundary: AnchorBoundary; offset: number };
   end: { boundary: AnchorBoundary; offset: number };
+  kind: AnchorKind;
 }
 
 // A Template's layer: the item as it was on the Candidate, and its Anchor.
@@ -86,8 +90,11 @@ export interface TemplateSave {
   poster_at?: number;
 }
 
+// One of the owner's Templates (backend/app/templates.py's Template), as renaming gives it.
+export type Template = Omit<TemplateInfo, "default">;
+
 // A Template as saved, and what the owner is told.
-export type SavedTemplate = Omit<TemplateInfo, "default"> & { notices: string[] };
+export type SavedTemplate = Template & { notices: string[] };
 
 // What applying a Template made of one Candidate: its Revision, its edits as a PATCH sends them, and
 // what the owner is told.
@@ -1913,7 +1920,7 @@ export const api = {
       ? request<SavedTemplate>(`/templates/${over}`, { method: "PUT", body: JSON.stringify(template) })
       : request<SavedTemplate>("/templates", { method: "POST", body: JSON.stringify(template) }),
   renameTemplate: (id: string, name: string) =>
-    request<TemplateInfo>(`/templates/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+    request<Template>(`/templates/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
   deleteTemplate: (id: string) => request<void>(`/templates/${id}`, { method: "DELETE" }),
   // Make a Template the default for new Jobs, or with null, have none.
   useTemplateAsDefault: (templateId: string | null) =>

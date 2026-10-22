@@ -5,7 +5,6 @@ import {
   type CandidateChange,
   type CapturedTemplate,
   type SavedTemplate,
-  type TemplateAnchor,
   type TemplateInfo,
   type TemplateLayerKind,
 } from "../../../api";
@@ -45,15 +44,6 @@ export function appliedNotice(name: string | null, notices: string[]): string {
   return [done, ...notices].join(" ");
 }
 
-const START_SIDE = new Set(["clip_start", "main_start"]);
-const END_SIDE = new Set(["main_end", "clip_end"]);
-
-/** An Anchor's name: Start (both edges from a start-side boundary), End (both from an end-side one), or Span. */
-export function anchorKind(anchor: TemplateAnchor): AnchorKind {
-  if (START_SIDE.has(anchor.end.boundary)) return "start";
-  return END_SIDE.has(anchor.start.boundary) ? "end" : "span";
-}
-
 /** Each kind of a Template's layers, by name, in the order a Template lists them. */
 export const LAYER_NAMES: Record<TemplateLayerKind, string> = {
   text_layers: "Text",
@@ -83,7 +73,7 @@ export function layerRows(captured: CapturedTemplate): LayerRow[] {
       label: kind === "text_layers" && item.text ? `${LAYER_NAMES[kind]} “${item.text}”` : LAYER_NAMES[kind],
       start: item.start,
       secs: item.secs,
-      guessed: anchorKind(anchor),
+      guessed: anchor.kind,
     })),
   );
 }

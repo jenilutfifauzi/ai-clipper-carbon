@@ -1,6 +1,6 @@
 import { Ban, Ellipsis, LayoutTemplate, LoaderCircle, Star } from "lucide-react";
 import { useState } from "react";
-import { api, templatePosterUrl, type TemplateInfo } from "../../../api";
+import { api, NO_TEMPLATE, templatePosterUrl, type TemplateInfo } from "../../../api";
 import { Button, buttonClass } from "../../../components/Button";
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { Hint } from "../../../components/InfoTip";
@@ -8,9 +8,6 @@ import { Menu, MenuItem, useMenu } from "../../../components/Menu";
 import { cx } from "../../../format";
 import { changeTemplates, useTemplates } from "../../../templates";
 import { partsLabel } from "./templating";
-
-// What is being applied: a Template's id, or NONE for "No Template".
-const NONE = "";
 
 /**
  * The Templates tab (desktop) or sheet (phone): the owner's Templates as cards, a click applying one
@@ -27,7 +24,7 @@ export function TemplatesPanel({ phone = false, onApply }: { phone?: boolean; on
   const [error, setError] = useState<string | null>(null);
 
   async function apply(template: TemplateInfo | null) {
-    setApplying(template?.id ?? NONE);
+    setApplying(template?.id ?? NO_TEMPLATE);
     setError(null);
     try {
       await onApply(template);
@@ -111,7 +108,7 @@ export function TemplateCards({
 }: {
   templates: TemplateInfo[] | null;
   phone: boolean;
-  // The Template being applied (its id, "" for "No Template"), or null.
+  // The Template being applied (its id, NO_TEMPLATE for "No Template"), or null.
   applying: string | null;
   // The Template whose name is being changed, on a desktop.
   renaming: string | null;
@@ -135,7 +132,7 @@ export function TemplateCards({
         <Hint>{phone ? "No Templates yet: save one from the Advanced Edit on a computer." : "No Templates yet: save this clip's edit as one with “Save as Template…” at the top."}</Hint>
       )}
       <Button size="sm" className="self-start" disabled={working} onClick={() => onApply(null)}>
-        {applying === NONE ? <LoaderCircle aria-hidden size={16} className="motion-safe:animate-spin" /> : <Ban aria-hidden size={16} />}
+        {applying === NO_TEMPLATE ? <LoaderCircle aria-hidden size={16} className="motion-safe:animate-spin" /> : <Ban aria-hidden size={16} />}
         No Template
       </Button>
       {error && (

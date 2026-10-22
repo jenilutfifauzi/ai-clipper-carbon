@@ -2,8 +2,8 @@
 // No jsdom in this repo: the markup is checked with renderToStaticMarkup.
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import { DEFAULT_TEMPLATE, type TemplateInfo } from "../../api";
-import { chosenName, NO_TEMPLATE, templateChoices, templateOption } from "./templateChoice";
+import { DEFAULT_TEMPLATE, NO_TEMPLATE, type TemplateInfo } from "../../api";
+import { chosenName, templateChoices, templateOption } from "./templateChoice";
 import { TemplateField } from "./TemplateField";
 
 const AT = "2026-10-22T00:00:00Z";
