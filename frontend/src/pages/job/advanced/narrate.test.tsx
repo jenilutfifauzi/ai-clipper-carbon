@@ -353,6 +353,7 @@ describe("the Narrate tab", () => {
         transitions={null}
         filters={null}
         effects={null}
+        templates={null}
         narrate={<Fields />}
         onAddText={() => {}}
         onAddShape={() => {}}

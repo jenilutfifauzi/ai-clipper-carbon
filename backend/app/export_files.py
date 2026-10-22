@@ -15,6 +15,8 @@ reversed Segment or Overlay's Retimed copy is made when it isn't there, as a ren
 """
 
 import math
+import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -103,6 +105,32 @@ def draw_frame(
     source = job.source
     drawn, logo, files, pictures = drawing_inputs(plan, export, job_dir, source, settings, media, logos)
     Renderer(settings.ffmpeg_bin, settings.render).frame(job_dir / source.video, drawn, at, path, logo, files, pictures, export)
+
+
+def draw_poster(
+    job: Job,
+    job_dir: Path,
+    plan: RenderPlan,
+    at: float,
+    path: Path,
+    size: tuple[int, int],
+    settings: Settings,
+    media: MediaStore,
+    logos: LogoStore,
+) -> None:
+    """Draw a Template's poster (GLOSSARY.md, Template): the frame of `plan` shown at `at` seconds
+    into it, drawn as `draw_frame` draws it at the smallest Export size, then made `size` (a card's)
+    and written as a PNG at `path`, in place of any there."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".poster-", dir=path.parent) as folder:
+        frame, card = Path(folder) / "frame.png", Path(folder) / "poster.png"
+        draw_frame(job, job_dir, plan, at, frame, replace(ExportSettings(), resolution=720), settings, media, logos)
+        width, height = size
+        command = [str(settings.ffmpeg_bin), "-v", "error", "-y", "-i", str(frame), "-vf", f"scale={width}:{height}:flags=lanczos", str(card)]
+        done = subprocess.run(command, capture_output=True, text=True)
+        if done.returncode != 0:
+            raise RuntimeError(f"The poster couldn't be made: {done.stderr.strip()}")
+        card.replace(path)
 
 
 def save_audio(

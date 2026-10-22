@@ -34,16 +34,74 @@ export interface TemplateInfo {
   created_at: string;
   updated_at: string;
   default: boolean;
+  // Its intro's and outro's lengths, in seconds (0 for none): what it adds to a Clip. Absent from
+  // a listing made before them.
+  intro?: { secs: number };
+  outro?: { secs: number };
 }
 
-// What applying a Template made of one Candidate (backend/app/api.py's AppliedTemplate): its Revision
-// (the one it is at, on a dry run), its edits, and what the owner is told.
+// A kind of a Template's layers, by the list a Candidate holds them in (backend/app/templates.py).
+export type TemplateLayerKind = "text_layers" | "shapes" | "music" | "overlays" | "adjustment_layers";
+// What an edge of a Template's layer hangs from (GLOSSARY.md, Anchor).
+export type AnchorBoundary = "clip_start" | "main_start" | "main_end" | "clip_end";
+// The names an Anchor goes by: Start, End or Span.
+export type AnchorKind = "start" | "end" | "span";
+
+// How a Template's layer keeps its place on a Candidate of another length: by each of its edges.
+export interface TemplateAnchor {
+  start: { boundary: AnchorBoundary; offset: number };
+  end: { boundary: AnchorBoundary; offset: number };
+}
+
+// A Template's layer: the item as it was on the Candidate, and its Anchor.
+export interface AnchoredLayer {
+  item: { id: string; start: number; secs: number; text?: string; media?: string | null };
+  anchor: TemplateAnchor;
+}
+
+// What a Template saved from a Candidate would hold (backend/app/templates.py's Captured): its layers
+// with their Anchors, guessed or as chosen, and what the owner is told.
+export interface CapturedTemplate {
+  layers: Record<TemplateLayerKind, AnchoredLayer[]>;
+  notices: string[];
+  intro: { secs: number };
+  outro: { secs: number };
+}
+
+// An Anchor chosen for one of the Candidate's layers, in place of the guess.
+export interface AnchorOverride {
+  kind: TemplateLayerKind;
+  id: string;
+  anchor: AnchorKind;
+}
+
+// A Template saved from a Candidate of a Job: its draft edits (unsaved), the Anchors chosen, and the
+// playhead (Timeline time), whose frame of the draft is its poster.
+export interface TemplateSave {
+  name: string;
+  job_id: string;
+  candidate_id: string;
+  edits?: CandidateChange;
+  anchors?: AnchorOverride[];
+  poster_at?: number;
+}
+
+// A Template as saved, and what the owner is told.
+export type SavedTemplate = Omit<TemplateInfo, "default"> & { notices: string[] };
+
+// What applying a Template made of one Candidate: its Revision, its edits as a PATCH sends them, and
+// what the owner is told.
 export interface AppliedTemplate {
   candidate_id: string;
   revision: number;
   edits: CandidateChange;
   notices: string[];
 }
+
+// A Template's poster: the frame at the playhead it was saved with, at a card's size. `updated_at`
+// tells a poster drawn again (saved over) from the one cached.
+export const templatePosterUrl = (template: { id: string; updated_at: string }) =>
+  `/api/templates/${template.id}/poster?v=${encodeURIComponent(template.updated_at)}`;
 
 export interface JobWarning {
   stage: JobStatus;
@@ -1845,6 +1903,18 @@ export const api = {
   deletePreset: (id: string) => request<void>(`/presets/${id}`, { method: "DELETE" }),
   listTextPresets: () => request<TextPreset[]>("/text-presets"),
   listTemplates: () => request<TemplateInfo[]>("/templates"),
+  // What a Template saved from a Candidate (as its draft edits would make it) would hold, with each
+  // layer's Anchor guessed; nothing saved.
+  captureTemplate: (capture: Omit<TemplateSave, "name" | "poster_at">) =>
+    request<CapturedTemplate>("/templates/capture", { method: "POST", body: JSON.stringify(capture) }),
+  // A new Template; or with `over`, saved over that one, which keeps its id (and its default status).
+  saveTemplate: (template: TemplateSave, over?: string | null) =>
+    over
+      ? request<SavedTemplate>(`/templates/${over}`, { method: "PUT", body: JSON.stringify(template) })
+      : request<SavedTemplate>("/templates", { method: "POST", body: JSON.stringify(template) }),
+  renameTemplate: (id: string, name: string) =>
+    request<TemplateInfo>(`/templates/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  deleteTemplate: (id: string) => request<void>(`/templates/${id}`, { method: "DELETE" }),
   // Make a Template the default for new Jobs, or with null, have none.
   useTemplateAsDefault: (templateId: string | null) =>
     request<{ template_id: string | null }>("/templates/default", { method: "PUT", body: JSON.stringify({ template_id: templateId }) }),

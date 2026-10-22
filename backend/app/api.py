@@ -60,7 +60,7 @@ from app.derived import PEAKS_FORMAT, PEAKS_VERSION, STRIP_FORMAT, STRIP_VERSION
 from app.editor import PreviewPlan, captions_pending, preview_plan
 from app.encoding import Codec, ExportSettings, estimated_bytes
 from app.events import candidate_events, job_events
-from app.export_files import SavedExport, draw_frame, save_audio, save_frame, saved_export
+from app.export_files import SavedExport, draw_frame, draw_poster, save_audio, save_frame, saved_export
 from app.export_presets import BuiltinExportPreset, ExportPreset, ExportPresetNotFound, ExportPresetStore
 from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, Face, FaceNotFound, Faces, MissingFace
 from app.effected import EFFECTED_DIR, NoCopy, copies_used as effected_used, effected_copy, sweep as sweep_effected
@@ -495,9 +495,16 @@ class TemplateCapture(BaseModel):
 
 
 class TemplateBody(TemplateCapture):
-    """A Template as the owner saves it: a name, and what it is saved from."""
+    """A Template as the owner saves it: a name, and what it is saved from; with `poster_at`, its
+    poster is that frame (Timeline time, the editor's playhead) of the draft."""
 
     name: Name
+    poster_at: Annotated[FiniteFloat, Field(ge=0)] | None = None
+
+
+# Each Template's poster: a PNG beside the Template store, named by the Template's id, at a card's size.
+POSTERS_DIR = "template-posters"
+POSTER_SIZE = (270, 480)
 
 
 @dataclass(frozen=True)
@@ -1776,12 +1783,15 @@ def create_template(
     faces: FaceRegistry,
     logos: Logos,
     templates: Templates,
+    media_words: MediaWordsDep,
 ) -> SavedTemplate:
     """Save a Candidate (as its draft edits would make it) as a new Template, as `capture_template`
-    would capture it. 422 for one naming media, a Look, a Face or a Logo that isn't there, or media
-    it can't use so (`_saveable`)."""
+    would capture it, and its poster when `poster_at` is given. 422 for one naming media, a Look, a
+    Face or a Logo that isn't there, or media it can't use so (`_saveable`)."""
     captured = _saveable(body, store, settings, presets, library, faces, logos)
-    return SavedTemplate(**vars(templates.create(body.name, captured)), notices=captured.notices)
+    template = templates.create(body.name, captured)
+    notices = [*captured.notices, *_poster(template.id, body, store, settings, presets, logos, library, media_words, templates)]
+    return SavedTemplate(**vars(template), notices=notices)
 
 
 @router.put("/templates/{template_id}")
@@ -1795,15 +1805,55 @@ def save_over_template(
     faces: FaceRegistry,
     logos: Logos,
     templates: Templates,
+    media_words: MediaWordsDep,
 ) -> SavedTemplate:
     """Save a Candidate over one of the Templates, keeping its id, validated as `create_template`
-    validates it. The Candidates it was applied to keep their copies."""
+    validates it, its poster drawn again when `poster_at` is given. The Candidates it was applied to
+    keep their copies."""
     captured = _saveable(body, store, settings, presets, library, faces, logos)
     try:
         template = templates.save_over(template_id, body.name, captured)
     except TemplateNotFound:
         raise HTTPException(404, f"No Template {template_id}") from None
-    return SavedTemplate(**vars(template), notices=captured.notices)
+    notices = [*captured.notices, *_poster(template.id, body, store, settings, presets, logos, library, media_words, templates)]
+    return SavedTemplate(**vars(template), notices=notices)
+
+
+@router.get("/templates/{template_id}/poster", response_class=FileResponse)
+def template_poster(template_id: str, templates: Templates) -> FileResponse:
+    """A Template's poster, a PNG; 404 when it has none."""
+    path = _poster_path(templates, template_id)
+    if not path.is_file():
+        raise HTTPException(404, f"Template {template_id} has no poster")
+    return FileResponse(path, media_type="image/png")
+
+
+def _poster_path(templates: TemplateStore, template_id: str) -> Path:
+    return templates.path.parent / POSTERS_DIR / f"{template_id}.png"
+
+
+def _poster(
+    template_id: str,
+    body: TemplateBody,
+    store: JobStore,
+    settings: Settings,
+    presets: PresetStore,
+    logos: LogoStore,
+    library: MediaStore,
+    media_words: MediaWordsStore,
+    templates: TemplateStore,
+) -> list[str]:
+    """Draw the Template's poster from `body`'s draft at `poster_at`, if given, in place of the one it
+    had; what the owner is told when it couldn't be (the Template is saved all the same)."""
+    if body.poster_at is None:
+        return []
+    planned = _draft_plan(body.job_id, body.candidate_id, store, settings, presets, logos, library, media_words, body.edits)
+    job, job_dir = store.get(body.job_id), store.job_dir(body.job_id)
+    try:
+        draw_poster(job, job_dir, planned.plan, body.poster_at, _poster_path(templates, template_id), POSTER_SIZE, settings, library, logos)
+    except RuntimeError as exc:
+        return [f"Its poster couldn't be made: {exc}"]
+    return []
 
 
 @router.patch("/templates/{template_id}")
@@ -1822,6 +1872,7 @@ def delete_template(template_id: str, templates: Templates) -> None:
         templates.delete(template_id)
     except TemplateNotFound:
         raise HTTPException(404, f"No Template {template_id}") from None
+    _poster_path(templates, template_id).unlink(missing_ok=True)
 
 
 @router.post("/jobs/{job_id}/templates/apply")

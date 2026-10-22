@@ -1,6 +1,6 @@
-import { ClipboardCopy, Copy, RotateCcw, Trash2 } from "lucide-react";
+import { ClipboardCopy, Copy, LayoutTemplate, RotateCcw, Trash2 } from "lucide-react";
 import { useContext, useState, type ReactNode } from "react";
-import type { AdjustmentLayer, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TextLayer } from "../../../api";
+import type { AdjustmentLayer, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TemplateInfo, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { CaptionStylePanel } from "../editor/CaptionStylePanel";
@@ -28,13 +28,34 @@ import { CueFields } from "./CueFields";
 import type { TrackKind } from "./trackState";
 import { ShapeFields, ShapesFields } from "./Shapes";
 import { TextLayerFields, TextLayersFields } from "./TextLayers";
+import { pickedTemplate, templateNote } from "./templating";
 
 /**
  * The picked item's properties: a Segment's, a Text Layer's, a Shape's, a Music Clip's, an Overlay's, an Adjustment Layer's,
  * the hook's, or a join's Transition; or, with several picked, what they are and what can be done to them
  * (several Text Layers, or several Shapes, have their look edited together).
  */
-export function Inspector({
+export function Inspector({ templates = null, ...fields }: Parameters<typeof InspectorFields>[0] & { templates?: TemplateInfo[] | null }) {
+  const marked = pickedTemplate(fields.edits, fields.pick);
+  return (
+    <>
+      {marked && <TemplateNote templateId={marked} templates={templates} />}
+      <InspectorFields {...fields} />
+    </>
+  );
+}
+
+/** A Template item's note: the Template that put it there, by name, or that it was deleted. */
+export function TemplateNote({ templateId, templates }: { templateId: string; templates: TemplateInfo[] | null }) {
+  return (
+    <p data-template-note="" className="mb-3 flex items-center gap-1.5 text-xs text-muted">
+      <LayoutTemplate aria-hidden size={14} className="shrink-0" />
+      <span className="min-w-0 truncate">{templateNote(templateId, templates)}</span>
+    </p>
+  );
+}
+
+function InspectorFields({
   pick,
   edits,
   duration,
