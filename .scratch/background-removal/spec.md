@@ -116,7 +116,7 @@ Recorded in ADR 0015 (`docs/adr/0015-background-removal-reads-a-cached-matte.md`
   - It runs one piece at a time, outside the Worker, at low priority, latest request first.
   - The editor's requests come from saves and drafts that turn Background removal on or change a range.
   - A render calls the same module synchronously for its missing pieces, inside its job, reporting progress.
-- **Reverse:** a reversed item's Matte is a Retimed copy of its Matte pieces over the range, made by the 0009 mechanism, in the two sizes the preview and render need.
+- **Reverse:** a reversed item's Matte is a Retimed copy of its Matte pieces over the range, made by the 0009 mechanism after its pieces, in one size (the Matte's own), read by both the preview and the render.
 - **The sweep runs when a Job is opened,** as Retimed copies' does: pieces that no Candidate nor its Revision History shows are removed. Removing the model removes every Matte.
 
 **Model download**
