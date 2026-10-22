@@ -817,6 +817,10 @@ class BackgroundRemoval:
     subject: Subject = Subject.PERSON
     feather: Annotated[FiniteFloat, WithJsonSchema({"type": "number", "minimum": 0, "maximum": FEATHER_MAX})] = 4.0
 
+    def scaled(self, scale: float) -> "BackgroundRemoval":
+        """It as drawn by a picture `scale` times its fitted size: its feather times `scale`, to a thousandth."""
+        return replace(self, feather=round(self.feather * scale, 3))
+
 
 def checked_background_removal(removal: BackgroundRemoval | None, item: str) -> None:
     """ValueError, naming `item`, unless `removal` (if any) has a feather within 0..FEATHER_MAX."""

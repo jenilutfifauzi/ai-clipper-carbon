@@ -18,7 +18,7 @@ from app.media import MediaItem, MediaKind
 from app.migration import migrated_candidate, migrated_clip, migrated_segment
 from app.pictures import cover_scale
 from app.planner import (
-    FRAME, OUTPUT_HEIGHT, OUTPUT_WIDTH, Picture, SceneLayout, SegmentInput, _filled, _fitted, framed_scene, on_frame, plan_render,
+    FRAME, OUTPUT_HEIGHT, OUTPUT_WIDTH, Picture, SceneLayout, SegmentInput, _fitted, filled as filled_crop, framed_scene, on_frame, plan_render,
 )
 from app.rendering import candidate_plan
 from app.styles import PresetStore
@@ -92,7 +92,7 @@ def test_an_old_filled_or_fitted_segment_becomes_a_framing_that_shows_the_same_b
         )
         # Filled, it was the largest 9:16 crop from the middle of the video, filling the frame: so
         # is the part of its picture on the frame now.
-        was = _filled(*size, 0.0)
+        was = filled_crop(*size, 0.0)
         shown = on_frame(filled_scene.picture)
         assert (shown.width, shown.height) == (OUTPUT_WIDTH, OUTPUT_HEIGHT), size
         assert within_a_pixel(box(shown.crop), (was.path[0].x, was.path[0].y, was.crop_width, was.crop_height)), size
@@ -286,7 +286,7 @@ def test_a_job_saved_with_filled_and_fitted_segments_reads_them_as_framings_that
     assert all("fit" not in segment for segment in read["segments"]) and read["revision"] == candidate["revision"]
     planned = preview(client, job, read)["plan"]
     [filled, *_, fitted] = (_PICTURE.validate_python(scene["picture"]) if scene["picture"] else None for scene in planned["scenes"])
-    was = _filled(640, 360, 0.0)
+    was = filled_crop(640, 360, 0.0)
     shown = on_frame(filled)
     assert (shown.width, shown.height) == (OUTPUT_WIDTH, OUTPUT_HEIGHT)
     assert within_a_pixel(box(shown.crop), (was.path[0].x, was.path[0].y, was.crop_width, was.crop_height))

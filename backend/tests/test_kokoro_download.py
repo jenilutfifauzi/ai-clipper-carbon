@@ -14,7 +14,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.kokoro import KOKORO_BYTES, KOKORO_FOLDER, KOKORO_SHA256, KOKORO_URL, KokoroBusy, KokoroModel, KokoroSource
+from app.kokoro import KOKORO_BYTES, KOKORO_FOLDER, KOKORO_SHA256, KOKORO_URL, KokoroBusy, KokoroModel
+from app.model_download import ModelSource
 from app.main import create_app
 from app.ports import Ports, real_ports
 from fakes import FakeVoiceEngine
@@ -59,8 +60,8 @@ def served() -> Iterator[tuple[Served, str]]:
         yield served
 
 
-def source(url: str, body: bytes = GOOD) -> KokoroSource:
-    return KokoroSource(url, hashlib.sha256(body).hexdigest(), len(body))
+def source(url: str, body: bytes = GOOD) -> ModelSource:
+    return ModelSource(url, hashlib.sha256(body).hexdigest(), len(body))
 
 
 def settle(model: KokoroModel) -> dict:
@@ -74,7 +75,7 @@ def test_the_pinned_source_is_sherpa_onnxs_kokoro_int8_multi_language_archive():
     assert len(KOKORO_SHA256) == 64 and int(KOKORO_SHA256, 16)
     assert KOKORO_BYTES == 132_303_094
     model = KokoroModel(Path("/nowhere"))
-    assert model.source == KokoroSource(KOKORO_URL, KOKORO_SHA256, KOKORO_BYTES)
+    assert model.source == ModelSource(KOKORO_URL, KOKORO_SHA256, KOKORO_BYTES)
 
 
 def test_a_good_archive_is_fetched_checked_unpacked_and_reported_ready(served, tmp_path):
@@ -100,7 +101,7 @@ def test_a_good_archive_is_fetched_checked_unpacked_and_reported_ready(served, t
 def test_a_wrong_digest_deletes_the_file_and_reports_failed(served, tmp_path):
     _, url = served
     models = tmp_path / "models"
-    model = KokoroModel(models, KokoroSource(url, "0" * 64, len(GOOD)))
+    model = KokoroModel(models, ModelSource(url, "0" * 64, len(GOOD)))
     model.download()
     state = settle(model)
     assert state["state"] == "failed" and "checksum" in state["message"]

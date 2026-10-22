@@ -1257,10 +1257,10 @@ def _segment_removal(given: SegmentInput, shown: ScenePlan, duration: float, fps
     placed = shown.layout in (SceneLayout.MANUAL, SceneLayout.MEDIA)
     scale = overlay_scale(shown.framing.transform) if placed and shown.framing is not None else 1.0
     if given.media is not None:
-        return {"background_removal": replace(removal, feather=round(removal.feather * scale, 3))}
+        return {"background_removal": removal.scaled(scale)}
     end = given.start if given.hold is not None else given.end
     return {
-        "background_removal": replace(removal, feather=round(removal.feather * scale, 3)),
+        "background_removal": removal.scaled(scale),
         "background": given.background or Background(),
         "matte": MatteRead(matte_pieces(given.start, end, duration, fps)),
     }
@@ -1598,7 +1598,7 @@ def framed_scene(start: float, end: float, layout: SceneLayout, width: int, heig
         return ScenePlan(start, end, layout, [], picture, framing.background.colour, framing)
     if framing.background.kind is BackgroundKind.IMAGE:
         return ScenePlan(start, end, layout, [], picture, framing=framing, image=framing.background.image)
-    cropped, cover = picture.crop, _filled(picture.crop.width, picture.crop.height, start)
+    cropped, cover = picture.crop, filled(picture.crop.width, picture.crop.height, start)
     point = replace(cover.path[0], x=cover.path[0].x + cropped.x, y=cover.path[0].y + cropped.y)
     return ScenePlan(start, end, layout, [replace(cover, path=[point], blur=True)], picture, framing=framing)
 
@@ -1846,7 +1846,7 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
         overlay.media, picture, start, end, offset, item.duration is None, overlay.id, overlay.speed, overlay.pitch, overlay.reverse,
         overlay.animation_in, overlay.animation_out, overlay.animation_ms, overlay.grade,
         scaled_effects(enabled_video_effects(overlay.video_effects), scale), overlay.blend,
-        None if removal is None else replace(removal, feather=round(removal.feather * scale, 3)),
+        None if removal is None else removal.scaled(scale),
     )
 
 
@@ -3278,8 +3278,9 @@ def _centre_crop(width: int, height: int) -> Panel:
     return Panel(Box(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT), crop_width, crop_height, [CropPoint(0.0, x, y)])
 
 
-def _filled(width: int, height: int, start: float) -> Panel:
-    """The largest 9:16 crop from the middle of a frame of any shape, filling the output."""
+def filled(width: int, height: int, start: float) -> Panel:
+    """The largest 9:16 crop from the middle of a frame of any shape, filling the output: also what
+    the picture blurred (a Background's) covers the frame with."""
     if width * OUTPUT_HEIGHT >= height * OUTPUT_WIDTH:
         crop_height = _even_floor(height)
         crop_width = min(_even(crop_height * OUTPUT_WIDTH / OUTPUT_HEIGHT), _even_floor(width))
@@ -3288,12 +3289,6 @@ def _filled(width: int, height: int, start: float) -> Panel:
         crop_height = min(_even(crop_width * OUTPUT_HEIGHT / OUTPUT_WIDTH), _even_floor(height))
     x, y = _centred(width, crop_width), _centred(height, crop_height)
     return Panel(Box(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT), crop_width, crop_height, [CropPoint(start, x, y)])
-
-
-def filled(width: int, height: int, start: float) -> Panel:
-    """The largest 9:16 crop from the middle of a frame of any shape, filling the output: what the
-    picture blurred (a Background's) covers the frame with."""
-    return _filled(width, height, start)
 
 
 def _fitted(width: int, height: int, start: float) -> Panel:

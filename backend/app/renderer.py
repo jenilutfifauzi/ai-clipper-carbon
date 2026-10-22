@@ -554,7 +554,7 @@ class Renderer:
         picture_inputs, written = _layer_inputs(plan, pictures or {}, before_music + songs + overlaid + len(drawn), feeds)
         given = [*sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *behind_inputs, *scene_inputs, *picture_inputs]
         matte_inputs, matted = _matte_inputs(plan, mattes or {}, given.count("-i"), layered, behind)
-        behind = {slot: [(event, number, feed, k, matted.get(("behind", k))) for event, number, feed, k in laid] for slot, laid in behind.items()}
+        behind = {slot: [part._replace(matte=matted.get(("behind", part.place))) for part in laid] for slot, laid in behind.items()}
         if plan.segments:
             frame = _segmented(plan, tuning, drawn, matted, files or {}, behind)
         else:
@@ -571,7 +571,7 @@ class Renderer:
             # at another rate than the Source's, the Clip's frames.
             frame += f";{joined}fps={_rate(plan)}[timed]"
             joined = "[timed]"
-        for i, (event, number, feed, place) in enumerate(layered):
+        for i, (event, number, feed, place, _) in enumerate(layered):
             frame += f";{_overlay(event, joined, f'[over{i}]', number, i, feed, _rate_value(plan), matted.get(('overlay', place)))}"
             joined = f"[over{i}]"
         for i, event in enumerate(plan.adjustment_layers):
@@ -1016,7 +1016,7 @@ def _removed_background(
     assert removal is not None
     graded = grade_filters(segment.grade, alpha=f"{name}a")
     effects = video_effect_chain(segment.video_effects, (plan.width, plan.height), label=f"{name}fx")
-    feather = [f"gblur=sigma={removal.feather:.3f}"] if removal.feather > 0 else []
+    feather = _feathered(removal.feather)
     # At its item's size: the Source's, or a video's.
     picture = scenes[0].picture if segment.media is not None else None
     width, height = picture.item_size if picture is not None else (plan.source_width, plan.source_height)
@@ -1100,7 +1100,7 @@ Listings = dict[tuple[str, ...], Path]
 
 
 def _matte_inputs(
-    plan: RenderPlan, listings: Listings, first: int, layered: "list[tuple[OverlayEvent, int, FrameFeed | None, int]]", behind: "Behind",
+    plan: RenderPlan, listings: Listings, first: int, layered: "list[LaidOverlay]", behind: "Behind",
 ) -> tuple[list[str], dict[MattePlace, str]]:
     """The input options that read each cut-out picture's Matte, numbered from `first`, and each one's
     read, a link label then the filters that bring its frames to its picture's own (each picture from
@@ -1118,8 +1118,8 @@ def _matte_inputs(
         (("segment", i), segment, _HELD_READ_SECS if segment.hold is not None else segment.time.span, None)
         for i, segment in enumerate(plan.segments)
     ]
-    events = [(("overlay", place), event) for event, _, feed, place in layered if feed is None]
-    events += [(("behind", k), event) for laid in behind.values() for event, _, feed, k in laid if feed is None]
+    events = [(("overlay", laid.place), laid.event) for laid in layered if laid.feed is None]
+    events += [(("behind", part.place), part.event) for parts in behind.values() for part in parts if part.feed is None]
     shown += [(key, event, event.time.span, event if event.image else None) for key, event in events]
     for key, item, span, image in shown:
         if (matte := _read_matte(item)) is None:
@@ -1450,9 +1450,21 @@ def _ramps(points: Sequence[tuple[float, float]]) -> str:
     return "".join(terms)
 
 
+class LaidOverlay(NamedTuple):
+    """An Overlay (or a Behind Overlay's part) as the encode lays it: `event`, its input's `number`, its
+    frame process `feed` (None: drawn by the graph), its `place` among the plan's Overlays (or the
+    Behind Overlays' parts); once its Matte's input is known, a cut-out one's `matte` read (`_matte_inputs`)."""
+
+    event: OverlayEvent
+    number: int
+    feed: FrameFeed | None
+    place: int
+    matte: str | None = None
+
+
 def _overlay_inputs(
     plan: RenderPlan, files: dict[str, Path], first: int, feeds: "Feeds"
-) -> tuple[list[str], list[tuple[OverlayEvent, int, FrameFeed | None, int]]]:
+) -> tuple[list[str], list[LaidOverlay]]:
     """The input options of the plan's Overlays, one each, numbered from `first` (a video read from its
     offset for as long as it shows times its Speed; an image's one picture, or for as long as it shows
     at the Clip's frame rate when an effect of it changes with time (`_looped`); a keyed one's frames,
@@ -1460,13 +1472,13 @@ def _overlay_inputs(
     with its input's number, its frame process and its place among them. One whose file isn't in
     `files` isn't drawn."""
     inputs: list[str] = []
-    drawn = []
+    drawn: list[LaidOverlay] = []
     for i, event in enumerate(plan.overlays):
         if event.media not in files:
             continue
         feed = feeds.get(("overlay", i))
         inputs += _overlay_input(plan, event, files, feed)
-        drawn.append((event, first + len(drawn), feed, i))
+        drawn.append(LaidOverlay(event, first + len(drawn), feed, i))
     return inputs, drawn
 
 
@@ -1502,10 +1514,8 @@ class _BehindPart(NamedTuple):
 # What lays the Behind Overlays in a stretch: filters from its Background's frames (a link label) into
 # a link, named from a prefix (`_behind`).
 Lay = Callable[[str, str, str], str]
-# Each stretch's Behind Overlays' parts as drawn: each with its input's number, its frame process and
-# its place among the parts; once its Matte's input is known, a cut-out one's read too (`_matte_inputs`).
-Behind = dict[Slot, list[tuple[OverlayEvent, int, "FrameFeed | None", int]]]
-LaidBehind = dict[Slot, list[tuple[OverlayEvent, int, "FrameFeed | None", int, str | None]]]
+# Each stretch's Behind Overlays' parts as drawn.
+Behind = dict[Slot, list[LaidOverlay]]
 
 
 def _behind_slots(plan: RenderPlan) -> list[tuple[Slot, float, float]]:
@@ -1578,29 +1588,29 @@ def _behind_inputs(plan: RenderPlan, files: dict[str, Path], first: int, feeds: 
             continue
         feed = feeds.get(("behind", k))
         inputs += _overlay_input(plan, part.event, files, feed)
-        behind.setdefault(part.slot, []).append((part.event, first + count, feed, k))
+        behind.setdefault(part.slot, []).append(LaidOverlay(part.event, first + count, feed, k))
         count += 1
     return inputs, behind
 
 
-def _lay(plan: RenderPlan, laid: "list[tuple[OverlayEvent, int, FrameFeed | None, int, str | None]] | None") -> Lay | None:
+def _lay(plan: RenderPlan, laid: list[LaidOverlay] | None) -> Lay | None:
     """What lays the parts `laid` of a stretch (`_behind`); None without any."""
     return partial(_behind, plan, laid) if laid else None
 
 
-def _scene_behind(plan: RenderPlan, behind: LaidBehind, places: Sequence[int]) -> dict[int, Lay]:
+def _scene_behind(plan: RenderPlan, behind: Behind, places: Sequence[int]) -> dict[int, Lay]:
     """What lays the Behind Overlays in each of the Scenes at `places` among the plan's that has any, by
     its place among them."""
     return {j: lay for j, place in enumerate(places) if (lay := _lay(plan, behind.get(("scene", place)))) is not None}
 
 
-def _behind(plan: RenderPlan, laid: list[tuple[OverlayEvent, int, "FrameFeed | None", int, str | None]], below: str, out: str, name: str) -> str:
+def _behind(plan: RenderPlan, laid: list[LaidOverlay], below: str, out: str, name: str) -> str:
     """Filters that lay a stretch's Behind Overlays' parts `laid` over its Background's frames `below`
     into `out` (docs/adr/0015), in the stretch's time, each as an Overlay is (`_overlay`), named from
     `name`. With a frame process among them, the frames are brought to n / fps exactly first, the
     times it draws at. Outside its span, each lets the frames pass through."""
     chains, under = [], below
-    if any(feed is not None for _, _, feed, _, _ in laid):
+    if any(part.feed is not None for part in laid):
         chains.append(f"{below}fps={_rate(plan)}[{name}r]")
         under = f"[{name}r]"
     for n, (event, number, feed, k, matte) in enumerate(laid):
@@ -2047,12 +2057,18 @@ def _picture(
     return f"{source}{','.join(steps)}{after}[{name}];" + _laid(below, name, at, laid, out, blend, shows, spanned)
 
 
+def _feathered(feather: float) -> list[str]:
+    """The filter that softens a Matte's edge by its feather in drawn pixels (docs/adr/0015): a blur
+    of that sigma; none for 0."""
+    return [f"gblur=sigma={feather:.3f}"] if feather > 0 else []
+
+
 def _matted_picture(picture: Picture, source: str, steps: list[str], cut: _PictureMatte, name: str) -> str:
     """Filters that cut the frames `source`, drawn by `steps` (its crop, scale and flips), by the
     Matte `cut` drawn alike from its item's size, feathered: its alpha, or one multiplying the
     picture's own. They end on the cut picture's frames, for more filters to follow."""
     width, height = picture.item_size
-    feather = [f"gblur=sigma={cut.feather:.3f}"] if cut.feather > 0 else []
+    feather = _feathered(cut.feather)
     matte = f"{cut.read}{','.join([f'scale={width}:{height}', *steps, 'format=gray', *feather])}[{name}m]"
     drawn = f"{source}{','.join(steps)}"
     if not cut.own:

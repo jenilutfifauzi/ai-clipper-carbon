@@ -34,8 +34,7 @@ KOKORO_URL = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-model
 KOKORO_SHA256 = "4c3052abaa60943a341f193888cf6abd68787dae6ab8ae5c925a706caa247e4e"
 KOKORO_BYTES = 132_303_094
 # Kokoro's source, as every downloaded model's.
-KokoroSource = ModelSource
-PINNED = KokoroSource(KOKORO_URL, KOKORO_SHA256, KOKORO_BYTES)
+PINNED = ModelSource(KOKORO_URL, KOKORO_SHA256, KOKORO_BYTES)
 
 
 class KokoroTts(Protocol):
@@ -63,7 +62,7 @@ class KokoroModel(ModelDownload):
     busy = KokoroBusy
 
     def __init__(
-        self, models_dir: Path, source: KokoroSource = PINNED, http_client: httpx.Client | None = None, load: KokoroLoader | None = None
+        self, models_dir: Path, source: ModelSource = PINNED, http_client: httpx.Client | None = None, load: KokoroLoader | None = None
     ) -> None:
         self.folder = models_dir / KOKORO_FOLDER
         self.staging = models_dir / f".{KOKORO_FOLDER}.staging"
