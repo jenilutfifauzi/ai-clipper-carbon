@@ -18,6 +18,22 @@ export interface JobOptions {
   captions: boolean;
   brief: string | null;
   transcribe_locally: boolean;
+  // The Template its new Candidates get (GLOSSARY.md): "default" asks for the default Template when
+  // the Job is created, which stores its id, or null for none.
+  template: string | null;
+}
+
+// A Job's Template when none is chosen: the default Template, whichever it is then.
+export const DEFAULT_TEMPLATE = "default";
+
+// One of the owner's Templates as listed (backend/app/api.py's TemplateInfo), `default` on the one
+// new Jobs get.
+export interface TemplateInfo {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  default: boolean;
 }
 
 export interface JobWarning {
@@ -1803,6 +1819,10 @@ export const api = {
     request<StylePreset>(`/presets/${id}`, { method: "PUT", body: JSON.stringify(preset) }),
   deletePreset: (id: string) => request<void>(`/presets/${id}`, { method: "DELETE" }),
   listTextPresets: () => request<TextPreset[]>("/text-presets"),
+  listTemplates: () => request<TemplateInfo[]>("/templates"),
+  // Make a Template the default for new Jobs, or with null, have none.
+  useTemplateAsDefault: (templateId: string | null) =>
+    request<{ template_id: string | null }>("/templates/default", { method: "PUT", body: JSON.stringify({ template_id: templateId }) }),
   // Every Audio Effect an item's stack can name, by group and order.
   listAudioEffects: () => request<AudioEffectKind[]>("/audio-effects"),
   listVideoEffects: () => request<VideoEffectKind[]>("/video-effects"),

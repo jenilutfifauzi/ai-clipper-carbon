@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from pydantic import Field, TypeAdapter, ValidationError
 
-from app.candidates import Candidate
+from app.candidates import Candidate, TemplateId
 from app.clips import Clip
 from app.llm import ScoreResponse
 from app.migration import Sizes, migrated_candidate, migrated_clip
@@ -71,6 +71,10 @@ class JobStatus(StrEnum):
 RUNNING = frozenset({JobStatus.DOWNLOADING, JobStatus.TRANSCRIBING, JobStatus.ANALYZING})
 
 
+# A new Job's Template when none is chosen: the default Template, whichever it is then.
+DEFAULT_TEMPLATE = "default"
+
+
 @dataclass(frozen=True)
 class JobOptions:
     language: Language = DEFAULT_LANGUAGE
@@ -81,6 +85,9 @@ class JobOptions:
     brief: str | None = None
     # Ignore YouTube's captions and transcribe the whole Source with Whisper.
     transcribe_locally: bool = False
+    # The Template its new Candidates get (GLOSSARY.md, Template): DEFAULT_TEMPLATE as asked, resolved
+    # to the default Template's id (or None) when the Job is created; an id; or None for none.
+    template: TemplateId | None = DEFAULT_TEMPLATE
 
     def __post_init__(self) -> None:
         if self.min_secs >= self.max_secs:
@@ -484,10 +491,13 @@ def _changed(job: Job, changes: dict[str, Any]) -> Job:
 
 def _parse_job(data: bytes) -> Job:
     """A stored Job. Jobs saved before Selection existed ended in `transcribed`: they are read as
-    having stopped before analyzing, so re-running that stage takes them on to review."""
+    having stopped before analyzing, so re-running that stage takes them on to review. Those saved
+    before Templates have none."""
     state = json.loads(data)
+    # A Job made before Templates has none.
+    state["options"].setdefault("template", None)
     if state["status"] != "transcribed":
-        return _JOB.validate_json(data)
+        return _JOB.validate_python(state)
     hint = f"Not analyzed yet: run `make reanalyze JOB={state['id']}`"
     for change in state["history"]:
         if change["status"] == "transcribed":
