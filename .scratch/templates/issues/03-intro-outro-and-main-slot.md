@@ -24,13 +24,13 @@
 
 **Blocked by:** 02.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Pure tests:
+- [x] Pure tests:
   - The intro and outro are split off on capture, a middle media Segment gets a notice, and a Candidate without Source is refused.
   - A 3 s intro moves the hook and a hand-made Text Layer by 3 s.
   - A music bed from the intro's start to the outro's end covers the whole Clip on a 20 s and a 75 s Candidate.
   - Reapplying with a 5 s intro replaces the 3 s one and moves hand-made layers by 2 s more.
   - The Transitions and the media Word Edits travel.
   - An implicit single-Segment Candidate becomes explicit.
-- [ ] HTTP: saving a Candidate with no Source Segment gives 422. `list_presets` shows the intro and outro lengths.
+- [x] HTTP: saving a Candidate with no Source Segment gives 422. `list_presets` shows the intro and outro lengths.

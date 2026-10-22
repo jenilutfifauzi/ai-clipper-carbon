@@ -582,6 +582,22 @@ describe("copy and paste", () => {
     expect("template" in pasted.text_layers[1]).toBe(false);
   });
 
+  test("pasted copies of an intro's Segments, their Transition and their video's Word Edits are made by hand: they lose the mark", () => {
+    const shown = { media: "v1", framing: {} as ClipSegment["framing"] };
+    const before = edits({
+      segments: [segment("i1", 0, 1, { ...shown, template: "brand" }), segment("i2", 1, 2, { ...shown, template: "brand" }), segment("s1", 100, 110)],
+      transitions: [{ after: "i1", kind: "fade", secs: 0.3, template: "brand" }],
+      word_edits: [{ at: 0.5, text: "Halo", break_before: false, media: "v1", template: "brand" }],
+    });
+    const held = copy(scene(before, picked(seg("i1"), seg("i2"))), { job: "j1", candidate: "c1" })!;
+
+    const pasted = paste(scene(edits({ segments: [segment("s1", 100, 110)] }), null), held, 10, { job: "j1", candidate: "c2" })!.edits;
+
+    expect(pasted.segments.map((s) => [s.id, s.template])).toEqual([["s1", undefined], ["n1", undefined], ["n2", undefined]]);
+    expect(pasted.transitions).toEqual([{ after: "n1", kind: "fade", secs: 0.3 }]);
+    expect(pasted.word_edits).toEqual([{ at: 0.5, text: "Halo", break_before: false, media: "v1" }]);
+  });
+
   test("Segments are inserted at the join nearest the playhead, and the layers placed from there", () => {
     // s1 plays 0–5 s, s2 5–15 s, s3 15–20 s.
     const before = edits({

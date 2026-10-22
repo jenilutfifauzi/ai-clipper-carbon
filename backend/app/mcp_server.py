@@ -223,20 +223,28 @@ Edits:
   titles (save_preset's use_for_new_titles): a new Text Layer given without a style, or without some
   of its fields, takes that Preset's.
 - A Template is a Candidate's layers (Text Layers, Shapes, Music Clips of Media Library items,
-  Overlays and Adjustment Layers) saved for reuse: list_presets, save_preset and delete_preset with
-  kind "template". save_preset's preset is {{name, job_id, candidate_id, anchors?}}; with preset_id it
-  saves over that Template, keeping its id, or with {{name}} alone renames it. apply_template copies
-  it onto Candidates, never linked: changing or deleting the Template later leaves them as they are.
-  Each layer keeps its place by its Anchor: each of its edges keeps its distance (offset) from the
-  Main Slot's start or end (main_start, main_end; with no intro or outro, the Clip's), guessed from
-  the nearest. An anchors entry {{kind (its list: text_layers...), id, anchor}} sets one: start (both
-  edges from the start: a lower-third), end (both from the end: a call to action) or span (one from
-  each, stretched with the Clip: a music bed). One past a shorter Clip's end is cut short or left
-  out, and the result says so. What a Template puts on a Candidate is a Template item, its
-  `template` the Template's id (get_candidate's template_items names it): applying a Template again,
-  the same or another, replaces the Template items, even those changed by hand (the notices count
-  them), and keeps the rest; template_id null ("No Template") takes them off. Removing one by hand
-  (remove_candidate_items) is fine; only applying again brings it back.
+  Overlays and Adjustment Layers), its intro and outro (the media Segments before its first Segment
+  of the episode and after its last, with the Transitions at their joins and their videos' Word
+  Edits and Cue Edits) and its hook's place, saved for reuse: list_presets (with intro_secs and
+  outro_secs), save_preset and delete_preset with kind "template". The Candidate's own Segments are
+  its Main Slot, never saved: media Segments between them are left out, and a Candidate with no
+  Segment of the episode can't be saved. save_preset's preset is {{name, job_id, candidate_id,
+  anchors?}}; with preset_id it saves over that Template, keeping its id, or with {{name}} alone
+  renames it. apply_template copies it onto Candidates, never linked: changing or deleting the
+  Template later leaves them as they are. Applying it puts the intro before each Candidate's own
+  Segments and the outro after them (the joins between its own Segments keep their Transitions),
+  moves the Candidate's own layers and hook by as much as its Segments' start moved, and puts the
+  hook at the Template's distance from that start. Each layer keeps its place by its Anchor: each of
+  its edges keeps its distance (offset) from the Clip's start or end, or the Main Slot's
+  (clip_start, main_start, main_end, clip_end), guessed from the nearest; one wholly on the intro or
+  outro stays on it. An anchors entry {{kind (its list: text_layers...), id, anchor}} sets one:
+  start (both edges from the start: a lower-third), end (both from the end: a call to action) or
+  span (one from each, stretched with the Clip: a music bed). One past a shorter Clip's end is cut
+  short or left out, and the result says so. What a Template puts on a Candidate is a Template item,
+  its `template` the Template's id (get_candidate's template_items names it): applying a Template
+  again, the same or another, replaces the Template items, even those changed by hand (the notices
+  count them), and keeps the rest; template_id null ("No Template") takes them off. Removing one by
+  hand (remove_candidate_items) is fine; only applying again brings it back.
 - The caption and hook styles' shadow is a Text Style's; a Style Override of it sets the fields it
   names ({{"shadow": {{"blur": 8}}}}). The hook's box (block or strips) and the caption highlight box
   have padding_x and padding_y, the highlight box radius too, in output pixels at the style's size;
@@ -1221,7 +1229,8 @@ def _template_view(template: dict) -> dict:
         for kind, listed in template["layers"].items()
         for layer in listed
     ]
-    view = {key: template[key] for key in ("id", "name", "created_at", "updated_at")} | {"layers": layers}
+    view = {key: template[key] for key in ("id", "name", "created_at", "updated_at")}
+    view |= {"intro_secs": template["intro"]["secs"], "outro_secs": template["outro"]["secs"], "layers": layers}
     return view | ({"notices": template["notices"]} if template.get("notices") else {})
 
 
@@ -1229,14 +1238,26 @@ _ANCHOR = TypeAdapter(Anchor)
 
 
 def _template_items(candidate: dict, names: dict[str, str]) -> list[dict]:
-    """A Candidate's Template items (of its layer lists in `candidate`): each by its list and id, with
-    the Template that put it there, by its id and name (`names`), or "deleted"."""
+    """A Candidate's Template items (of its lists in `candidate`): each by its list and id (a
+    Transition by the Segment it follows, a Word Edit or Cue Edit by its time and video), with the
+    Template that put it there, by its id and name (`names`), or "deleted"."""
+    lists = [*(kind.value for kind in LayerKind), "segments", "transitions", "word_edits", "cue_edits"]
     return [
-        {"kind": kind.value, "id": item["id"], "template_id": item["template"], "template": names.get(item["template"], "deleted")}
-        for kind in LayerKind
-        for item in candidate.get(kind.value) or []
+        {"kind": kind, **_item_key(item), "template_id": item["template"], "template": names.get(item["template"], "deleted")}
+        for kind in lists
+        for item in candidate.get(kind) or []
         if item.get("template")
     ]
+
+
+def _item_key(item: dict) -> dict:
+    """What names an item of a Candidate's lists: its id, the Segment a Transition follows, or a Word
+    Edit's or Cue Edit's time and video."""
+    if "id" in item:
+        return {"id": item["id"]}
+    if "after" in item:
+        return {"after": item["after"]}
+    return {"at": item["at"], "media": item["media"]}
 
 
 def _job_view(job: dict) -> dict:

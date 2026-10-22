@@ -110,7 +110,7 @@ def test_a_transitions_sound_is_saved_drawn_and_stored_ones_read_as_linear(clien
     old = [{"after": "s0", "kind": "fadeblack", "secs": 0.5}]
     path.write_text(json.dumps([c | {"transitions": old} if c["id"] == candidate["id"] else c for c in stored]))
     [read] = [c for c in client.get(f"/api/jobs/{job['id']}").json()["candidates"] if c["id"] == candidate["id"]]
-    assert read["transitions"] == [{"after": "s0", "kind": "fadeblack", "secs": 0.5, "sound": "linear", "strength": None, "colour": None}]
+    assert read["transitions"] == [{"after": "s0", "kind": "fadeblack", "secs": 0.5, "sound": "linear", "strength": None, "colour": None, "template": None}]
     assert [e["sound"] for e in preview(client, job, read)["plan"]["transitions"]] == ["linear"]
 
 
@@ -210,7 +210,7 @@ async def test_the_agent_sets_a_transitions_sound_and_the_dry_run_shows_it(mcp):
     pieces = [{"id": "a", "start": HALO_KABAR[0], "end": HALO_KABAR[1]}, {"id": "b", "start": KITA_SOAL[0], "end": KITA_SOAL[1]}]
     await call(mcp, "edit_candidate", **ids, changes={"segments": pieces, "transitions": [{"after": "a", "kind": "fadewhite"}]})
     merged = await call(mcp, "merge_candidate_items", **ids, transitions=[{"after": "a", "sound": "equal_power"}])
-    assert merged["transitions"] == [{"after": "a", "kind": "fadewhite", "secs": 0.5, "sound": "equal_power", "strength": None, "colour": None}]
+    assert merged["transitions"] == [{"after": "a", "kind": "fadewhite", "secs": 0.5, "sound": "equal_power", "strength": None, "colour": None, "template": None}]
     plan = await call(mcp, "edit_candidate", **ids, changes={"transitions": [{"after": "a", "kind": "fade", "sound": "cut"}]}, dry_run=True)
     [crossing] = plan["transitions"]
     assert crossing == {"after": "a", "kind": "fade", "start": crossing["start"], "end": crossing["end"], "sound": "cut", "strength": None, "colour": None}
@@ -336,7 +336,7 @@ def test_a_transitions_knobs_are_saved_kept_on_any_kind_and_unset_on_stored_ones
     old = [{"after": "s0", "kind": "fade", "secs": 0.5, "sound": "linear"}]
     path.write_text(json.dumps([c | {"transitions": old} if c["id"] == candidate["id"] else c for c in stored]))
     [read] = [c for c in client.get(f"/api/jobs/{job['id']}").json()["candidates"] if c["id"] == candidate["id"]]
-    assert read["transitions"] == [{"after": "s0", "kind": "fade", "secs": 0.5, "sound": "linear", "strength": None, "colour": None}]
+    assert read["transitions"] == [{"after": "s0", "kind": "fade", "secs": 0.5, "sound": "linear", "strength": None, "colour": None, "template": None}]
 
 
 @pytest.fixture(scope="session")
@@ -482,7 +482,7 @@ async def test_the_agent_sets_a_transitions_knobs_alone_and_the_dry_run_shows_th
     pieces = [{"id": "a", "start": HALO_KABAR[0], "end": HALO_KABAR[1]}, {"id": "b", "start": KITA_SOAL[0], "end": KITA_SOAL[1]}]
     await call(mcp, "edit_candidate", **ids, changes={"segments": pieces, "transitions": [{"after": "a", "kind": "dipcolour", "sound": "cut"}]})
     merged = await call(mcp, "merge_candidate_items", **ids, transitions=[{"after": "a", "colour": "#ff8800"}])
-    assert merged["transitions"] == [{"after": "a", "kind": "dipcolour", "secs": 0.5, "sound": "cut", "strength": None, "colour": "#FF8800"}]
+    assert merged["transitions"] == [{"after": "a", "kind": "dipcolour", "secs": 0.5, "sound": "cut", "strength": None, "colour": "#FF8800", "template": None}]
     merged = await call(mcp, "merge_candidate_items", **ids, transitions=[{"after": "a", "strength": 0.4}])
     assert (merged["transitions"][0]["strength"], merged["transitions"][0]["colour"]) == (0.4, "#FF8800")
     plan = await call(mcp, "edit_candidate", **ids, changes={"transitions": [{"after": "a", "kind": "filmburn", "strength": 0.9}]}, dry_run=True)

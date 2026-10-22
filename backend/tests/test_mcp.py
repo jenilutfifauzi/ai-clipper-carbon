@@ -67,7 +67,9 @@ KITA_SOAL = (1.6, 2.6)
 # Raised from 88_500 for Templates (templates/01): the Template mark (`template`) on every layer in
 # edit_candidate's and merge_candidate_items' schemas, kind "template" and a Template's {name, job_id,
 # candidate_id, anchors} in the presets tools, and apply_template (91_375); the rest is in the instructions.
-TOOLS_BUDGET_BYTES = 91_800
+# Raised from 91_800 for templates/03: the Template mark on `segments[]`, `transitions[]`, `word_edits[]`
+# and `cue_edits[]` in edit_candidate's and merge_candidate_items' schemas (92_675).
+TOOLS_BUDGET_BYTES = 93_100
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -1144,7 +1146,7 @@ async def test_every_transition_kind_is_taken_and_the_dry_run_lists_the_transiti
         [event] = plan["transitions"]
         assert event == {"after": "a", "kind": kind, "start": event["start"], "end": pytest.approx(event["start"] + 0.2), "sound": "linear", "strength": None, "colour": None} and event["start"] > 0, event
     edited = await call(mcp, "merge_candidate_items", **ids, segments=segments, transitions=[{"after": "a", "kind": "coverleft", "secs": 3}])
-    assert edited["transitions"] == [{"after": "a", "kind": "coverleft", "secs": 3, "sound": "linear", "strength": None, "colour": None}]
+    assert edited["transitions"] == [{"after": "a", "kind": "coverleft", "secs": 3, "sound": "linear", "strength": None, "colour": None, "template": None}]
     assert "less than or equal to 3" in await fails(mcp, "merge_candidate_items", **ids, transitions=[{"after": "a", "secs": 3.5}])
 
     # The instructions name each group with its kinds, and how long a Transition can be.

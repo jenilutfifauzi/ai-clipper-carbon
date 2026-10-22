@@ -107,7 +107,9 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
   const unlocked = locked.includes("video") ? [] : clipboard.segments;
   if (clipboard.segments.length > unlocked.length) refused.set("segment", clipboard.segments.length);
   const kept = unlocked.filter(({ segment }) => sameJob || segment.media);
-  const segments = kept.map(({ segment }) => ({ ...segment, id: fresh(segment.id) }));
+  // A copy is made by hand: never a Template item, whatever it was copied from (GLOSSARY.md), nor
+  // are the Transitions and Word Edits and Cue Edits it brings.
+  const segments = kept.map(({ segment: { template: _mark, ...segment } }) => ({ ...segment, id: fresh(segment.id) }));
   if (segments.length) {
     const joins = [0, ...played.map((shown) => shown.end)];
     const place = joins.reduce((best, join, i) => (Math.abs(join - at) < Math.abs(joins[best] - at) ? i : best), 0);
@@ -118,7 +120,7 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
     const order = clipboard.segments.map(({ segment }) => segment.id);
     const transitions = clipboard.transitions
       .filter((transition) => ids.has(transition.after) && ids.has(order[order.indexOf(transition.after) + 1]))
-      .map((transition) => ({ ...transition, after: ids.get(transition.after)! }));
+      .map(({ template: _mark, ...transition }) => ({ ...transition, after: ids.get(transition.after)! }));
     next.transitions = [...edits.transitions, ...transitions];
     duration += trackLength(
       segments,
@@ -136,13 +138,15 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
     const word = wordAt(words, a);
     return word === -1 ? a === b : word === wordAt(words, b);
   };
-  const brought = <E extends { at: number; media?: string | null }>(copied: E[], own: E[]) =>
-    copied.filter(
-      (edit) =>
-        (edit.media || into) &&
-        kept.some(({ segment }) => segmentHolds(segment, edit)) &&
-        !own.some((mine) => (edit.media ? sameKey(mine, edit) : !mine.media && sameWord(mine.at, edit.at))),
-    );
+  const brought = <E extends { at: number; media?: string | null; template?: string | null }>(copied: E[], own: E[]) =>
+    copied
+      .filter(
+        (edit) =>
+          (edit.media || into) &&
+          kept.some(({ segment }) => segmentHolds(segment, edit)) &&
+          !own.some((mine) => (edit.media ? sameKey(mine, edit) : !mine.media && sameWord(mine.at, edit.at))),
+      )
+      .map(({ template: _mark, ...edit }) => edit as E);
   const wordEdits = brought(clipboard.word_edits, edits.word_edits);
   if (wordEdits.length) next.word_edits = [...edits.word_edits, ...wordEdits].sort(byKey);
   const cueEdits = brought(clipboard.cue_edits ?? [], edits.cue_edits);

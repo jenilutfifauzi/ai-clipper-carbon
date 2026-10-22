@@ -94,7 +94,7 @@ from app.rendering import NothingToRender, has_media_words, media_language, rank
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
-from app.templates import AnchorOverride, InvalidTemplate, Template, TemplateLayers, TemplateNotFound, TemplateStore, capture
+from app.templates import AnchorOverride, Captured, InvalidTemplate, Template, TemplateNotFound, TemplateStore, capture
 from app.templates import apply as apply_template_to
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.revisions import Edit, HistoryEntry
@@ -505,14 +505,6 @@ class TemplateName(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: Name
-
-
-@dataclass(frozen=True)
-class CapturedTemplate:
-    """A Template's layers as they would be saved, and what the owner is told."""
-
-    layers: TemplateLayers
-    notices: list[str]
 
 
 @dataclass(frozen=True)
@@ -1690,7 +1682,7 @@ def list_templates(templates: Templates) -> list[Template]:
 @router.post("/templates/capture")
 def capture_template(
     body: TemplateCapture, store: Store, settings: AppSettings, presets: Presets, library: Media
-) -> CapturedTemplate:
+) -> Captured:
     """The layers a Template saved from `body` would hold, with their Anchors, and what the owner is
     told; nothing is saved. 404 for an unknown Job or Candidate; 422 for a draft that isn't a valid
     edit or an Anchor of a layer it hasn't."""
@@ -1704,7 +1696,7 @@ def create_template(
     """Save a Candidate (as its draft edits would make it) as a new Template, as `capture_template`
     would capture it."""
     captured = _captured(body, store, settings, presets, library)
-    return SavedTemplate(**vars(templates.create(body.name, captured.layers)), notices=captured.notices)
+    return SavedTemplate(**vars(templates.create(body.name, captured)), notices=captured.notices)
 
 
 @router.put("/templates/{template_id}")
@@ -1715,7 +1707,7 @@ def save_over_template(
     keep their copies."""
     captured = _captured(body, store, settings, presets, library)
     try:
-        template = templates.save_over(template_id, body.name, captured.layers)
+        template = templates.save_over(template_id, body.name, captured)
     except TemplateNotFound:
         raise HTTPException(404, f"No Template {template_id}") from None
     return SavedTemplate(**vars(template), notices=captured.notices)
@@ -1780,13 +1772,12 @@ def _edits_of(change: CandidateChange) -> dict[str, Any]:
     return CandidateUpdate.model_validate(given).model_dump(mode="json", exclude_unset=True)
 
 
-def _captured(body: TemplateCapture, store: JobStore, settings: Settings, presets: PresetStore, library: MediaStore) -> CapturedTemplate:
+def _captured(body: TemplateCapture, store: JobStore, settings: Settings, presets: PresetStore, library: MediaStore) -> Captured:
     _, _, candidate = _drafted(body.job_id, body.candidate_id, body.edits, store, settings, presets, library)
     try:
-        captured = capture(candidate, body.anchors)
+        return capture(candidate, body.anchors)
     except InvalidTemplate as exc:
         raise HTTPException(422, str(exc)) from None
-    return CapturedTemplate(captured.layers, captured.notices)
 
 
 @router.get("/export-presets")

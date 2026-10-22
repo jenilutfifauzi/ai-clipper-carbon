@@ -123,6 +123,9 @@ export interface WordEdit {
   text: string | null;
   break_before: boolean;
   media?: string | null;
+  // The Template that put it there (a Template item: one of an intro's or outro's video), as a Text
+  // Layer's.
+  template?: string | null;
 }
 
 // The owner's change to one Cue (GLOSSARY: Cue Edit), keyed as a Word Edit is: a time in its first
@@ -143,6 +146,8 @@ export interface CueEdit {
   y?: number | null;
   scale?: number | null;
   join: boolean;
+  // The Template that put it there (a Template item), as a Word Edit's.
+  template?: string | null;
 }
 
 // The furthest a Cue Edit moves its Cue or an edge (CUE_SHIFT_MAX_SECS in backend/app/candidates.py).
@@ -1019,10 +1024,13 @@ export interface Transition extends TransitionKnobs {
   kind: TransitionKind;
   secs: number;
   sound?: TransitionSound;
+  // The Template that put it there (a Template item: one at a join of its intro or outro), as a Text
+  // Layer's.
+  template?: string | null;
 }
 
 // A Style Preset's Join Transition (GLOSSARY): a Transition without the Segment it follows.
-export type JoinTransition = Omit<Transition, "after">;
+export type JoinTransition = Omit<Transition, "after" | "template">;
 
 // A Transition as drawn, from `start` to `end` seconds into the Clip.
 export interface TransitionEvent extends TransitionKnobs {
@@ -1214,6 +1222,9 @@ export interface ClipSegment extends Retiming {
   // Its whole frame's Video Effects (ADR 0014), in order, after its Grade and before the joins; sizes
   // the 1080x1920 frame's. Empty when missing.
   video_effects?: VideoEffect[];
+  // The Template that put it there (a Template item: a Segment of its intro or outro), as a Text
+  // Layer's; never one of the Source.
+  template?: string | null;
 }
 
 // An Audio Effect applied to an item's sound (GLOSSARY: Audio Effect; ADR 0017): a catalogue

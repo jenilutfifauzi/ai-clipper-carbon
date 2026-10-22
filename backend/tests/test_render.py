@@ -1095,9 +1095,9 @@ def test_word_edits_are_saved_previewed_and_rendered(client, settings, video_sou
     candidate = patch(client, job, candidate, word_edits=edits)
     assert candidate["edited"] is True
     assert candidate["word_edits"] == [
-        {"at": at(words[1]), "text": "", "break_before": False, "media": None},
-        {"at": at(seru), "text": "keren", "break_before": False, "media": None},
-        {"at": at(banget), "text": None, "break_before": True, "media": None},
+        {"at": at(words[1]), "text": "", "break_before": False, "media": None, "template": None},
+        {"at": at(seru), "text": "keren", "break_before": False, "media": None, "template": None},
+        {"at": at(banget), "text": None, "break_before": True, "media": None, "template": None},
     ]
     # The preview gives each Word its edit, as saved.
     shown = preview(client, job, candidate)
@@ -1115,7 +1115,7 @@ def test_word_edits_are_saved_previewed_and_rendered(client, settings, video_sou
 
 
 # A Cue Edit's own place and size, unset.
-UNPLACED = {"x": None, "y": None, "scale": None}
+UNPLACED = {"x": None, "y": None, "scale": None, "template": None}
 
 
 def test_cue_edits_are_saved_previewed_and_rendered(client, settings, video_source, transcriber, plain_video):

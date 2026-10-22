@@ -326,8 +326,8 @@ def test_the_api_keeps_word_edits_at_one_time_of_two_timelines_and_the_preview_l
     edits = [{"at": 0.7, "text": "dunia", "media": red["id"]}, {"at": 0.7, "text": "teman"}, {"at": 0.7, "text": "DUNIA", "media": red["id"]}]
     candidate = patch(client, job, candidate, word_edits=edits)
     assert candidate["word_edits"] == [
-        {"at": 0.7, "text": "teman", "break_before": False, "media": None},
-        {"at": 0.7, "text": "DUNIA", "break_before": False, "media": red["id"]},
+        {"at": 0.7, "text": "teman", "break_before": False, "media": None, "template": None},
+        {"at": 0.7, "text": "DUNIA", "break_before": False, "media": red["id"], "template": None},
     ]
     shown = preview(client, job, candidate)
     # The video's "halo" takes the video's edit; the episode's (at 0 to 0.43 s of the Source) the Source's.

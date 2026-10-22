@@ -86,6 +86,9 @@ class WordEdit:
     text: Annotated[str, StringConstraints(strip_whitespace=True, max_length=WORD_EDIT_MAX_CHARS)] | None = None
     break_before: bool = False
     media: MediaId | None = None
+    # The Template that put it there (a Template item: one of an intro's or outro's video); none for
+    # one made by hand. The planner ignores it.
+    template: TemplateId | None = None
 
 
 # A volume, as a factor of the sound's own: 0 mutes it, 2 doubles it.
@@ -131,10 +134,12 @@ class CueEdit:
     y: Height | None = None
     scale: CueScale | None = None
     join: bool = False
+    # The Template that put it there (a Template item), as a Word Edit's.
+    template: TemplateId | None = None
 
     def __post_init__(self) -> None:
         if self.join:
-            others = [f.name for f in fields(self) if f.name not in ("at", "media", "join") and getattr(self, f.name) != f.default]
+            others = [f.name for f in fields(self) if f.name not in ("at", "media", "join", "template") and getattr(self, f.name) != f.default]
             if others:
                 raise ValueError(f"A Cue Edit with join sets nothing else: it has {', '.join(others)}")
 
@@ -874,6 +879,9 @@ class Segment:
     # so that a Transition blends pictures that carry them; sizes at the 1080x1920 frame's. Empty in
     # one saved before them. A Freeze frame takes them too.
     video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
+    # The Template that put it there (a Template item: a Segment of its intro or outro); none for one
+    # made by hand, and for every Segment of the Source. The planner ignores it.
+    template: TemplateId | None = None
 
     def __post_init__(self) -> None:
         if self.media is None and (framed := next((name for name, keys in self.keys.items() if keys and name not in SOUND_KEYS), None)):
@@ -917,6 +925,9 @@ class Transition:
     sound: TransitionSound = TransitionSound.LINEAR
     strength: Annotated[FiniteFloat, Field(ge=0, le=1)] | None = None
     colour: Colour | None = None
+    # The Template that put it there (a Template item: one at a join of its intro or outro); none for
+    # one made by hand. The planner ignores it.
+    template: TemplateId | None = None
 
 
 def timeline_length(segments: list["Segment"], transitions: list[Transition]) -> float:

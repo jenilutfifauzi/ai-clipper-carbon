@@ -3,8 +3,10 @@ docs/adr/0023-templates-are-marked-copies-anchored-by-their-edges.md): a Candida
 saved for reuse, and copied onto other Candidates of any length.
 
 `capture` and `apply` are pure. `capture` takes a Candidate (its draft edits applied) and gives the
-Template's layers, each with its Anchor; `apply` takes a Template and a Candidate and gives the
-Candidate's new edits, each layer placed by its Anchor and marked as a Template item.
+Template's parts: its layers, each with its Anchor, its intro and outro (the media Segments around the
+Candidate's own, the Main Slot) and its hook's place. `apply` takes a Template and a Candidate and
+gives the Candidate's new edits: the intro and outro around its own Segments, each layer placed by its
+Anchor, all marked as Template items, and its hand-made layers and hook moved with the Main Slot.
 
 The owner's Templates are kept in DATA_DIR/templates.json, written atomically under a lock, as the Text
 Presets are. There are no built-in ones.
@@ -13,19 +15,33 @@ Presets are. There are no built-in ones.
 import math
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, NamedTuple
 from uuid import uuid4
 
-from pydantic import Field, FiniteFloat, TypeAdapter
+from pydantic import Field, FiniteFloat, TypeAdapter, computed_field
 
-from app.candidates import AdjustmentLayer, Candidate, ItemId, MusicClip, Overlay, Shape, TemplateId, TextLayer
+from app.candidates import (
+    AdjustmentLayer,
+    Candidate,
+    CueEdit,
+    ItemId,
+    MusicClip,
+    Overlay,
+    Segment,
+    Shape,
+    TemplateId,
+    TextLayer,
+    Transition,
+    WordEdit,
+    timeline_length,
+)
 from app.keyframes import rewindow
 from app.review import CandidateChange
-from app.segment_time import overlay_time
+from app.segment_time import overlay_time, segment_time, transition_overlap
 from app.storage import write_atomic
 from app.styles import Name
 
@@ -34,6 +50,8 @@ TEMPLATES_FILE = "templates.json"
 # The editor's least item length (ITEM_MIN_SECS in frontend/src/pages/job/advanced/edits.ts): a layer
 # cut shorter to fit a Clip is left out, as the Clipboard leaves one out.
 ITEM_MIN_SECS = 0.1
+# The hook's shortest and longest time (hook_secs in app/api.py).
+HOOK_SECS = (0.5, 30.0)
 
 
 class TemplateNotFound(LookupError):
@@ -108,9 +126,35 @@ class Boundaries(NamedTuple):
 
 
 def boundaries(candidate: Candidate) -> Boundaries:
-    """The Candidate's boundaries: with no intro nor outro, its Main Slot is its whole Clip."""
-    length = candidate.duration
-    return Boundaries(0.0, 0.0, length, length)
+    """The Candidate's boundaries, as a Template saved from it has them: its intro is the media
+    Segments before its first Segment of the Source, its outro those after its last, and its Main
+    Slot what is between; with no intro nor outro, its whole Clip. Measured on its Timeline, its
+    Transitions' overlaps included. InvalidTemplate for one with no Segment of the Source."""
+    track = candidate.main_track()
+    sources = [i for i, segment in enumerate(track) if segment.media is None]
+    if not sources:
+        raise InvalidTemplate("A Template needs a Segment of the episode, whose place is its Main Slot: this clip shows only Media Library videos")
+    return _bounds(track, candidate.transitions, sources[0], sources[-1] + 1)
+
+
+def _bounds(track: Sequence[Segment], transitions: Sequence[Transition], first: int, end: int) -> Boundaries:
+    """The boundaries of a Main Track whose Main Slot is `track[first:end]`: where its first
+    Segment starts on the Timeline and its last ends, the Transitions' overlaps included."""
+    played = _played(track, transitions)
+    return Boundaries(0.0, played[first][0], played[end - 1][1], timeline_length(list(track), list(transitions)))
+
+
+def _played(track: Sequence[Segment], transitions: Sequence[Transition]) -> list[tuple[float, float]]:
+    """Where each Segment of a Main Track starts and ends on the Timeline: each after the one before,
+    less the overlap of the Transition between them (as `timeline_length` counts them)."""
+    by_join = {transition.after: transition.secs for transition in transitions}
+    lengths = [segment_time(segment).length for segment in track]
+    played, at = [], 0.0
+    for i, (segment, length) in enumerate(zip(track, lengths)):
+        played.append((round(at, 3), round(at + length, 3)))
+        joined = by_join.get(segment.id)
+        at += length - (transition_overlap(joined, length, lengths[i + 1]) if joined is not None and i + 1 < len(track) else 0.0)
+    return played
 
 
 class LayerKind(StrEnum):
@@ -164,6 +208,24 @@ class TemplateLayers:
 
 
 @dataclass(frozen=True)
+class TemplatePart:
+    """A Template's intro or outro: media Segments played in order, the Transitions at the joins
+    between them, and `join`, the Transition at its join with the Main Slot (an intro's after its last
+    Segment; an outro's after the Main Slot's last, whose id each Candidate gives), if any."""
+
+    segments: list[Segment] = field(default_factory=list)
+    transitions: list[Transition] = field(default_factory=list)
+    join: Transition | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def secs(self) -> float:
+        """How long it plays: its Segments, less the overlaps between them. (Its join with the Main
+        Slot overlaps each Candidate by as much as that Candidate's Segment allows.)"""
+        return timeline_length(self.segments, self.transitions) if self.segments else 0.0
+
+
+@dataclass(frozen=True)
 class Template:
     """A named, global Advanced Edit saved for reuse (GLOSSARY.md, Template)."""
 
@@ -172,6 +234,18 @@ class Template:
     created_at: datetime
     updated_at: datetime
     layers: TemplateLayers = field(default_factory=TemplateLayers)
+    intro: TemplatePart = field(default_factory=TemplatePart)
+    outro: TemplatePart = field(default_factory=TemplatePart)
+    # The Word Edits and Cue Edits of the intro's and outro's videos (their Media Words).
+    word_edits: list[WordEdit] = field(default_factory=list)
+    cue_edits: list[CueEdit] = field(default_factory=list)
+    # Where the hook comes on, in seconds from the Main Slot's start (negative: before it), and how long it stays.
+    hook_offset: Annotated[FiniteFloat, Field(ge=-3600, le=3600)] = 0.0
+    hook_secs: Annotated[FiniteFloat, Field(ge=HOOK_SECS[0], le=HOOK_SECS[1])] = 3.0
+
+
+# What a Template holds beyond its name and times: what `capture` gives.
+_IDENTITY = ("id", "name", "created_at", "updated_at")
 
 
 @dataclass(frozen=True)
@@ -185,10 +259,21 @@ class AnchorOverride:
 
 @dataclass(frozen=True)
 class Captured:
-    """A Template's layers as `capture` makes them, and what the owner is told."""
+    """A Template's parts as `capture` makes them (each a Template's field of its name), and what the
+    owner is told."""
 
     layers: TemplateLayers
     notices: list[str]
+    intro: TemplatePart = field(default_factory=TemplatePart)
+    outro: TemplatePart = field(default_factory=TemplatePart)
+    word_edits: list[WordEdit] = field(default_factory=list)
+    cue_edits: list[CueEdit] = field(default_factory=list)
+    hook_offset: float = 0.0
+    hook_secs: float = 3.0
+
+    def contents(self) -> dict[str, Any]:
+        """The Template's fields it gives, by name."""
+        return {f.name: getattr(self, f.name) for f in fields(Template) if f.name not in _IDENTITY}
 
 
 @dataclass(frozen=True)
@@ -200,9 +285,13 @@ class Applied:
 
 
 def capture(candidate: Candidate, overrides: Sequence[AnchorOverride] = ()) -> Captured:
-    """The layers of a Template saved from `candidate`, each edge hanging from its nearest boundary
-    but where `overrides` chooses its Anchor. Music Clips of the Source's sound are left out: another
-    Job's Clips can't play it. InvalidTemplate for an override of a layer the Candidate hasn't."""
+    """The Template saved from `candidate`: its intro and outro (the media Segments before its first
+    Segment of the Source and after its last, with the Transitions at their joins and the Word Edits
+    and Cue Edits of their videos), its hook by its distance from the Main Slot's start, and its
+    layers, each edge hanging from its nearest boundary but where `overrides` chooses its Anchor.
+    Left out, with a notice: media Segments between Segments of the Source, and Music Clips of the
+    Source's sound, which another Job's Clips can't play. InvalidTemplate for a Candidate with no
+    Segment of the Source, or for an override of a layer the Candidate hasn't."""
     bounds = boundaries(candidate)
     chosen = {(override.kind, override.id): override.anchor for override in overrides}
     for kind, item_id in chosen.keys() - {(kind, item.id) for kind, item in _layers_of(candidate)}:
@@ -220,45 +309,199 @@ def capture(candidate: Candidate, overrides: Sequence[AnchorOverride] = ()) -> C
         item = replace(item, template=None)
         anchor = anchored(item.start, item.start + item.secs, bounds, chosen.get((kind, item.id)))
         layers[kind].append(Anchored(item, anchor))
+    track = candidate.main_track()
+    sources = [i for i, segment in enumerate(track) if segment.media is None]
+    first, last = sources[0], sources[-1]
+    by_join = {transition.after: replace(transition, template=None) for transition in candidate.transitions}
+    intro, outro = [_unmarked(segment) for segment in track[:first]], [_unmarked(segment) for segment in track[last + 1 :]]
+    shown = {segment.media for segment in [*intro, *outro]}
     notices = []
+    if between := sum(segment.media is not None for segment in track[first : last + 1]):
+        notices.append(f"{_count(between, 'media Segment')} between the episode's Segments left out: a Template's Main Slot is each Candidate's own.")
     if unheard:
         notices.append(f"{_count(unheard, 'Music Clip')} of the episode's sound left out: a Template plays only Media Library items.")
-    return Captured(TemplateLayers(**{kind.value: listed for kind, listed in layers.items()}), notices)
+    return Captured(
+        TemplateLayers(**{kind.value: listed for kind, listed in layers.items()}),
+        notices,
+        intro=TemplatePart(intro, _between(intro, by_join), by_join.get(intro[-1].id) if intro else None),
+        outro=TemplatePart(outro, _between(outro, by_join), by_join.get(track[last].id) if outro else None),
+        word_edits=[replace(edit, template=None) for edit in candidate.word_edits if edit.media is not None and edit.media in shown],
+        cue_edits=[replace(edit, template=None) for edit in candidate.cue_edits if edit.media is not None and edit.media in shown],
+        hook_offset=round(candidate.hook_start - bounds.main_start, 6),
+        hook_secs=min(max(candidate.hook_secs, HOOK_SECS[0]), HOOK_SECS[1]),
+    )
+
+
+def _unmarked(segment: Segment) -> Segment:
+    return replace(segment, template=None)
+
+
+def _between(segments: Sequence[Segment], by_join: Mapping[str, Transition]) -> list[Transition]:
+    """The Transitions at the joins between `segments`, from `by_join` (by the Segment each follows)."""
+    return [by_join[segment.id] for segment in segments[:-1] if segment.id in by_join]
 
 
 def anchored(start: float, end: float, bounds: Boundaries, kind: AnchorKind | None = None) -> Anchor:
     """The Anchor of a layer from `start` to `end`: as `kind` names it, or each edge from its nearest
-    boundary."""
+    boundary. A layer wholly inside the intro or the outro hangs from that part's two boundaries:
+    there, Start hangs both edges from the one nearer its start edge, End from the one nearer its end
+    edge, and Span its start edge from the part's start and its end edge from its end."""
+    starts, ends, guessed = START_SIDE, END_SIDE, _PREFERRED
+    if bounds.main_start > bounds.clip_start and end <= bounds.main_start + 1e-6:
+        starts = ends = guessed = (Boundary.CLIP_START, Boundary.MAIN_START)
+    elif bounds.clip_end > bounds.main_end and start >= bounds.main_end - 1e-6:
+        starts = ends = guessed = (Boundary.MAIN_END, Boundary.CLIP_END)
     if kind is AnchorKind.START:
-        boundary = _nearest(start, bounds, START_SIDE)
+        boundary = _nearest(start, bounds, starts)
         return Anchor(_edge(start, bounds, boundary), _edge(end, bounds, boundary))
     if kind is AnchorKind.END:
-        boundary = _nearest(end, bounds, END_SIDE)
+        boundary = _nearest(end, bounds, ends)
         return Anchor(_edge(start, bounds, boundary), _edge(end, bounds, boundary))
     if kind is AnchorKind.SPAN:
-        return Anchor(_edge(start, bounds, _nearest(start, bounds, START_SIDE)), _edge(end, bounds, _nearest(end, bounds, END_SIDE)))
-    return Anchor(_edge(start, bounds, _nearest(start, bounds, _PREFERRED)), _edge(end, bounds, _nearest(end, bounds, _PREFERRED)))
+        if starts is ends:
+            return Anchor(_edge(start, bounds, starts[0]), _edge(end, bounds, ends[1]))
+        return Anchor(_edge(start, bounds, _nearest(start, bounds, starts)), _edge(end, bounds, _nearest(end, bounds, ends)))
+    return Anchor(_edge(start, bounds, _nearest(start, bounds, guessed)), _edge(end, bounds, _nearest(end, bounds, guessed)))
 
 
 def apply(template: Template | None, candidate: Candidate, named: Mapping[str, Template] | None = None) -> Applied:
-    """The Candidate's layers once `template` is applied, or with None ("No Template") its Template
-    items taken off alone: its Template items (of any Template) taken off, its own kept, and each of
-    the Template's layers placed by its Anchor on the Candidate's boundaries and marked. A layer
-    reaching past the Clip is cut short at its edge, or left out when shorter than ITEM_MIN_SECS
-    there. `named` holds the Templates the Candidate's marks may name, by id: an item taken off that
-    differs from a fresh application of its Template was changed by hand, and is counted; so is every
-    item of a Template not there (deleted)."""
-    kept: dict[LayerKind, list[Any]] = {
-        kind: [item for item in getattr(candidate, kind.value) if item.template is None] for kind in LayerKind
-    }
+    """The Candidate once `template` is applied, or with None ("No Template") its Template items taken
+    off alone. Its Template items (of any Template) are taken off: layers, intro and outro Segments,
+    their Transitions and their videos' Word Edits and Cue Edits. The Template's intro goes before the
+    Candidate's own Segments (one implicit Segment made explicit) and its outro after them, with its
+    Transitions at their joins (the Join Transition never applies there; the joins between its own
+    Segments keep theirs), and its videos' Word Edits and Cue Edits but where the Candidate has its own
+    of that key; all marked. Its hand-made layers and hook move by as much as the Main Slot's start
+    moved, as a ripple at Timeline 0 would (one wholly on the old intro is left out); then the hook is
+    put at the Template's distance from the Main Slot's start, as long as the Template's. Each of the
+    Template's layers is placed by its Anchor on the new boundaries and marked. A layer reaching past
+    the Clip is cut short at its edge, or left out when shorter than ITEM_MIN_SECS there. `named` holds
+    the Templates the Candidate's marks may name, by id: an item taken off that differs from a fresh
+    application of its Template was changed by hand, and is counted; so is every item of a Template
+    not there (deleted)."""
     notices = _replaced(candidate, named or {}, "removed" if template is None else "replaced")
+    wrap = _wrapped(template, candidate)
+    shift = round(wrap.bounds.main_start - _main_start(candidate), 6)
+    kept, dropped = _shifted(candidate, shift)
+    if dropped:
+        notices.append(f"{_count(dropped, 'layer')} made by hand over the intro removed.")
+    hook = _moved(candidate.hook_start, candidate.hook_secs, shift)
+    if template is not None:
+        hook = (wrap.bounds.main_start + template.hook_offset, template.hook_secs)
+        placed = _placed(template, wrap.bounds, kept)
+        told = [placed.trimmed and f"{_count(placed.trimmed, 'layer')} cut short to fit", placed.left_out and f"{placed.left_out} left out, falling outside the clip"]
+        if placed.trimmed or placed.left_out:
+            notices.append(f"{'; '.join(part for part in told if part)}.")
+        kept = placed.layers
+    hook_secs = min(max(hook[1], HOOK_SECS[0]), HOOK_SECS[1], max(wrap.bounds.clip_end, HOOK_SECS[0]))
+    hook_start = round(max(0.0, min(hook[0], wrap.bounds.clip_end - hook_secs)), 6)
+    track = _track(template, candidate, wrap)
+    change = CandidateChange(
+        **{kind.value: listed for kind, listed in kept.items()}, **track, hook_start=hook_start, hook_secs=round(hook_secs, 6)
+    )
+    return Applied(change, notices)
+
+
+class _Wrapped(NamedTuple):
+    """A Candidate's Main Track, Transitions, Word Edits and Cue Edits once a Template (or none) is
+    applied, and the boundaries they make."""
+
+    segments: list[Segment]
+    transitions: list[Transition]
+    word_edits: list[WordEdit]
+    cue_edits: list[CueEdit]
+    bounds: Boundaries
+
+
+def _wrapped(template: Template | None, candidate: Candidate) -> _Wrapped:
+    """The Candidate's own Segments (its Main Track's unmarked ones), the Transitions at the joins
+    between them and its own Word Edits and Cue Edits, with `template`'s intro and outro around them,
+    marked."""
+    own = [segment for segment in candidate.main_track() if segment.template is None]
+    inner = {segment.id for segment in own[:-1]}
+    transitions = [transition for transition in candidate.transitions if transition.template is None and transition.after in inner]
+    word_edits = [edit for edit in candidate.word_edits if edit.template is None]
+    cue_edits = [edit for edit in candidate.cue_edits if edit.template is None]
     if template is None:
-        return Applied(CandidateChange(**{kind.value: listed for kind, listed in kept.items()}), notices)
-    placed = _placed(template, candidate, kept)
-    told = [placed.trimmed and f"{_count(placed.trimmed, 'layer')} cut short to fit", placed.left_out and f"{placed.left_out} left out, falling outside the clip"]
-    if placed.trimmed or placed.left_out:
-        notices.append(f"{'; '.join(part for part in told if part)}.")
-    return Applied(CandidateChange(**{kind.value: listed for kind, listed in placed.layers.items()}), notices)
+        return _Wrapped(own, transitions, word_edits, cue_edits, _bounds(own, transitions, 0, len(own)))
+    taken = {segment.id for segment in own}
+    intro, into = _part(template.intro, template.id, taken)
+    outro, out_of = _part(template.outro, template.id, taken)
+    if template.intro.join is not None and intro:
+        into.append(replace(template.intro.join, after=intro[-1].id, template=template.id))
+    if template.outro.join is not None and outro:
+        out_of.insert(0, replace(template.outro.join, after=own[-1].id, template=template.id))
+    segments = [*intro, *own, *outro]
+    transitions = [*into, *transitions, *out_of]
+    keys = {_key(edit) for edit in word_edits}
+    word_edits = [*word_edits, *(replace(edit, template=template.id) for edit in template.word_edits if _key(edit) not in keys)]
+    keys = {_key(edit) for edit in cue_edits}
+    cue_edits = [*cue_edits, *(replace(edit, template=template.id) for edit in template.cue_edits if _key(edit) not in keys)]
+    return _Wrapped(segments, transitions, word_edits, cue_edits, _bounds(segments, transitions, len(intro), len(intro) + len(own)))
+
+
+def _part(part: TemplatePart, template_id: str, taken: set[str]) -> tuple[list[Segment], list[Transition]]:
+    """An intro's or outro's Segments and the Transitions between them, marked, each Segment given a
+    free id (added to `taken`) and each Transition following it to its new id."""
+    ids: dict[str, str] = {}
+    for segment in part.segments:
+        ids[segment.id] = _free_id(segment.id, taken)
+        taken.add(ids[segment.id])
+    segments = [replace(segment, id=ids[segment.id], template=template_id) for segment in part.segments]
+    transitions = [replace(transition, after=ids[transition.after], template=template_id) for transition in part.transitions if transition.after in ids]
+    return segments, transitions
+
+
+def _key(edit: WordEdit | CueEdit) -> tuple[str, float]:
+    """A Word Edit's or Cue Edit's key: its timeline and its time there, to the ms (app/review.py)."""
+    return edit.media or "", round(edit.at, 3)
+
+
+def _main_start(candidate: Candidate) -> float:
+    """Where the Candidate's own Segments (its Main Track's unmarked ones) start on its Timeline."""
+    track = candidate.main_track()
+    first = next((i for i, segment in enumerate(track) if segment.template is None), 0)
+    return _played(track, candidate.transitions)[first][0]
+
+
+def _track(template: Template | None, candidate: Candidate, wrap: _Wrapped) -> dict[str, Any]:
+    """The fields of the change that `wrap` sets: none when neither the Candidate has an intro's or
+    outro's items to take off nor `template` any to put in."""
+    marked = any(item.template is not None for item in [*candidate.segments, *candidate.transitions, *candidate.word_edits, *candidate.cue_edits])
+    brings = template is not None and bool(template.intro.segments or template.outro.segments or template.word_edits or template.cue_edits)
+    if not (marked or brings):
+        return {}
+    return {"segments": wrap.segments, "transitions": wrap.transitions, "word_edits": wrap.word_edits, "cue_edits": wrap.cue_edits}
+
+
+def _shifted(candidate: Candidate, shift: float) -> tuple[dict[LayerKind, list[Any]], int]:
+    """The Candidate's hand-made layers moved by `shift` seconds, as a ripple at Timeline 0 moves
+    them: later by it, or earlier with the part before 0 cut off (a song or a video going on from as
+    far into it, its Keyframes following) and one left shorter than ITEM_MIN_SECS left out; and how
+    many were left out."""
+    kept: dict[LayerKind, list[Any]] = {kind: [] for kind in LayerKind}
+    dropped = 0
+    for kind, item in _layers_of(candidate):
+        if item.template is not None:
+            continue
+        if shift >= 0:
+            kept[kind].append(replace(item, start=round(item.start + shift, 6)) if shift else item)
+        elif (fitted := _fitted(item, item.start + shift, item.start + item.secs + shift, math.inf)) is not None:
+            kept[kind].append(fitted[0])
+        else:
+            dropped += 1
+    return kept, dropped
+
+
+def _moved(start: float, secs: float, shift: float) -> tuple[float, float]:
+    """The hook from `start`, `secs` long, moved as `_shifted` moves a layer, but never left out:
+    wholly before 0, it starts there, as long as it was."""
+    if shift >= 0:
+        return start + shift, secs
+    end = start + secs + shift
+    if end <= 0:
+        return 0.0, secs
+    return max(start + shift, 0.0), end - max(start + shift, 0.0)
 
 
 class _Placed(NamedTuple):
@@ -270,8 +513,7 @@ class _Placed(NamedTuple):
     left_out: int
 
 
-def _placed(template: Template, candidate: Candidate, kept: Mapping[LayerKind, list[Any]]) -> _Placed:
-    bounds = boundaries(candidate)
+def _placed(template: Template, bounds: Boundaries, kept: Mapping[LayerKind, list[Any]]) -> _Placed:
     layers = {kind: list(listed) for kind, listed in kept.items()}
     trimmed = left_out = 0
     for kind, layer in template.layers.items():
@@ -291,26 +533,56 @@ def _placed(template: Template, candidate: Candidate, kept: Mapping[LayerKind, l
 def _replaced(candidate: Candidate, named: Mapping[str, Template], done: str) -> list[str]:
     """What the owner is told of the Candidate's Template items being taken off (`done`): those
     changed by hand since their Template put them there, as told by a fresh application of it (their
-    ids aside, which depend on the hand-made items beside them), and those of a deleted Template."""
+    ids and the Segment a Transition follows aside, which depend on the hand-made items beside them),
+    and those of a deleted Template."""
     changed = gone = 0
-    for template_id in dict.fromkeys(item.template for _, item in _layers_of(candidate) if item.template is not None):
-        marked = [(kind, item) for kind, item in _layers_of(candidate) if item.template == template_id]
+    marks = _marked(candidate.segments, candidate.transitions, candidate.word_edits, candidate.cue_edits, dict(_layers_by_kind(candidate)))
+    for template_id in dict.fromkeys(item.template for _, item in marks):
+        marked = [(kind, item) for kind, item in marks if item.template == template_id]
         if template_id not in named:
             gone += len(marked)
             continue
-        fresh = _placed(named[template_id], candidate, {kind: [] for kind in LayerKind}).layers
+        template = named[template_id]
+        wrap = _wrapped(template, candidate)
+        layers = _placed(template, wrap.bounds, {kind: [] for kind in LayerKind}).layers
+        fresh: dict[str, list[Any]] = {}
+        for kind, item in _marked(wrap.segments, wrap.transitions, wrap.word_edits, wrap.cue_edits, layers):
+            fresh.setdefault(kind, []).append(item)
         for kind, item in marked:
-            same = next((i for i, put in enumerate(fresh[kind]) if replace(put, id=item.id) == item), None)
+            puts = fresh.get(kind, [])
+            same = next((i for i, put in enumerate(puts) if _alike(put, item)), None)
             if same is None:
                 changed += 1
             else:
-                del fresh[kind][same]
+                del puts[same]
     notices = []
     if changed:
         notices.append(f"{_count(changed, 'Template item')} changed by hand {done}.")
     if gone:
         notices.append(f"{_count(gone, 'Template item')} of a deleted Template {done}.")
     return notices
+
+
+def _marked(
+    segments: Sequence[Segment], transitions: Sequence[Transition], word_edits: Sequence[WordEdit], cue_edits: Sequence[CueEdit],
+    layers: Mapping[LayerKind, Sequence[Any]],
+) -> list[tuple[str, Any]]:
+    """The Template items among these, each with the name of its list."""
+    listed: list[tuple[str, Sequence[Any]]] = [
+        *((kind.value, layers.get(kind, [])) for kind in LayerKind),
+        ("segments", segments), ("transitions", transitions), ("word_edits", word_edits), ("cue_edits", cue_edits),
+    ]
+    return [(kind, item) for kind, items in listed for item in items if item.template is not None]
+
+
+def _alike(put: Any, item: Any) -> bool:
+    """Whether `item` is as a fresh application put `put`, but for its id or the Segment it follows."""
+    return replace(put, **{name: getattr(item, name) for name in ("id", "after") if hasattr(put, name)}) == item
+
+
+def _layers_by_kind(candidate: Candidate) -> Iterator[tuple[LayerKind, list[Layer]]]:
+    for kind in LayerKind:
+        yield kind, getattr(candidate, kind.value)
 
 
 def _layers_of(candidate: Candidate) -> Iterator[tuple[LayerKind, Layer]]:
@@ -389,18 +661,18 @@ class TemplateStore:
                 return template
         raise TemplateNotFound(template_id)
 
-    def create(self, name: str, layers: TemplateLayers) -> Template:
+    def create(self, name: str, captured: Captured) -> Template:
         now = datetime.now(UTC)
         with self._lock:
             saved = self._saved()
-            template = Template(uuid4().hex[:8], name, now, now, layers)
+            template = Template(uuid4().hex[:8], name, now, now, **captured.contents())
             self._save(replace(saved, templates=[*saved.templates, template]))
         return template
 
-    def save_over(self, template_id: str, name: str, layers: TemplateLayers) -> Template:
+    def save_over(self, template_id: str, name: str, captured: Captured) -> Template:
         """One of the Templates replaced by another of the same id. Candidates it was applied to keep
         their copies."""
-        return self._change(template_id, lambda template: replace(template, name=name, layers=layers))
+        return self._change(template_id, lambda template: replace(template, name=name, **captured.contents()))
 
     def rename(self, template_id: str, name: str) -> Template:
         return self._change(template_id, lambda template: replace(template, name=name))

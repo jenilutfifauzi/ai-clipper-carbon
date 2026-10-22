@@ -9,25 +9,46 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.candidates import AdjustmentLayer, Keyframe, MusicClip, Shape, ShapeStyle, TextLayer, manual_candidate
+from app.candidates import (
+    WHOLE,
+    AdjustmentLayer,
+    CueEdit,
+    Framing,
+    Keyframe,
+    MusicClip,
+    Segment,
+    Shape,
+    ShapeStyle,
+    TextLayer,
+    Transition,
+    TransitionKind,
+    WordEdit,
+    manual_candidate,
+)
 from app.templates import (
     Anchor,
     AnchorKind,
     AnchorOverride,
+    Boundaries,
     Boundary,
     Edge,
+    InvalidTemplate,
     LayerKind,
     Template,
+    TemplatePart,
     apply,
+    boundaries,
     capture,
 )
 from app.jobs import CANDIDATES_FILE
 from test_jobs_api import create_job
-from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp, reviewed  # noqa: F401 (fixtures)
+from test_mcp import HALO_KABAR, anyio_backend, call, fails, make, manual, mcp, reviewed  # noqa: F401 (fixtures)
 from test_review import candidates, patch
 from test_selection import analyzed, clip
 
 SONG = "a" * 32
+STING = "b" * 32
+CARD = "c" * 32
 NOW = datetime(2026, 10, 22, tzinfo=UTC)
 
 
@@ -50,6 +71,30 @@ def bed(**fields) -> MusicClip:
 
 def template_of(layers) -> Template:
     return Template("brand", "Brand", NOW, NOW, layers)
+
+
+def video(segment_id: str, media: str, secs: float, **fields) -> Segment:
+    """A Segment of a Media Library video, its first `secs` seconds (from `start`, when given)."""
+    start = fields.pop("start", 0.0)
+    return Segment(segment_id, start, start + secs, media=media, framing=Framing(), **fields)
+
+
+def wrapped(secs: float, intro: float = 3.0, outro: float = 2.0, **edits):
+    """A Candidate whose Main Slot (one Segment of the Source) lasts `secs`, with an intro sting
+    `intro` long and an end card `outro` long; none where 0."""
+    track = [
+        *([video("sting", STING, intro)] if intro else []),
+        Segment("s1", 100.0, 100.0 + secs),
+        *([video("card", CARD, outro)] if outro else []),
+    ]
+    return candidate(secs, segments=track, **edits)
+
+
+def saved_from(source, overrides=(), template_id: str = "brand") -> Template:
+    """The Template `capture` makes of `source`, as the store would save it."""
+    captured = capture(source, overrides)
+    parts = {name: getattr(captured, name) for name in ("intro", "outro", "word_edits", "cue_edits", "hook_offset", "hook_secs")}
+    return Template(template_id, template_id.title(), NOW, NOW, captured.layers, **parts)
 
 
 def anchor_of(layers, kind: LayerKind, item_id: str) -> Anchor:
@@ -237,6 +282,155 @@ def test_a_layer_past_a_short_clips_end_is_trimmed_there_or_left_out():
     assert applied.notices == ["1 layer cut short to fit; 1 left out, falling outside the clip."]
 
 
+# Intro, outro and the Main Slot
+
+
+def test_the_intro_and_outro_are_split_off_with_their_transitions_and_media_edits():
+    track = [
+        video("sting", STING, 2.0), video("logo", STING, 1.0, start=2.0),
+        Segment("s1", 100.0, 110.0), video("broll", CARD, 2.0), Segment("s2", 120.0, 130.0),
+        video("card", CARD, 2.0),
+    ]
+    transitions = [
+        Transition("sting", TransitionKind.WIPELEFT, 0.3), Transition("logo", secs=0.5),
+        Transition("s1", secs=0.2), Transition("s2", TransitionKind.DIPCOLOUR, 0.4),
+    ]
+    edits = [WordEdit(1.0, "Halo", media=STING), WordEdit(105.0, "Kabar"), WordEdit(1.5, "Mampir", media=CARD)]
+    captured = capture(candidate(30, segments=track, transitions=transitions, word_edits=edits, cue_edits=[CueEdit(1.0, media=STING, shift=0.1)]))
+
+    assert [segment.id for segment in captured.intro.segments] == ["sting", "logo"]
+    assert (captured.intro.transitions, captured.intro.join) == ([transitions[0]], transitions[1])
+    assert ([segment.id for segment in captured.outro.segments], captured.outro.transitions) == (["card"], [])
+    assert captured.outro.join == transitions[3]
+    # The edits of the intro's and outro's videos only, not the Source's.
+    assert captured.word_edits == [edits[0], edits[2]]
+    assert captured.cue_edits == [CueEdit(1.0, media=STING, shift=0.1)]
+    assert (captured.intro.secs, captured.outro.secs) == (2.7, 2.0)
+    assert captured.notices == ["1 media Segment between the episode's Segments left out: a Template's Main Slot is each Candidate's own."]
+
+
+def test_a_candidate_without_a_segment_of_the_source_is_refused():
+    with pytest.raises(InvalidTemplate, match="Segment of the episode"):
+        capture(candidate(20, segments=[video("sting", STING, 3.0)]))
+
+
+def test_boundaries_are_measured_with_the_transitions_overlaps():
+    source = wrapped(20, transitions=[Transition("sting", secs=1.0), Transition("s1", secs=0.5)])
+
+    assert boundaries(source) == Boundaries(0.0, 2.0, 22.0, 23.5)
+
+
+def test_the_hook_is_kept_by_its_distance_from_the_main_slots_start_and_its_length():
+    template = saved_from(wrapped(20, hook_start=3.5, hook_secs=2.5))
+
+    assert (template.hook_offset, template.hook_secs) == (0.5, 2.5)
+
+
+def test_a_layer_inside_the_intro_or_the_outro_hangs_from_that_parts_boundaries():
+    title = TextLayer("title", "Halo", start=0.5, secs=2.0)
+    thanks = TextLayer("thanks", "Thanks", start=23.2, secs=1.5)
+    layers = capture(wrapped(20, text_layers=[title, thanks]), [AnchorOverride(LayerKind.TEXT_LAYERS, "thanks", AnchorKind.START)]).layers
+
+    assert anchor_of(layers, LayerKind.TEXT_LAYERS, "title") == Anchor(Edge(Boundary.CLIP_START, 0.5), Edge(Boundary.MAIN_START, -0.5))
+    assert anchor_of(layers, LayerKind.TEXT_LAYERS, "thanks") == Anchor(Edge(Boundary.MAIN_END, 0.2), Edge(Boundary.MAIN_END, 1.7))
+
+
+def test_a_3_s_intro_moves_the_hook_and_a_hand_made_text_layer_by_3_s():
+    template = saved_from(wrapped(20, outro=0, hook_start=3.5, hook_secs=2.5))
+    mine = TextLayer("mine", "Mine", start=5.0, secs=2.0)
+
+    applied = apply(template, candidate(30, hook_start=1.0, text_layers=[mine]))
+
+    change = applied.change
+    assert [(layer.id, layer.start) for layer in change.text_layers] == [("mine", 8.0)]
+    # The hook at the Template's distance from the Main Slot's start, as long as the Template's.
+    assert (change.hook_start, change.hook_secs) == (3.5, 2.5)
+    assert applied.notices == []
+
+
+def test_an_implicit_single_segment_becomes_explicit_between_the_intro_and_outro():
+    template = saved_from(wrapped(20))
+
+    change = apply(template, candidate(30)).change
+
+    assert change.segments == [
+        replace(video("sting", STING, 3.0), template="brand"), Segment(WHOLE, 100.0, 130.0), replace(video("card", CARD, 2.0), template="brand"),
+    ]
+    assert change.transitions == []
+
+
+@pytest.mark.parametrize("secs", [20, 75])
+def test_a_music_bed_from_the_intros_start_to_the_outros_end_covers_the_whole_clip(secs):
+    template = saved_from(wrapped(20, music=[bed(secs=25.0)]))
+
+    [song] = apply(template, candidate(secs)).change.music
+
+    assert (song.start, song.secs) == (0.0, 3.0 + secs + 2.0)
+
+
+def test_reapplying_with_a_5_s_intro_replaces_the_3_s_one_and_moves_hand_made_layers_by_2_s_more():
+    short, long = saved_from(wrapped(20, outro=0)), saved_from(wrapped(20, intro=5.0, outro=0), template_id="long")
+    mine = TextLayer("mine", "Mine", start=5.0, secs=2.0)
+    once = apply(short, candidate(30, text_layers=[mine])).change
+
+    again = apply(long, candidate(30, segments=once.segments, transitions=once.transitions, text_layers=once.text_layers), {"brand": short, "long": long})
+
+    assert [(segment.id, segment.end, segment.template) for segment in again.change.segments] == [("sting", 5.0, "long"), (WHOLE, 130.0, None)]
+    assert [(layer.id, layer.start) for layer in again.change.text_layers] == [("mine", 10.0)]
+    assert again.notices == []
+
+
+def test_the_intros_and_outros_transitions_and_media_edits_travel_and_the_main_slots_joins_are_kept():
+    source_edits = [WordEdit(1.0, "Halo", media=STING), WordEdit(105.0, "Kabar")]
+    template = saved_from(wrapped(
+        20, transitions=[Transition("sting", TransitionKind.WIPELEFT, 0.5), Transition("s1", secs=0.3)],
+        word_edits=source_edits, cue_edits=[CueEdit(1.0, media=CARD, scale=1.5)],
+    ))
+    mine = Transition("a", TransitionKind.DIPCOLOUR, 0.4)
+    own = [Segment("a", 200.0, 210.0), Segment("b", 220.0, 230.0)]
+    hand_edits = [WordEdit(205.0, "Saya"), WordEdit(1.0, "Hai", media=STING)]
+
+    change = apply(template, candidate(20, start=200.0, end=230.0, segments=own, transitions=[mine], word_edits=hand_edits)).change
+
+    assert [segment.id for segment in change.segments] == ["sting", "a", "b", "card"]
+    assert change.transitions == [
+        Transition("sting", TransitionKind.WIPELEFT, 0.5, template="brand"), mine, Transition("b", secs=0.3, template="brand"),
+    ]
+    # The Candidate's own edit of the sting's Word stays: it was made by hand.
+    assert change.word_edits == hand_edits
+    assert change.cue_edits == [CueEdit(1.0, media=CARD, scale=1.5, template="brand")]
+
+
+def test_no_template_takes_the_intro_and_outro_off_and_pulls_hand_made_layers_and_the_hook_back():
+    template = saved_from(wrapped(20, hook_start=3.0, word_edits=[WordEdit(1.0, "Halo", media=STING)]))
+    mine = TextLayer("mine", "Mine", start=5.0, secs=2.0)
+    once = apply(template, candidate(30, text_layers=[mine])).change
+    branded = candidate(
+        30, segments=once.segments, transitions=once.transitions, word_edits=once.word_edits,
+        text_layers=[*once.text_layers, TextLayer("early", "On the sting", start=1.0, secs=1.0)], hook_start=once.hook_start + 1,
+    )
+
+    applied = apply(None, branded, {"brand": template})
+
+    change = applied.change
+    assert [segment.id for segment in change.segments] == [WHOLE]
+    assert (change.transitions, change.word_edits) == ([], [])
+    assert [(layer.id, layer.start) for layer in change.text_layers] == [("mine", 5.0)]
+    assert change.hook_start == 1.0
+    assert applied.notices == ["1 layer made by hand over the intro removed."]
+
+
+def test_an_intro_segment_changed_by_hand_is_counted_and_replaced():
+    template = saved_from(wrapped(20))
+    once = apply(template, candidate(30)).change
+    louder = [replace(segment, volume=1.5) if segment.id == "sting" else segment for segment in once.segments]
+
+    applied = apply(template, candidate(30, segments=louder, transitions=once.transitions), {"brand": template})
+
+    assert [segment.volume for segment in applied.change.segments] == [1.0, 1.0, 1.0]
+    assert applied.notices == ["1 Template item changed by hand replaced."]
+
+
 # Through the API
 
 URL = "/api/templates"
@@ -329,6 +523,62 @@ def test_a_template_of_an_unknown_candidate_or_anchor_is_refused(client, from_ep
     )
     assert response.status_code == 422
     assert "no Shape gone" in response.json()["detail"]
+
+
+def a_video(client, tmp_path) -> dict:
+    """A 2 s video added to the Media Library."""
+    path = make(tmp_path / "sting.mp4", "-f", "lavfi", "-i", "color=c=red:size=320x180:rate=30:duration=2", "-c:v", "libx264")
+    response = client.post("/api/media", files={"file": ("sting.mp4", path.read_bytes(), "application/octet-stream")})
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_a_template_wraps_each_candidate_in_its_intro_and_outro(client, tmp_path, from_episode, llm, wait_for_status):
+    job, source = branded(client, wait_for_status, llm)
+    sting = a_video(client, tmp_path)
+    shown = {"media": sting["id"], "framing": {}}
+    source = patch(client, job, source, segments=[
+        {"id": "sting", "start": 0.0, "end": 1.5, **shown},
+        {"id": "s1", "start": source["start"], "end": source["end"]},
+        {"id": "card", "start": 0.0, "end": 1.0, **shown},
+    ], transitions=[{"after": "sting", "kind": "fade", "secs": 0.5}], word_edits=[{"at": 0.5, "text": "Halo", "media": sting["id"]}])
+
+    template = saved(client, job, source)
+    assert ([s["id"] for s in template["intro"]["segments"]], template["intro"]["secs"]) == (["sting"], 1.5)
+    assert ([s["id"] for s in template["outro"]["segments"]], template["outro"]["secs"]) == (["card"], 1.0)
+    assert template["intro"]["join"]["kind"] == "fade"
+
+    house = client.post("/api/presets", json={"name": "House", "join_transition": {"kind": "fadeblack"}})
+    assert house.status_code == 201, house.text
+    target = patch(client, job, added(client, job, 700.0, 712.0), preset_id=house.json()["id"])
+    applied(client, job, template, [target])
+
+    now = candidates_of(client, job, target)
+    assert [(s["id"], s["template"]) for s in now["segments"]] == [("sting", template["id"]), ("main", None), ("card", template["id"])]
+    # The Join Transition never applies at the intro's and outro's joins: only the Template's is there.
+    assert [(t["after"], t["template"]) for t in now["transitions"]] == [("sting", template["id"])]
+    assert [(e["at"], e["template"]) for e in now["word_edits"]] == [(0.5, template["id"])]
+
+    # No Template takes them off: one plain Segment again.
+    response = client.post(f"/api/jobs/{job['id']}/templates/apply", json={"template_id": None, "candidate_ids": [target["id"]]})
+    assert response.status_code == 200, response.text
+    plain = candidates_of(client, job, target)
+    assert (plain["segments"], plain["transitions"], plain["word_edits"]) == ([], [], [])
+    assert (plain["start"], plain["end"]) == (target["start"], target["end"])
+
+
+def test_a_template_of_a_candidate_with_no_segment_of_the_source_is_refused(client, tmp_path, from_episode, llm, wait_for_status):
+    job, source = branded(client, wait_for_status, llm)
+    sting = a_video(client, tmp_path)
+
+    response = client.post(URL, json={
+        "name": "x", "job_id": job["id"], "candidate_id": source["id"],
+        "edits": {"segments": [{"id": "sting", "start": 0.0, "end": 1.5, "media": sting["id"], "framing": {}}]},
+    })
+
+    assert response.status_code == 422
+    assert "Segment of the episode" in response.json()["detail"]
+    assert client.get(URL).json() == []
 
 
 def candidates_of(client, job: dict, candidate: dict) -> dict:
@@ -462,6 +712,30 @@ def test_a_candidates_marks_are_kept_through_edits_and_one_saved_before_marks_lo
 
 
 # Through MCP
+
+
+@pytest.mark.anyio
+async def test_list_presets_gives_a_templates_intro_and_outro_lengths(mcp, tmp_path):
+    video = make(tmp_path / "sting.mp4", "-f", "lavfi", "-i", "color=c=red:size=320x180:rate=30:duration=2", "-c:v", "libx264")
+    sting = await call(mcp, "add_asset", kind="media", path=str(video))
+    job = await reviewed(mcp)
+    source = await manual(mcp, job, *HALO_KABAR)
+    ids = {"job_id": job["id"], "candidate_id": source["id"]}
+    shown = {"media": sting["id"], "framing": {}}
+    await call(mcp, "edit_candidate", **ids, changes={"segments": [
+        {"id": "sting", "start": 0.0, "end": 1.5, **shown},
+        {"id": "s1", "start": source["start"], "end": source["end"]},
+        {"id": "card", "start": 0.0, "end": 1.0, **shown},
+    ], "transitions": []})
+    template = await call(mcp, "save_preset", kind="template", preset={"name": "Brand", **ids})
+
+    [listed] = (await call(mcp, "list_presets", kind="template"))["presets"]
+    assert (listed["intro_secs"], listed["outro_secs"]) == (1.5, 1.0)
+
+    target = await manual(mcp, job, *HALO_KABAR)
+    [entry] = (await call(mcp, "apply_template", job_id=job["id"], candidate_ids=[target["id"]], template_id=template["id"]))["candidates"]
+    assert [(item["kind"], item["id"]) for item in entry["template_items"]] == [("segments", "sting"), ("segments", "card")]
+
 
 
 @pytest.mark.anyio
