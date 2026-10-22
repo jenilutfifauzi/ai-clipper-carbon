@@ -24,15 +24,21 @@ low priority, latest request first (a request's own pieces in order), with their
 the editor to poll; a save that switches Background removal on or changes a range asks for them. A
 render makes the pieces it still lacks itself, in the Worker (`MatteRunner.make`), one at a time with
 the runner.
+
+The pieces no Candidate of the Job nor any state in their Revision History reads are removed when the
+Job is opened (`MatteRunner.sweep`, as Retimed copies are), never one being made; those of another
+matter version are read by none. Removing the person model removes every Matte.
 """
 
 import math
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from fractions import Fraction
@@ -265,6 +271,10 @@ class ModelAbsent(RuntimeError):
     """The person model isn't downloaded (or isn't offered), so no Matte can be made."""
 
 
+class MatteBusy(RuntimeError):
+    """A Matte is being made (or asked for), so the person model can't be removed now."""
+
+
 class MatteRunner:
     """The app's Matte maker: the pieces the editor asks for, one at a time, in a thread of its own,
     latest request first; and those a render needs, made in its thread. The model is the person
@@ -284,6 +294,8 @@ class MatteRunner:
         self._thread: threading.Thread | None = None
         # One piece made at a time, by the runner or a render.
         self._one = threading.Lock()
+        # The pieces being made now, by the runner or a render, which the sweep leaves (with their parts).
+        self._writing: set[Path] = set()
 
     @property
     def version(self) -> str:
@@ -356,11 +368,60 @@ class MatteRunner:
         for i, (mattes, subject, piece) in enumerate(missing):
             if (failure := mattes.failure(subject, self.version, piece)) is not None:
                 raise RuntimeError(failure)
-            with self._one:
+            with self._one, self._written(mattes.path(subject, self.version, piece)):
                 matter = self._matter()
                 mattes.make(self.ffmpeg, matter, subject, piece, lambda done, i=i: progress((i + done) / len(missing)))
         progress(1.0)
         return [mattes.path(subject, self.version, piece) for mattes, subject, piece in wanted]
+
+    @contextmanager
+    def idle(self, busy: str) -> Iterator[None]:
+        """Hold the runner while the body runs, so that no piece starts meanwhile: MatteBusy, saying
+        `busy`, while one is asked for or being made, by the runner or a render (as removing the person
+        model is refused)."""
+        with self._changed:
+            if self._making is not None or any(self._requests) or self._writing:
+                raise MatteBusy(busy)
+        if not self._one.acquire(blocking=False):
+            raise MatteBusy(busy)
+        try:
+            yield
+        finally:
+            self._one.release()
+
+    def sweep(self, folder: Path, used: Iterable[Path]) -> list[Path]:
+        """Remove the pieces in `folder` (a Matte's: its item's MATTES_DIR) that aren't `used` (their
+        paths, at this matter's version: another's are never read), with unused pieces' failures and
+        the parts pieces cut short left there, but nothing a piece being made is writing now. The
+        paths removed."""
+        used = set(used)
+        removed = []
+        with self._changed:
+            for path in sorted(folder.iterdir()) if folder.is_dir() else ():
+                name = path.name
+                if name.startswith(".") and name.endswith(".part.mp4"):
+                    # `.{piece's stem}.{uuid}.part.mp4`
+                    piece = path.with_name(name[1:-len(".part.mp4")].rsplit(".", 1)[0] + ".mp4")
+                    if piece in self._writing:
+                        continue
+                elif name.startswith(".") or not name.endswith((".mp4", ".failed")) or path.with_suffix(".mp4") in used:
+                    continue
+                elif path.with_suffix(".mp4") in self._writing:
+                    continue
+                path.unlink(missing_ok=True)
+                removed.append(path)
+        return removed
+
+    @contextmanager
+    def _written(self, target: Path) -> Iterator[None]:
+        """Mark the piece `target` as being made while the body runs, so that the sweep leaves it."""
+        with self._changed:
+            self._writing.add(target)
+        try:
+            yield
+        finally:
+            with self._changed:
+                self._writing.discard(target)
 
     def _matter(self) -> Matter:
         """The model, loaded once. ModelAbsent without its file."""
@@ -390,7 +451,7 @@ class MatteRunner:
                         self._making = (target, round(done, 3))
 
             try:
-                with self._one:
+                with self._one, self._written(target):
                     if not target.is_file() and mattes.failure(subject, self.version, piece) is None:
                         mattes.make(self.ffmpeg, self._matter(), subject, piece, report, nice=True)
             except ModelAbsent:
@@ -403,6 +464,12 @@ class MatteRunner:
             finally:
                 with self._changed:
                     self._making = None
+
+
+def remove_mattes(folders: Iterable[Path]) -> None:
+    """Remove the Mattes in `folders` (items' MATTES_DIRs), whole: the person model is removed."""
+    for folder in folders:
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def _last_line(errors: bytes) -> str:

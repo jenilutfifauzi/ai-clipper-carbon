@@ -91,7 +91,7 @@ from app.planner import font_metrics
 from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.renderer import AudioFormat, available_codecs
-from app.matte import MatteRunner, MatteStatus
+from app.matte import MATTES_DIR, MatteBusy, MatteRunner, MatteStatus, remove_mattes
 from app.rendering import NothingToRender, has_media_words, matte_wanted, media_language, ranked_clips, source_copies, source_mattes
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
@@ -729,15 +729,15 @@ def list_jobs(
 
 
 @router.get("/jobs/{job_id}")
-def get_job(job_id: str, store: Store, library: Media, background: BackgroundTasks) -> JobDetail:
-    """The Job, as the editors open it; then, once it is sent, its unused Retimed copies and picture
-    layers' pictures are swept (`sweep_unused`)."""
+def get_job(job_id: str, store: Store, library: Media, mattes: MatteMaker, background: BackgroundTasks) -> JobDetail:
+    """The Job, as the editors open it; then, once it is sent, its unused Retimed copies, picture
+    layers' pictures and Matte pieces are swept (`sweep_unused`)."""
     try:
         job = store.get(job_id)
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
     candidates = store.load_candidates(job_id)
-    background.add_task(sweep_unused, store, library, job_id)
+    background.add_task(sweep_unused, store, library, mattes, job_id)
     return JobDetail(
         **vars(job),
         transcript=store.load_transcript(job_id),
@@ -2067,11 +2067,14 @@ def cancel_person_model_download(model: PersonModelDep) -> None:
 
 
 @router.delete("/models/person", status_code=204)
-def remove_person_model(model: PersonModelDep) -> None:
-    """Remove the person model from this Mac. 409 while it is being downloaded."""
+def remove_person_model(model: PersonModelDep, mattes: MatteMaker, store: Store) -> None:
+    """Remove the person model from this Mac, and with it every Matte (every Job's MATTES_DIR). 409
+    while a Matte is being made, or the model is being downloaded."""
     try:
-        model.remove()
-    except PersonModelBusy as exc:
+        with mattes.idle("A Matte is being made: remove the person model once it is done"):
+            model.remove()
+            remove_mattes(store.root.glob(f"*/{MATTES_DIR}"))
+    except (MatteBusy, PersonModelBusy) as exc:
         raise HTTPException(409, str(exc)) from None
 
 
@@ -2201,11 +2204,12 @@ def cancel_narration(narration_id: str, narrations: Narrations) -> None:
         raise HTTPException(409, str(exc)) from None
 
 
-def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:
+def sweep_unused(store: JobStore, library: MediaStore, mattes: MatteRunner, job_id: str) -> None:
     """Remove the Retimed copies (app/retimed.py) of the Job's Source, and of the videos and songs no
     other Job's Candidates use (`media_uses`), that none of its Candidates nor any state in their Revision
-    History plays from; and the Job's picture layers' pictures (app/layer_pictures.py) none of them
-    shows, and the folder they were kept in before (OLD_PICTURES_DIR), whole."""
+    History plays from; the Job's picture layers' pictures (app/layer_pictures.py) none of them shows,
+    and the folder they were kept in before (OLD_PICTURES_DIR), whole; and the Source's Matte pieces
+    (app/matte.py) none of them reads (`MatteRunner.sweep`)."""
     states = []
     for candidate in store.load_candidates(job_id) or []:
         states += [candidate, *(entry.candidate for entry in store.revision_history(job_id, candidate.id))]
@@ -2217,6 +2221,19 @@ def sweep_unused(store: JobStore, library: MediaStore, job_id: str) -> None:
             sweep(library.retimed(media_id).folder, used.get(media_id, []))
     sweep_pictures(store.job_dir(job_id) / PICTURES_DIR, pictures_used(states))
     shutil.rmtree(store.job_dir(job_id) / OLD_PICTURES_DIR, ignore_errors=True)
+    try:
+        job = store.get(job_id)
+    except JobNotFound:
+        return
+    if job.source is not None:
+        source = source_mattes(store.job_dir(job_id), job.source)
+        read = {
+            pieces.path(subject, mattes.version, piece)
+            for state in states
+            for wanted in matte_wanted(state, source).values()
+            for pieces, subject, piece in wanted
+        }
+        mattes.sweep(source.folder, read)
 
 
 def sweep_unused_effected(
