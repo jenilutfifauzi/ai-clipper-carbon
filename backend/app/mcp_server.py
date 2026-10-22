@@ -80,7 +80,7 @@ from app.rendering import source_copies
 from app.retimed import CopySize, Retime
 from app.segment_time import SegmentTime
 from app.styles import LINE_LIMITS, StyleOverrides
-from app.templates import Anchor, AnchorOverride, TemplateNotFound
+from app.templates import Anchor, AnchorOverride, LayerKind, TemplateNotFound
 from app.transcript import Language
 from app.uploads import UPLOADS_DIR, BadUpload, NotEnoughSpace, stage
 
@@ -233,12 +233,14 @@ Edits:
   edges from the start: a lower-third), end (both from the end: a call to action) or span (one from
   each, stretched with the Clip: a music bed). One past a shorter Clip's end is cut short or left
   out, and the result says so. What a Template puts on a Candidate is a Template item, its
-  `template` the Template's id: applying a Template again replaces the Template items, even those
-  changed by hand, and keeps the rest. Removing one by hand (remove_candidate_items) is fine; only
-  applying again brings it back. One Template, or none, is the default (save_preset's
-  use_as_default, by preset_id alone too; list_presets marks it): a new Job gets it unless its
-  options.template is another's id or null ("default" when not given), and each of the Job's new Candidates (Selection's and add_candidate's) arrives
-  with the Job's Template applied. A Job whose Template was deleted makes them plain, with a warning.
+  `template` the Template's id (get_candidate's template_items names it): applying a Template again,
+  the same or another, replaces the Template items, even those changed by hand (the notices count
+  them), and keeps the rest; template_id null ("No Template") takes them off. Removing one by hand
+  (remove_candidate_items) is fine; only applying again brings it back. One Template, or none, is
+  the default (save_preset's use_as_default, by preset_id alone too; list_presets marks it): a new
+  Job gets it unless its options.template is another's id or null ("default" when not given), and
+  each of the Job's new Candidates (Selection's and add_candidate's) arrives with the Job's Template
+  applied. A Job whose Template was deleted makes them plain, with a warning.
 - The caption and hook styles' shadow is a Text Style's; a Style Override of it sets the fields it
   names ({{"shadow": {{"blur": 8}}}}). The hook's box (block or strips) and the caption highlight box
   have padding_x and padding_y, the highlight box radius too, in output pixels at the style's size;
@@ -511,6 +513,9 @@ def build_mcp(app: FastAPI) -> MCPServer:
             raise ToolError(f"Job {job_id} has no Candidate {candidate_id}")
         return found
 
+    async def template_names() -> dict[str, str]:
+        return {template["id"]: template["name"] for template in await api("GET", "/templates")}
+
     async def save_from_current(job_id: str, candidate_id: str, change: Callable[[dict], dict]) -> dict:
         """Save the body `change` makes of the Candidate as it is, from its Revision. When another
         edit saves first, `change` is made again of the Candidate as that left it."""
@@ -676,8 +681,12 @@ def build_mcp(app: FastAPI) -> MCPServer:
 
     @tool(read_only=True)
     async def get_candidate(job_id: str, candidate_id: str) -> dict:
-        """A Candidate whole: its range, hook, titles and descriptions, and every edit made to it."""
-        return await candidate(job_id, candidate_id)
+        """A Candidate whole: its range, hook, titles and descriptions, and every edit made to it;
+        `template_items` lists its Template items and the Template that put each there (its name, or
+        "deleted")."""
+        found = await candidate(job_id, candidate_id)
+        marks = _template_items(found, await template_names())
+        return found | ({"template_items": marks} if marks else {})
 
     @tool()
     async def edit_candidate(
@@ -988,12 +997,17 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return {"deleted": preset_id}
 
     @tool()
-    async def apply_template(job_id: str, candidate_ids: list[str], template_id: str, dry_run: bool = False) -> dict:
-        """Apply a Template to Candidates of a Job, all of them or none: each changed one gets a new
+    async def apply_template(job_id: str, candidate_ids: list[str], template_id: str | None, dry_run: bool = False) -> dict:
+        """Apply a Template to Candidates of a Job, all of them or none, replacing their Template
+        items; template_id null is "No Template", taking them off. Each changed one gets a new
         revision. Per Candidate: its `revision`, the `edits` made (lists replaced whole, as
-        edit_candidate's) and `notices` (layers cut short or left out). With dry_run, nothing is saved."""
+        edit_candidate's), the `template_items` they leave (as get_candidate's) and `notices` (Template
+        items replaced that were changed by hand or whose Template was deleted, layers cut short or
+        left out). With dry_run, nothing is saved."""
         body = {"template_id": template_id, "candidate_ids": candidate_ids, "dry_run": dry_run}
-        return await api("POST", f"/jobs/{job_id}/templates/apply", json=body)
+        result = await api("POST", f"/jobs/{job_id}/templates/apply", json=body)
+        names = await template_names()
+        return {"candidates": [entry | {"template_items": _template_items(entry["edits"], names)} for entry in result["candidates"]]}
 
     @tool(read_only=True)
     async def list_assets(
@@ -1237,6 +1251,17 @@ def _template_view(template: dict) -> dict:
 
 
 _ANCHOR = TypeAdapter(Anchor)
+
+
+def _template_items(candidate: dict, names: dict[str, str]) -> list[dict]:
+    """A Candidate's Template items (of its layer lists in `candidate`): each by its list and id, with
+    the Template that put it there, by its id and name (`names`), or "deleted"."""
+    return [
+        {"kind": kind.value, "id": item["id"], "template_id": item["template"], "template": names.get(item["template"], "deleted")}
+        for kind in LayerKind
+        for item in candidate.get(kind.value) or []
+        if item.get("template")
+    ]
 
 
 def _job_view(job: dict) -> dict:

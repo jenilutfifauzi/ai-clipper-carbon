@@ -12,7 +12,7 @@ Presets are. There are no built-in ones.
 
 import math
 import threading
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -241,15 +241,39 @@ def anchored(start: float, end: float, bounds: Boundaries, kind: AnchorKind | No
     return Anchor(_edge(start, bounds, _nearest(start, bounds, _PREFERRED)), _edge(end, bounds, _nearest(end, bounds, _PREFERRED)))
 
 
-def apply(template: Template, candidate: Candidate) -> Applied:
-    """The Candidate's layers once `template` is applied: its Template items (of any Template) taken
-    off, its own kept, and each of the Template's layers placed by its Anchor on the Candidate's
-    boundaries and marked. A layer reaching past the Clip is cut short at its edge, or left out when
-    shorter than ITEM_MIN_SECS there."""
-    bounds = boundaries(candidate)
-    layers: dict[LayerKind, list[Any]] = {
+def apply(template: Template | None, candidate: Candidate, named: Mapping[str, Template] | None = None) -> Applied:
+    """The Candidate's layers once `template` is applied, or with None ("No Template") its Template
+    items taken off alone: its Template items (of any Template) taken off, its own kept, and each of
+    the Template's layers placed by its Anchor on the Candidate's boundaries and marked. A layer
+    reaching past the Clip is cut short at its edge, or left out when shorter than ITEM_MIN_SECS
+    there. `named` holds the Templates the Candidate's marks may name, by id: an item taken off that
+    differs from a fresh application of its Template was changed by hand, and is counted; so is every
+    item of a Template not there (deleted)."""
+    kept: dict[LayerKind, list[Any]] = {
         kind: [item for item in getattr(candidate, kind.value) if item.template is None] for kind in LayerKind
     }
+    notices = _replaced(candidate, named or {}, "removed" if template is None else "replaced")
+    if template is None:
+        return Applied(CandidateChange(**{kind.value: listed for kind, listed in kept.items()}), notices)
+    placed = _placed(template, candidate, kept)
+    told = [placed.trimmed and f"{_count(placed.trimmed, 'layer')} cut short to fit", placed.left_out and f"{placed.left_out} left out, falling outside the clip"]
+    if placed.trimmed or placed.left_out:
+        notices.append(f"{'; '.join(part for part in told if part)}.")
+    return Applied(CandidateChange(**{kind.value: listed for kind, listed in placed.layers.items()}), notices)
+
+
+class _Placed(NamedTuple):
+    """A Template's layers placed on a Candidate beside the layers it keeps, and how many were cut
+    short or left out."""
+
+    layers: dict[LayerKind, list[Any]]
+    trimmed: int
+    left_out: int
+
+
+def _placed(template: Template, candidate: Candidate, kept: Mapping[LayerKind, list[Any]]) -> _Placed:
+    bounds = boundaries(candidate)
+    layers = {kind: list(listed) for kind, listed in kept.items()}
     trimmed = left_out = 0
     for kind, layer in template.layers.items():
         start = bounds.at(layer.anchor.start.boundary) + layer.anchor.start.offset
@@ -262,9 +286,32 @@ def apply(template: Template, candidate: Candidate) -> Applied:
         trimmed += cut
         item_id = _free_id(item.id, {other.id for other in layers[kind]})
         layers[kind].append(replace(item, id=item_id, template=template.id))
-    told = [trimmed and f"{_count(trimmed, 'layer')} cut short to fit", left_out and f"{left_out} left out, falling outside the clip"]
-    notices = [f"{'; '.join(part for part in told if part)}."] if trimmed or left_out else []
-    return Applied(CandidateChange(**{kind.value: listed for kind, listed in layers.items()}), notices)
+    return _Placed(layers, trimmed, left_out)
+
+
+def _replaced(candidate: Candidate, named: Mapping[str, Template], done: str) -> list[str]:
+    """What the owner is told of the Candidate's Template items being taken off (`done`): those
+    changed by hand since their Template put them there, as told by a fresh application of it (their
+    ids aside, which depend on the hand-made items beside them), and those of a deleted Template."""
+    changed = gone = 0
+    for template_id in dict.fromkeys(item.template for _, item in _layers_of(candidate) if item.template is not None):
+        marked = [(kind, item) for kind, item in _layers_of(candidate) if item.template == template_id]
+        if template_id not in named:
+            gone += len(marked)
+            continue
+        fresh = _placed(named[template_id], candidate, {kind: [] for kind in LayerKind}).layers
+        for kind, item in marked:
+            same = next((i for i, put in enumerate(fresh[kind]) if replace(put, id=item.id) == item), None)
+            if same is None:
+                changed += 1
+            else:
+                del fresh[kind][same]
+    notices = []
+    if changed:
+        notices.append(f"{_count(changed, 'Template item')} changed by hand {done}.")
+    if gone:
+        notices.append(f"{_count(gone, 'Template item')} of a deleted Template {done}.")
+    return notices
 
 
 def _layers_of(candidate: Candidate) -> Iterator[tuple[LayerKind, Layer]]:
