@@ -12,6 +12,7 @@ import pytest
 
 from app.audio_effects import MEASURED_GAIN, NORMALIZE, AudioEffect, Unmeasured, checked_effects, effect_chain, effects
 from app.candidates import MusicClip, Overlay
+from app.canvas import PORTRAIT
 from app.config import load_settings
 from app.planner import MediaInfo, SegmentInput, audio_events, overlay_sound, plan_render
 from test_keyframes import stills  # noqa: F401
@@ -155,7 +156,7 @@ def test_a_segments_enabled_effects_reach_its_plan_in_order_and_one_without_has_
         main_track=[
             SegmentInput(10, 12, id="a", audio_effects=[telephone, replace(echo, enabled=False), echo]),
             SegmentInput(12, 14, id="b"),
-        ],
+        ], canvas=PORTRAIT,
     )
     effected, plain = planned.segments
     assert effected.audio_effects == [telephone, echo]
@@ -384,7 +385,7 @@ def test_a_music_clips_and_a_video_overlays_enabled_effects_reach_their_sound_in
     effected, plain = audio_events([MusicClip("m", 0.0, 2.0, media=SONG, audio_effects=stack), MusicClip("n", 0.0, 2.0, media=SONG)], 10, ITEMS)
     assert effected.audio_effects == [telephone, echo]
     assert plain.audio_effects == []
-    [sound] = overlay_sound([Overlay("o", VIDEO, 0.0, 2.0, volume=1.0, audio_effects=stack)], 10, ITEMS)
+    [sound] = overlay_sound([Overlay("o", VIDEO, 0.0, 2.0, volume=1.0, audio_effects=stack)], 10, ITEMS, canvas=PORTRAIT)
     assert sound.audio_effects == [telephone, echo]
 
 

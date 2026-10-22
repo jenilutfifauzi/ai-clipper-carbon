@@ -1,7 +1,10 @@
-import type { Adjust, AdjustmentLayer, AudioEffect, AudioEffectKind, AudioEffectSetting, BlendMode, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind, VideoEffect, VideoEffectKind } from "../../../api";
+import { FEATHER_DEFAULT, FEATHER_MAX } from "../../../api";
+import type { Adjust, AdjustmentLayer, AudioEffect, Background, AudioEffectKind, AudioEffectSetting, BlendMode, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind, VideoEffect, VideoEffectKind } from "../../../api";
 import { CLEAN_SWITCHES, isCleanSwitch, type CleanSwitchId } from "../../../audioEffects";
+import { PORTRAIT, type Canvas } from "../editor/canvas";
 import { adjusted, NEUTRAL_GRADE, relooked } from "../editor/grading";
 import { withJoinTransition } from "../editor/joinTransition";
+import type { Size } from "../editor/pictureGestures";
 import type { PlayedSegment } from "../editor/playback";
 import type { StyleDraft } from "../editor/useStyleDraft";
 import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
@@ -9,7 +12,7 @@ import { TRANSITION_KINDS } from "../editor/transitions";
 import { DUCK_MAX, DUCK_MIN, FADE_MAX_SECS, fadesWithin, halfFadeMax, ITEM_MIN_SECS, keptOffset, NEW_LAYER_SECS, newId, round, type AdvancedEdits } from "./edits";
 import { mirroredKeys, rekeyed, scaledKeys, shownTransform, toMillionth } from "./keyActions";
 import { draggedSegments, MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
-import { isPicked, isPlaced, itemsOf, listOf, onlyItem, picked, TRACK_OF, type ItemKind, type ItemRef, type Pick, type PlacedKind } from "./pick";
+import { isPicked, isPlaced, itemsOf, listOf, onlyItem, picked, TRACK_OF, trackOf, trackOfRef, type ItemKind, type ItemRef, type Pick, type PlacedKind } from "./pick";
 import { removedNotice, ripple, type Layers, type TrackChange } from "./ripple";
 import { speedLabel, speedOf } from "./speed";
 import type { LandedTake } from "./takeFlow";
@@ -33,6 +36,8 @@ export interface PickContext {
   magnetic?: boolean;
   locked?: TrackKind[];
   join?: JoinTransition | null;
+  // The Canvas the Candidate is drawn on (canvas.ts), which its items' centres stay on: the 9:16 one when not given.
+  canvas?: Canvas;
 }
 
 /** An action's result: the edits after it (one change, so one step of undo), what is picked then, and what to tell. */
@@ -65,23 +70,23 @@ export function fadesHalved<T extends Timed>(item: T): T {
 const KINDS: {
   [K in TimedKind]: {
     list: "text_layers" | "shapes" | "music" | "overlays" | "adjustment_layers";
-    aside: (item: Timed) => Partial<Timed>;
+    aside: (item: Timed, frame: Size) => Partial<Timed>;
     cut: (item: Timed, at: number) => { first: Partial<Timed>; second: Partial<Timed> };
   };
 } = {
   text: {
     list: "text_layers",
-    aside: (item) => {
+    aside: (item, frame) => {
       const { transform } = item as TextLayer;
-      return { transform: { ...transform, y: Math.min(transform.y + 80, 1920) } };
+      return { transform: { ...transform, y: Math.min(transform.y + 80, frame.height) } };
     },
     cut: () => ({ first: {}, second: {} }),
   },
   shape: {
     list: "shapes",
-    aside: (item) => {
+    aside: (item, frame) => {
       const { transform } = item as Shape;
-      return { transform: { ...transform, y: Math.min(transform.y + 80, 1920) } };
+      return { transform: { ...transform, y: Math.min(transform.y + 80, frame.height) } };
     },
     cut: () => ({ first: {}, second: {} }),
   },
@@ -100,9 +105,9 @@ const KINDS: {
   },
   overlay: {
     list: "overlays",
-    aside: (item) => {
+    aside: (item, frame) => {
       const { transform } = item as Overlay;
-      return { transform: { ...transform, y: Math.min(transform.y + 80, 1920) } };
+      return { transform: { ...transform, y: Math.min(transform.y + 80, frame.height) } };
     },
     // Each part shows its stretch of the video (keptOffset): in Reverse, the first the later part.
     cut: (item, at) => {
@@ -208,18 +213,21 @@ export const layersOf = ({ text_layers, shapes, music, overlays, adjustment_laye
 /**
  * The picked items removed and their gaps closed, whatever the Magnetic timeline's switch says (Ripple
  * delete, GLOSSARY.md): the Text Layers, Shapes, Music Clips and Overlays of a Track after a removed one of
- * it move up by its length (those over it stay), and then the layers follow the removed Segments.
+ * it move up by its length (those over it stay; the Overlay Track's and the Behind Track's each by their own), and then the layers follow the removed Segments.
  */
 export function rippleRemove(scene: PickContext): Outcome | null {
   const { layers } = pickedItems(scene);
   const edits = { ...scene.edits };
   for (const kind of Object.keys(KINDS) as TimedKind[]) {
-    const gone = layers.filter((layer) => layer.kind === kind).map(({ item }) => ({ start: item.start, end: item.start + item.secs }));
-    if (!gone.length) continue;
+    const removed = layers.filter((layer) => layer.kind === kind);
+    if (!removed.length) continue;
+    // The Track an item is on: Overlays over the Main Track and Behind it are on two.
+    const track = (item: Timed) => trackOf(kind, item as { behind?: boolean });
     const list = KINDS[kind].list;
     const closed = (listOf(edits, kind) as Timed[])
       .filter((item) => !isPicked(scene.pick, kind, item.id))
       .map((item) => {
+        const gone = removed.filter((layer) => track(layer.item as Timed) === track(item)).map(({ item: was }) => ({ start: was.start, end: was.start + was.secs }));
         const by = covered(gone.filter((span) => span.end <= item.start + 1e-6));
         return by ? { ...item, start: round(item.start - by) } : item;
       });
@@ -417,7 +425,7 @@ export function duplicate(scene: PickContext): Outcome | null {
     const end = Math.max(...moved.map(({ item }) => item.start + item.secs));
     const room = end + (end - first) <= length + 1e-6;
     for (const { kind, item } of moved) {
-      const copy = stillDetached({ ...item, id: idOf(scene), ...(room ? { start: round(item.start + end - first) } : KINDS[kind].aside(item)) } as Timed, next.segments);
+      const copy = stillDetached({ ...item, id: idOf(scene), ...(room ? { start: round(item.start + end - first) } : KINDS[kind].aside(item, scene.canvas ?? PORTRAIT)) } as Timed, next.segments);
       const list = KINDS[kind].list;
       Object.assign(next, { [list]: [...(listOf(next, kind) as Timed[]), copy] });
       copies.push({ kind, id: copy.id });
@@ -496,7 +504,7 @@ export function split(scene: PickContext, at: number): Outcome | null {
 // Every Segment, Text Layer, Shape, Music Clip and Overlay the playhead at `time` is inside, but on locked Tracks.
 function under(scene: PickContext, time: number): ItemRef[] {
   const locked = scene.locked ?? [];
-  return itemsOf(pickAll(scene.edits)).filter((ref) => !locked.includes(TRACK_OF[ref.kind]) && inside(scene, ref, time));
+  return itemsOf(pickAll(scene.edits)).filter((ref) => !locked.includes(trackOfRef(ref, scene.edits)) && inside(scene, ref, time));
 }
 
 /** Whether Split can cut at `time`: a picked item there, or with nothing picked, any item there (Split all). */
@@ -569,7 +577,7 @@ export function freezeFrame(scene: PickContext, at: number, limits: { longest?: 
   if (segment.media) {
     held.media = segment.media;
     held.volume = segment.volume;
-    if (segment.framing) held.framing = { ...segment.framing, transform: heldTransform(segment.framing.transform, segment.keys ?? {}, at - shown.start) };
+    if (segment.framing) held.framing = { ...segment.framing, transform: heldTransform(segment.framing.transform, segment.keys ?? {}, at - shown.start, scene.canvas ?? PORTRAIT) };
   }
   const next = {
     ...edits,
@@ -582,10 +590,10 @@ export function freezeFrame(scene: PickContext, at: number, limits: { longest?: 
   });
 }
 
-// A video's Transform as it is shown `at` seconds into its Segment, its Keyframes sampled into
-// constants; a turn past ±360° (a Keyframe's may be) as the same turn within it.
-function heldTransform(transform: Transform, keys: Keys, at: number): Transform {
-  const shown = shownTransform(transform, keys, at);
+// A video's Transform as it is shown `at` seconds into its Segment on the Canvas `frame`, its
+// Keyframes sampled into constants; a turn past ±360° (a Keyframe's may be) as the same turn within it.
+function heldTransform(transform: Transform, keys: Keys, at: number, frame: Size): Transform {
+  const shown = shownTransform(transform, keys, at, frame);
   return Math.abs(shown.rotation) > 360 ? { ...shown, rotation: shown.rotation % 360 } : shown;
 }
 
@@ -649,9 +657,6 @@ export function move(scene: PickContext, delta: number): Outcome | null {
   return { edits: next, pick: scene.pick };
 }
 
-// The output's size, in pixels: where the middles of Text Layers, Shapes and Overlays can be.
-const FRAME = { width: 1080, height: 1920 };
-
 // What is placed on the frame by its Transform: a Text Layer, a Shape or an Overlay.
 type Placed = TextLayer | Shape | Overlay;
 
@@ -672,8 +677,10 @@ export function nudge(scene: PickContext, dx: number, dy: number): Outcome | nul
   const placed = pickedItems(scene).layers.filter(({ kind }) => isPlaced(kind)) as { kind: PlacedKind; item: Placed }[];
   if (!placed.length) return null;
   const within = (by: number, values: number[], size: number) => Math.min(Math.max(by, -Math.min(...values)), size - Math.max(...values));
-  const byX = within(dx, placed.flatMap(({ item }) => [middleOf(item).x, ...keyedMiddles(item, "x")]), FRAME.width);
-  const byY = within(dy, placed.flatMap(({ item }) => [middleOf(item).y, ...keyedMiddles(item, "y")]), FRAME.height);
+  // The Canvas: where the middles of Text Layers, Shapes and Overlays can be.
+  const frame = scene.canvas ?? PORTRAIT;
+  const byX = within(dx, placed.flatMap(({ item }) => [middleOf(item).x, ...keyedMiddles(item, "x")]), frame.width);
+  const byY = within(dy, placed.flatMap(({ item }) => [middleOf(item).y, ...keyedMiddles(item, "y")]), frame.height);
   const shifted = (keys: Keyframe[], by: number) => keys.map((key) => ({ ...key, value: toMillionth(key.value + by) }));
   const next = { ...scene.edits };
   for (const { kind, item } of placed) {
@@ -1666,12 +1673,82 @@ export function removeAllVideoEffects(scene: { edits: AdvancedEdits; pick: Pick 
   return repictured(scene, (stack) => (stack.length ? [] : stack));
 }
 
-// The picked Overlays, which a Blend Mode is set on (ADR 0014).
-const blendedOverlays = ({ edits, pick }: { edits: AdvancedEdits; pick: Pick }) => edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id));
+/** The picked Segments of the Source, which have a Background of their own while cut out (ADR 0015). */
+export const cuttableSegments = ({ edits, pick }: { edits: AdvancedEdits; pick: Pick }): ClipSegment[] =>
+  edits.segments.filter((segment) => !segment.media && isPicked(pick, "segment", segment.id));
+
+/** The picked items Background removal cuts out (ADR 0015): Segments, of the Source or a video, and Overlays (videos and images). */
+export const cuttableItems = ({ edits, pick }: { edits: AdvancedEdits; pick: Pick }): (ClipSegment | Overlay)[] => [
+  ...edits.segments.filter((segment) => isPicked(pick, "segment", segment.id)),
+  ...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)),
+];
+
+/** `edits` with each of `changed` (its Segments and Overlays, by identity) made anew by `change`. */
+function cutChanged(
+  edits: AdvancedEdits,
+  changed: (ClipSegment | Overlay)[],
+  change: <T extends ClipSegment | Overlay>(item: T) => T,
+): AdvancedEdits {
+  const segments = edits.segments.map((segment) => (changed.includes(segment) ? change(segment) : segment));
+  const overlays = edits.overlays.map((overlay) => (changed.includes(overlay) ? change(overlay) : overlay));
+  return { ...edits, segments, overlays };
+}
+
+/**
+ * Every picked Segment's and Overlay's Background removal switched on (a person, feathered by
+ * FEATHER_DEFAULT) or off (the field left out), as one change; null when none is picked or none changes.
+ */
+export function setBackgroundRemoval(scene: { edits: AdvancedEdits; pick: Pick }, on: boolean): Outcome | null {
+  const changed = cuttableItems(scene).filter((item) => !!item.background_removal !== on);
+  if (!changed.length) return null;
+  const edits = cutChanged(scene.edits, changed, (item) => {
+    const { background_removal: _was, ...rest } = item;
+    return (on ? { ...rest, background_removal: { subject: "person" as const, feather: FEATHER_DEFAULT } } : rest) as typeof item;
+  });
+  return { edits, pick: scene.pick };
+}
+
+/** Every picked cut-out Segment's and Overlay's feather set (0 to FEATHER_MAX, whole pixels), as one change; null when none changes. */
+export function setFeather(scene: { edits: AdvancedEdits; pick: Pick }, feather: number): Outcome | null {
+  const value = Math.min(FEATHER_MAX, Math.max(0, Math.round(feather)));
+  const changed = cuttableItems(scene).filter((item) => item.background_removal && item.background_removal.feather !== value);
+  if (!changed.length) return null;
+  const edits = cutChanged(scene.edits, changed, (item) =>
+    item.background_removal ? { ...item, background_removal: { ...item.background_removal, feather: value } } : item,
+  );
+  return { edits, pick: scene.pick };
+}
+
+// A cut-out Segment's Background when it has none of its own: the picture blurred (ADR 0015).
+const SEGMENT_BLURRED: Background = { kind: "blur", colour: "#000000" };
+
+/** The picked cut-out Segments of the Source, whose own Background (ADR 0015) the Remove background section sets. */
+export const backedSegments = (scene: { edits: AdvancedEdits; pick: Pick }): ClipSegment[] => cuttableSegments(scene).filter((segment) => segment.background_removal);
+
+/** Whether two Backgrounds are the same (an image missing or null alike). */
+export const sameBackground = (one: Background, other: Background): boolean =>
+  one.kind === other.kind && one.colour === other.colour && (one.image ?? null) === (other.image ?? null);
+
+/** A Segment of the Source's Background in force while it is cut out: its own, else the picture blurred. */
+export const segmentBackground = (segment: ClipSegment): Background => segment.background ?? SEGMENT_BLURRED;
+
+/**
+ * Every picked cut-out Segment of the Source's own Background set to `background` (a blurred one kept
+ * with its colour, so that changing back restores it), as one change; null when none is picked or none changes.
+ */
+export function setSegmentBackground(scene: { edits: AdvancedEdits; pick: Pick }, background: Background): Outcome | null {
+  const changed = backedSegments(scene).filter((segment) => !sameBackground(segmentBackground(segment), background));
+  if (!changed.length) return null;
+  const segments = scene.edits.segments.map((segment) => (changed.includes(segment) ? { ...segment, background } : segment));
+  return { edits: { ...scene.edits, segments }, pick: scene.pick };
+}
+
+// The picked Overlays, which a Blend Mode (ADR 0014) and Behind (ADR 0015) are set on.
+const pickedOverlays = ({ edits, pick }: { edits: AdvancedEdits; pick: Pick }) => edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id));
 
 /** The picked Overlays' Blend Mode, when every one's is the same (Normal when missing); "mixed" when they differ; null when no Overlay is picked. */
 export function sharedBlend(scene: { edits: AdvancedEdits; pick: Pick }): BlendMode | "mixed" | null {
-  const [first, ...rest] = blendedOverlays(scene).map((overlay) => overlay.blend ?? "normal");
+  const [first, ...rest] = pickedOverlays(scene).map((overlay) => overlay.blend ?? "normal");
   if (!first) return null;
   return rest.every((blend) => blend === first) ? first : "mixed";
 }
@@ -1679,12 +1756,41 @@ export function sharedBlend(scene: { edits: AdvancedEdits; pick: Pick }): BlendM
 /** Every picked Overlay laid by `blend`, as one change (Normal leaves one without the field); null when no Overlay is picked or none changes. */
 export function setBlend(scene: { edits: AdvancedEdits; pick: Pick }, blend: BlendMode): Outcome | null {
   const { edits, pick } = scene;
-  const picked = blendedOverlays(scene);
+  const picked = pickedOverlays(scene);
   if (picked.every((overlay) => (overlay.blend ?? "normal") === blend)) return null;
   const overlays = edits.overlays.map((overlay) => {
     if (!picked.includes(overlay) || (overlay.blend ?? "normal") === blend) return overlay;
     const { blend: _was, ...rest } = overlay;
     return blend === "normal" ? rest : { ...rest, blend };
+  });
+  return { edits: { ...edits, overlays }, pick };
+}
+
+/** Whether the picked Overlays are Behind the Main Track: true or false when every one is, "mixed" when they differ; null when no Overlay is picked. */
+export function sharedBehind(scene: { edits: AdvancedEdits; pick: Pick }): boolean | "mixed" | null {
+  const [first, ...rest] = pickedOverlays(scene).map((overlay) => !!overlay.behind);
+  if (first === undefined) return null;
+  return rest.every((behind) => behind === first) ? first : "mixed";
+}
+
+/**
+ * The picked Overlays moved Behind the Main Track (`behind`), onto the Behind Track, or back over it
+ * onto the Overlay Track (ADR 0015), as one change: Over leaves each without the field, as one saved
+ * before. They keep their Timeline time and the Pick. Refused, with a notice, when any would move
+ * onto or off a `locked` Track; null when no Overlay is picked or all are there already.
+ */
+export function setBehind(scene: { edits: AdvancedEdits; pick: Pick; locked?: TrackKind[] }, behind: boolean): Outcome | null {
+  const { edits, pick } = scene;
+  const moving = pickedOverlays(scene).filter((overlay) => !!overlay.behind !== behind);
+  if (!moving.length) return null;
+  const onto: TrackKind = behind ? "behind" : "overlay";
+  const off: TrackKind = behind ? "overlay" : "behind";
+  const stuck = [onto, off].find((track) => scene.locked?.includes(track));
+  if (stuck) return { edits, pick, notice: `The ${stuck === "behind" ? "Behind" : "Overlay"} Track is locked.` };
+  const overlays = edits.overlays.map((overlay) => {
+    if (!moving.includes(overlay)) return overlay;
+    const { behind: _was, ...rest } = overlay;
+    return behind ? { ...rest, behind } : rest;
   });
   return { edits: { ...edits, overlays }, pick };
 }

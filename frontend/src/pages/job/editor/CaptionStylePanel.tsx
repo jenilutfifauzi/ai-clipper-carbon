@@ -8,6 +8,7 @@ import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { cx } from "../../../format";
+import { captionCentres, type Canvas, PORTRAIT, REFERENCE } from "./canvas";
 import { FacePicker } from "./FacePicker";
 import { LINE_LIMITS, lineLimitsOf } from "./lineLimits";
 import { ShadowFields } from "./ShadowFields";
@@ -66,7 +67,8 @@ const MORE = [
  * line breaks).
  * Each control shows the resolved value, with a reset button when it overrides the Preset.
  * Shared by the clip editor (two fields to a row on a wide screen) and the Advanced Edit's narrow
- * `inspector` (one to a row).
+ * `inspector` (one to a row). A custom place's sliders end where the planner holds it on `canvas`, its
+ * Candidate's (9:16's outside a Candidate).
  */
 export function CaptionStylePanel({
   style,
@@ -74,13 +76,16 @@ export function CaptionStylePanel({
   more,
   onMore,
   inspector = false,
+  canvas = PORTRAIT,
 }: {
   style: StyleControls;
   fonts: FontInfo[] | null;
   more: boolean;
   onMore: (open: boolean) => void;
   inspector?: boolean;
+  canvas?: Canvas;
 }) {
+  const centres = captionCentres(canvas);
   const caption = style.caption;
   const set = (field: string, value: StyleValue) => style.set("caption", field, value);
   const marker = (field: string, label: string) => <StyleMarker style={style} part="caption" field={field} label={label} />;
@@ -120,10 +125,19 @@ export function CaptionStylePanel({
         onChange={(v) => (v === "custom" ? set("position", v) : style.setMany("caption", { position: v, x: null }))}
         marker={marker("position", "position")}
       />
+      {/* In the Reference Space (canvas.ts), which every Canvas maps it from. */}
       {caption.position === "custom" && (
         <>
-          <Slider label="Height of the line's centre" value={caption.y} min={332} max={1436} format={(v) => `${v} px`} onChange={(v) => set("y", v)} marker={marker("y", "height")} />
-          <Slider label="Line's centre across" value={caption.x ?? 540} min={0} max={1080} format={(v) => `${v} px`} onChange={(v) => set("x", v)} marker={marker("x", "centre across")} />
+          <Slider
+            label="Height of the line's centre"
+            value={caption.y}
+            min={centres.min}
+            max={centres.max}
+            format={(v) => `${Math.round(v)} px`}
+            onChange={(v) => set("y", v)}
+            marker={marker("y", "height")}
+          />
+          <Slider label="Line's centre across" value={caption.x ?? REFERENCE.width / 2} min={0} max={REFERENCE.width} format={(v) => `${Math.round(v)} px`} onChange={(v) => set("x", v)} marker={marker("x", "centre across")} />
         </>
       )}
       <div className="flex flex-col gap-3">

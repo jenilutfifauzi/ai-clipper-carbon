@@ -10,6 +10,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import EASE_IN_OUT, LINEAR, Ease, Keyframe, MusicClip, Overlay, Transform
+from app.canvas import PORTRAIT
 from app.config import FONTS_DIR, RenderTuning
 from app.frames import PictureFrames
 from app.keyframes import eased, value_at
@@ -72,29 +73,29 @@ WIDE_ITEM = {WIDE: MediaInfo(1920, 1080, None, False)}
 def test_a_keyed_overlay_plans_its_motion_in_timeline_time_with_its_drawn_size_at_scale_1():
     zoom = {"scale": [Keyframe(0.0, 1.0), Keyframe(2.0, 2.0, EASE_IN_OUT)]}
     overlay = Overlay("o1", WIDE, 1.0, 3.0, transform=Transform(scale=0.5, stretch_x=2), keys=zoom)
-    [event] = overlay_events([overlay], 10, WIDE_ITEM)
+    [event] = overlay_events([overlay], 10, WIDE_ITEM, canvas=PORTRAIT)
     picture = event.picture
     assert picture.motion == {"scale": [Keyframe(1.0, 1.0), Keyframe(3.0, 2.0, EASE_IN_OUT)]}
     # 1920x1080 fits as 1080x607.5, stretched twice across.
     assert picture.unscaled == (2160.0, 607.5)
     # Its other fields are its constants', as an unkeyed picture's are.
     assert (picture.width, picture.height, picture.centre) == (1080, 304, (540, 960))
-    [still] = overlay_events([Overlay("o1", WIDE, 1.0, 3.0, transform=Transform(scale=0.5, stretch_x=2))], 10, WIDE_ITEM)
+    [still] = overlay_events([Overlay("o1", WIDE, 1.0, 3.0, transform=Transform(scale=0.5, stretch_x=2))], 10, WIDE_ITEM, canvas=PORTRAIT)
     assert (still.picture.motion, still.picture.unscaled) == ({}, None)
 
     # Sampled half way, at 2 s into the Clip: scale 1.5 about the same centre.
-    at = picture_at(picture, 2.0)
+    at = picture_at(picture, 2.0, frame=PORTRAIT.size)
     assert (at.width, at.height, at.motion) == (3240.0, 911.25, {})
     assert (at.bounds.x, at.bounds.y, at.bounds.width, at.bounds.height) == (-1080, 504, 3240, 911)
-    assert picture_at(picture, 0.0).width == 2160.0 and picture_at(picture, 9.0).width == 4320.0
-    assert picture_at(still.picture, 2.0) is still.picture
+    assert picture_at(picture, 0.0, frame=PORTRAIT.size).width == 2160.0 and picture_at(picture, 9.0, frame=PORTRAIT.size).width == 4320.0
+    assert picture_at(still.picture, 2.0, frame=PORTRAIT.size) is still.picture
 
 
 def test_a_sampled_picture_stays_within_its_ranges_when_an_ease_overshoots():
     overshoot = Ease(0.34, 1.56, 0.64, 1)
     keys = {"opacity": [Keyframe(0.0, 0.0), Keyframe(1.0, 1.0, overshoot)], "x": [Keyframe(0.0, 540.0), Keyframe(1.0, 1080.0, overshoot)]}
-    [event] = overlay_events([Overlay("o1", WIDE, 0.0, 2.0, keys=keys)], 10, WIDE_ITEM)
-    at = picture_at(event.picture, 0.5)
+    [event] = overlay_events([Overlay("o1", WIDE, 0.0, 2.0, keys=keys)], 10, WIDE_ITEM, canvas=PORTRAIT)
+    at = picture_at(event.picture, 0.5, frame=PORTRAIT.size)
     assert (at.opacity, at.centre[0]) == (1.0, 1080.0)
 
 
@@ -103,7 +104,7 @@ def test_a_keyed_picture_is_sampled_as_the_preview_samples_it():
     keyed = json.loads((FIXTURES / "keyed_picture.json").read_text())
     picture = TypeAdapter(Picture).validate_python(keyed["picture"])
     for at in keyed["at"]:
-        drawn = picture_at(picture, at["time"])
+        drawn = picture_at(picture, at["time"], frame=PORTRAIT.size)
         assert drawn.centre == pytest.approx(tuple(at["centre"]), abs=1e-6)
         assert (drawn.width, drawn.height, drawn.rotation, drawn.opacity) == pytest.approx(
             (at["width"], at["height"], at["rotation"], at["opacity"]), abs=1e-6
@@ -113,12 +114,12 @@ def test_a_keyed_picture_is_sampled_as_the_preview_samples_it():
 
 def test_a_keyed_zoomed_picture_is_planned_whole_not_trimmed_to_the_frame():
     zoomed = Transform(scale=3, x=200)
-    [still] = overlay_events([Overlay("o1", WIDE, 0.0, 2.0, transform=zoomed)], 10, WIDE_ITEM)
+    [still] = overlay_events([Overlay("o1", WIDE, 0.0, 2.0, transform=zoomed)], 10, WIDE_ITEM, canvas=PORTRAIT)
     keys = {"x": [Keyframe(0.0, 200.0), Keyframe(2.0, 900.0)]}
-    [moving] = overlay_events([Overlay("o1", WIDE, 0.0, 2.0, transform=zoomed, keys=keys)], 10, WIDE_ITEM)
+    [moving] = overlay_events([Overlay("o1", WIDE, 0.0, 2.0, transform=zoomed, keys=keys)], 10, WIDE_ITEM, canvas=PORTRAIT)
     # Unkeyed, only what is on the frame is drawn; keyed, the part on the frame changes as it moves.
-    assert on_frame(still.picture).crop != still.picture.crop
-    assert on_frame(moving.picture) == moving.picture
+    assert on_frame(still.picture, frame=PORTRAIT.size).crop != still.picture.crop
+    assert on_frame(moving.picture, frame=PORTRAIT.size) == moving.picture
 
 
 def unkeyed_command() -> list[str]:
@@ -131,7 +132,7 @@ def unkeyed_command() -> list[str]:
         Overlay("v", CLIP, 1.0, 1.5, transform=Transform(scale=0.3, flip_h=True)),
     ]
     music = [MusicClip("m", 0.0, 3.0, media=SONG, volume=0.5, fade_in=0.5)]
-    plan = plan_render(2.0, 6.0, source, hook="Coba", overlays=overlays, music=music, media_info=items)
+    plan = plan_render(2.0, 6.0, source, hook="Coba", overlays=overlays, music=music, media_info=items, canvas=PORTRAIT)
     files = {STILL: Path("/media/still.png"), CLIP: Path("/media/clip.mp4"), SONG: Path("/media/song.m4a")}
     renderer = Renderer(Path("/usr/bin/ffmpeg"), RenderTuning())
     out = Path("/out")
@@ -292,7 +293,7 @@ def keyed_render(settings, plain_video, stills, tmp_path, encoders: tuple[str, .
     image.write_bytes(stills["blue"])
     keys = {"x": [Keyframe(0.0, 200.0), Keyframe(2.0, 800.0)]}
     overlay = Overlay("o", STILL, 0.0, 2.0, transform=Transform(scale=0.25), keys=keys)
-    plan = plan_render(0.0, 2.0, SourceMetadata(10.0, 25.0, 640, 360, "h264"), overlays=[overlay], media_info={STILL: MediaInfo(200, 100, None, False)})
+    plan = plan_render(0.0, 2.0, SourceMetadata(10.0, 25.0, 640, 360, "h264"), overlays=[overlay], media_info={STILL: MediaInfo(200, 100, None, False)}, canvas=PORTRAIT)
     renderer = Renderer(settings.ffmpeg_bin, RenderTuning(encoders=encoders))
     return renderer.render(plain_video, plan, tmp_path / "clip.mp4", tmp_path / "clip.jpg", files={STILL: image}).encoder
 

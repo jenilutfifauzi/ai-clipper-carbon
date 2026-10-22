@@ -14,7 +14,7 @@ So the filter graph keeps one xfade (and one acrossfade) per join, whatever the 
 A recipe reads the Transition's knobs: `strength` (0..1, unset for the kind's own, `STRENGTHS`) and
 Dip to colour's `colour`. The looks of light and colour are drawn by native filters on the sides,
 not by a `custom` expression: even xfade's plainest one (`A*P+B*(1-P)`) took 1-3 s more than `fade`
-for a 0.5 s join at 1080x1920, and one clamped to white 8-11 s more.
+for a 0.5 s join measured on a 1080x1920 frame, and one clamped to white 8-11 s more.
 """
 
 from collections.abc import Callable
@@ -129,7 +129,7 @@ def _leaked(event: TransitionEvent, side: Side) -> str:
 def _overlapped(event: TransitionEvent, side: Side, filters: str) -> str:
     """`filters` on the overlap alone, for those that take planar RGB (`rgbashift`): the overlap is
     taken out (trimmed), filtered and brought back to the Clip's pixel format, and the side put back
-    together, so the rest of the side isn't converted (5 ms a frame at 1080x1920)."""
+    together, so the rest of the side isn't converted (5 ms a frame, measured at 1080x1920)."""
     name, filtered = side.name, f"{filters},format=yuv420p"
     # The outgoing side's overlap is its end, the incoming side's its start.
     if side.incoming:

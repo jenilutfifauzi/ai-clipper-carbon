@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from app.candidates import MusicClip
+from app.canvas import PORTRAIT
 from app.planner import MediaInfo, audio_events, plan_render
 from app.retimed import CopySize, Retime, copies_used
 from app.segment_time import SegmentTime
@@ -60,7 +61,7 @@ def test_a_music_clip_of_the_source_is_cut_where_the_source_ends_and_placed_at_i
     [cut] = audio_events([of_source(speed=2, reverse=True)], 2, {}, source=600)
     assert (cut.end, cut.offset, cut.time) == (2, 12, SegmentTime(12, 14, 2, True))
     # The planner cuts it at the Source's end too.
-    planned = plan_render(10, 14, SOURCE, music=[of_source(offset=599, secs=3)])
+    planned = plan_render(10, 14, SOURCE, music=[of_source(offset=599, secs=3)], canvas=PORTRAIT)
     assert [(event.start, event.end, event.source) for event in planned.audio] == [(1, 2, True)]
 
 

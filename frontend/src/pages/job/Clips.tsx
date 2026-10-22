@@ -1,6 +1,6 @@
 import { AlertCircle, Download, Hourglass, Loader2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { api, mediaUrl, type Candidate, type Clip, type ExportPresetList, type JobProgress, type RenderedClip, type StylePreset } from "../../api";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { api, mediaUrl, type Aspect, type Candidate, type Clip, type ExportPresetList, type JobProgress, type RenderedClip, type StylePreset } from "../../api";
 import { buttonClass } from "../../components/Button";
 import { CopyButton } from "../../components/CopyButton";
 import { Panel } from "../../components/Panel";
@@ -10,7 +10,8 @@ import { downloadName, formatBytes, timeLeft } from "../../format";
 import { useReveal } from "../../hooks/useReveal";
 import { candidateName } from "./CandidateList";
 import { postingCopy } from "./CandidateEditor";
-import { againPreset, batchSecs, settingsLine } from "./exportPresets";
+import { againPreset, batchParts, settingsLine } from "./exportPresets";
+import { aspectParts, aspectRatio, tallestAspect } from "./editor/canvas";
 import { RenderButton } from "./RenderButton";
 import { SaveAudioButton } from "./SaveAudio";
 import { same } from "./editor/merge";
@@ -18,6 +19,13 @@ import { overridden } from "./editor/useStyleDraft";
 
 // How many more Clips are drawn each time the end of the grid comes into reach.
 const BATCH = 6;
+
+// A box of `aspect`'s shape as wide as its column, capped to the height on a phone held sideways,
+// where a tall frame would outgrow the screen.
+function slotStyle(aspect: Aspect): CSSProperties {
+  const { width, height } = aspectParts(aspect);
+  return { aspectRatio: aspectRatio(aspect), maxWidth: `calc(85svh * ${width} / ${height})` };
+}
 
 /**
  * The rendered Clips, in their Candidates' order (by score): each with its player, the AI's
@@ -50,6 +58,11 @@ export function Clips({
     if (clips.length > 0) api.listPresets().then(setPresets, () => {});
   }, [clips.length > 0]);
   const { shown, more, sentinelRef } = useReveal(clips.length, BATCH);
+  // Each Clip's shape: its render's, or (not rendered yet) its Candidate's. Every card's player
+  // sits in a slot of the tallest one's, so that cards of mixed shapes line up.
+  const shapeOf = (clip: Clip): Aspect =>
+    clip.output?.aspect ?? candidates.find((candidate) => candidate.id === clip.candidate_id)?.aspect ?? "9:16";
+  const slot = tallestAspect(clips.map(shapeOf));
   if (clips.length === 0) return null;
   const done = clips.filter((clip) => clip.output).length;
   const waiting = clips.filter((clip) => clip.status === "queued" || clip.status === "rendering").length;
@@ -72,6 +85,8 @@ export function Clips({
               jobId={jobId}
               clip={clip}
               candidate={candidates[index] ?? null}
+              shape={shapeOf(clip)}
+              slot={slot}
               presets={presets}
               exportPresets={exportPresets}
               sourceFps={sourceFps}
@@ -84,7 +99,9 @@ export function Clips({
         })}
         {more && (
           <li ref={sentinelRef} aria-hidden className="flex min-w-0 flex-col gap-3">
-            <Skeleton className="mx-auto aspect-[9/16] w-full max-w-[calc(85svh*9/16)] rounded-[20px]" />
+            <span className="mx-auto block w-full" style={slotStyle(slot)}>
+              <Skeleton className="size-full rounded-[20px]" />
+            </span>
             <Skeleton className="h-4 w-3/4 rounded-full" />
             <Skeleton className="h-3.5 w-1/2 rounded-full" />
           </li>
@@ -133,6 +150,8 @@ function ClipCard({
   jobId,
   clip,
   candidate,
+  shape,
+  slot,
   presets,
   exportPresets,
   sourceFps,
@@ -145,6 +164,9 @@ function ClipCard({
   clip: Clip;
   // Null once Selection has replaced it.
   candidate: Candidate | null;
+  // The Clip's shape, and the shape of the slot its player is centred in (every card's).
+  shape: Aspect;
+  slot: Aspect;
   presets: StylePreset[] | null;
   exportPresets: ExportPresetList | null;
   sourceFps: number;
@@ -160,8 +182,7 @@ function ClipCard({
 
   return (
     <li className="flex min-w-0 flex-col gap-3">
-      {/* On a phone held sideways the 9:16 frame would outgrow the screen: cap it to the height. */}
-      <div className="mx-auto w-full max-w-[calc(85svh*9/16)]">
+      <div className="mx-auto grid w-full place-items-center" style={slotStyle(slot)}>
         {output ? (
           <video
             controls
@@ -170,10 +191,14 @@ function ClipCard({
             poster={mediaUrl(jobId, output.poster, output.at)}
             src={mediaUrl(jobId, output.video, output.at)}
             aria-label={`Clip: ${name}`}
-            className="aspect-[9/16] w-full rounded-[20px] bg-black object-contain shadow-raised outline-1 -outline-offset-1 outline-white/10"
+            className="w-full rounded-[20px] bg-black object-contain shadow-raised outline-1 -outline-offset-1 outline-white/10"
+            style={{ aspectRatio: aspectRatio(shape) }}
           />
         ) : (
-          <div className="grid aspect-[9/16] w-full place-items-center rounded-[20px] border border-dashed border-border bg-fill p-4 text-center text-sm text-muted">
+          <div
+            className="grid w-full place-items-center rounded-[20px] border border-dashed border-border bg-fill p-4 text-center text-sm text-muted"
+            style={{ aspectRatio: aspectRatio(shape) }}
+          >
             {clip.status === "error" ? "Not rendered" : "Not rendered yet"}
           </div>
         )}
@@ -241,7 +266,7 @@ function ClipCard({
             presets={exportPresets}
             picked={exportPresets && againPreset(exportPresets, clip)}
             onRender={onRender}
-            batch={{ secs: batchSecs([candidate]), fps: sourceFps }}
+            batch={{ parts: batchParts([candidate]), fps: sourceFps }}
             onManage={onManageExport}
           />
         )}

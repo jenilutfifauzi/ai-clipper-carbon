@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from app.audio_effects import NUMBER
+from app.canvas import PORTRAIT
 from app.video_effects import VideoEffect, effects, video_effect_chain
 from test_media_library import make, upload
 from test_overlay_grades import HELD
@@ -148,7 +149,7 @@ def test_each_effect_runs_on_a_small_odd_sized_picture_and_within_a_span():
     """An Overlay drawn small, at odd sizes, and an Adjustment Layer's span (`enable`)."""
     for effect in effects():
         params = {setting.key: setting.max if setting.type == NUMBER else setting.default for setting in effect.settings}
-        chain = video_effect_chain([VideoEffect(effect.id, params)], (37, 91), enable="between(t\\,0.2\\,0.6)")
+        chain = video_effect_chain([VideoEffect(effect.id, params)], (37, 91), enable="between(t\\,0.2\\,0.6)", frame=PORTRAIT.size)
         assert played(["scale=37:91", *chain, "scale=1080:1920"]) == ((1080, 1920), 30), effect.id
 
 

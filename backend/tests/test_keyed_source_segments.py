@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from app.candidates import EASE_IN, Keyframe, KeyProperty
+from app.canvas import PORTRAIT
 from app.keyframes import value_at
 from app.planner import SegmentInput, plan_render
 from test_keyed_volume import songs, tone_level  # noqa: F401
@@ -26,7 +27,7 @@ DIP = [Keyframe(1.0, 1.0), Keyframe(2.0, 0.25, EASE_IN)]
 
 
 def test_a_source_segments_volume_keyframes_are_its_gain_track_in_its_own_seconds():
-    planned = plan_render(10, 14, SOURCE, main_track=[SegmentInput(10, 12, id="a"), SegmentInput(12, 14, keys={KeyProperty.VOLUME: DIP}, id="b")])
+    planned = plan_render(10, 14, SOURCE, main_track=[SegmentInput(10, 12, id="a"), SegmentInput(12, 14, keys={KeyProperty.VOLUME: DIP}, id="b")], canvas=PORTRAIT)
     [plain, keyed] = planned.segments
     assert (plain.gain, keyed.gain, keyed.start) == ([], DIP, 2.0)
     # A sound's Keyframes don't move its picture: the Source's is framed by its Layouts.

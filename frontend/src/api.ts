@@ -21,6 +21,8 @@ export interface JobOptions {
   // The Template its new Candidates get (GLOSSARY.md): "default" asks for the default Template when
   // the Job is created, which stores its id, or null for none.
   template: string | null;
+  // The Canvas Aspect of its Candidates (docs/adr/0022).
+  aspect: Aspect;
 }
 
 // A Job's Template when none is chosen: the default Template, whichever it is then.
@@ -192,6 +194,9 @@ export interface Transcript {
 
 // Auto chooses per Scene by its faces (never Manual); Manual frames the Source by hand with a Framing.
 export type Layout = "auto" | "track" | "split" | "blur" | "manual";
+
+// A Candidate's Canvas Aspect, width to height (docs/adr/0022): its Canvas is 1080 on the short side.
+export type Aspect = "9:16" | "4:5" | "1:1" | "16:9";
 
 // The Layout of the one Scene that holds `at` (seconds on the Source's timeline), in place of the
 // Candidate's there. Auto chooses that Scene's by its faces. A Manual one has its Framing, and no
@@ -391,6 +396,8 @@ export interface MediaItem {
   created: string;
   // A video's Media Words are transcribed in this language in every Job; null: each Job's.
   language?: string | null;
+  // A video's frame rate, as it is kept (none: recorded before it was, 30).
+  fps?: number | null;
 }
 
 // A built-in speaker of a speech engine (GLOSSARY.md, Voice; backend/app/voices.py).
@@ -422,6 +429,27 @@ export interface KokoroInfo {
   done: number;
   total: number;
   message: string | null;
+}
+
+// The person model on this Mac (backend/app/person_model.py), which makes Background removal's Matte:
+// as KokoroInfo, with its `name` and `licence` for the Inspector ("Person model (15 MB, GPL-3.0)").
+export interface PersonModelInfo extends KokoroInfo {
+  name: string;
+  licence: string;
+}
+
+// How a Matte is coming along (backend/app/matte.py): made, being made, waiting for the person model,
+// failed (its `error`, until a Retry) or not asked for; `progress` 0 to 1 over its pieces.
+export interface MattePart {
+  state: "ready" | "making" | "waiting" | "failed" | "missing";
+  progress: number;
+  error: string | null;
+}
+
+// The Matte of a saved Candidate's cut-out Segments and Overlays together, and each one's by its id.
+export interface CandidateMatte extends MattePart {
+  segments: Record<string, MattePart>;
+  overlays?: Record<string, MattePart>;
 }
 
 export interface VoicesList {
@@ -514,7 +542,7 @@ export interface StyleOverrides {
   watermark: Partial<Record<keyof WatermarkStyle, StyleValue>>;
 }
 
-// The Render Plan (backend/app/planner.py), in output pixels (1080x1920) and seconds into the Clip.
+// The Render Plan (backend/app/planner.py), in the Canvas's pixels (its width and height) and seconds into the Clip.
 export interface Box {
   x: number;
   y: number;
@@ -549,6 +577,8 @@ export interface ScenePlan {
   // A media Segment's or a Manual Scene's: its one picture, over its panels, or over `colour` without any.
   picture: Picture | null;
   colour: string | null;
+  // Or over this Media Library image (its id: a Framing's image Background, ADR 0015), covering the frame.
+  image?: string | null;
   // The Framing that draws its first frame (a Manual Scene's own): what a switch to Manual copies.
   framing: Framing | null;
   // A Manual Scene of a Layout Override's: where (Timeline time) its Keyframes count from, before the
@@ -858,8 +888,8 @@ export interface Ducking {
   bridge_secs: number;
 }
 
-// Where and how a picture sits on the 1080x1920 frame (backend/app/candidates.py, ADR 0007): its
-// centre (x, y) in output pixels, on the frame; `scale` times its fitted size (the largest that fits
+// Where and how a picture sits on the Canvas (backend/app/candidates.py, ADR 0007, 0022): its
+// centre (x, y) in the Canvas's pixels, on the frame; `scale` times its fitted size (the largest that fits
 // the frame keeping its aspect: 1 fits, 0.05 to 8); `stretch_x` and `stretch_y` on top of that (0.1
 // to 10); `rotation` in degrees clockwise (-360 to 360); its flips and its opacity.
 export interface Transform {
@@ -884,10 +914,13 @@ export interface Crop {
 }
 
 // What shows where a Framing's picture doesn't cover the frame (backend/app/candidates.py): the
-// picture itself blurred, or `colour` (#RRGGBB).
+// picture itself blurred, `colour` (#RRGGBB), or a Media Library image (`image`, its id) covering the
+// frame (ADR 0015). The colour is kept when the kind changes; the image is dropped with its kind
+// (a Background's image counts as used, so it can't be deleted).
 export interface Background {
-  kind: "blur" | "colour";
+  kind: "blur" | "colour" | "image";
   colour: string;
+  image?: string | null;
 }
 
 // How a picture fills the frame on its own (ADR 0007): a media Segment's video cut by its Crop and
@@ -965,6 +998,12 @@ export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   blend?: BlendMode;
   // The Template that put it there (a Template item), as a Text Layer's.
   template?: string | null;
+  // Behind the Main Track (ADR 0015): on the Behind Track, over each Segment's Background and under its
+  // picture. Over the Main Track when missing.
+  behind?: boolean;
+  // Its Background removal (ADR 0015): only its subject kept by its item's Matte, what is under it
+  // showing elsewhere (times a Chroma or Luma key's alpha). Off when missing.
+  background_removal?: BackgroundRemoval | null;
 }
 
 // How an Overlay is laid over what is under it (GLOSSARY.md, Blend Mode; ADR 0014): covering it by its
@@ -983,8 +1022,8 @@ export interface AdjustmentLayer {
   strength: number;
   fade_in: number;
   fade_out: number;
-  // Its Video Effects (ADR 0014), in order, after its Grade and mixed with it; sizes the 1080x1920
-  // frame's. Empty when missing.
+  // Its Video Effects (ADR 0014), in order, after its Grade and mixed with it; sizes in the
+  // Canvas's pixels. Empty when missing.
   video_effects?: VideoEffect[];
   // The Template that put it there (a Template item), as a Text Layer's.
   template?: string | null;
@@ -1000,7 +1039,7 @@ export interface AdjustmentEvent {
   strength: number;
   fade_in: number;
   fade_out: number;
-  // Its enabled Video Effects (ADR 0014), in order, after its Grade; sizes the 1080x1920 frame's.
+  // Its enabled Video Effects (ADR 0014), in order, after its Grade; sizes in the Canvas's pixels.
   video_effects?: VideoEffect[];
 }
 
@@ -1054,6 +1093,8 @@ export interface OverlayEvent extends Omit<Retiming, "hold">, OverlayAnimation {
   video_effects?: VideoEffect[];
   // Its Overlay's Blend Mode (ADR 0014). Normal when missing.
   blend?: BlendMode;
+  // Its Overlay's Background removal (ADR 0015), the feather as drawn (times its scale).
+  background_removal?: BackgroundRemoval | null;
 }
 
 // How one Segment gives way to the next: its stored id, with a recipe in backend/app/transitions.py and a look in pages/job/editor/transitions.ts.
@@ -1162,8 +1203,27 @@ export interface SegmentPlan extends Retiming {
   grade?: Grade;
   // Its sound's enabled Audio Effects (ADR 0017), in order.
   audio_effects?: AudioEffect[];
-  // Its frame's enabled Video Effects (ADR 0014), in order, after its Grade; sizes the 1080x1920 frame's.
+  // Its frame's enabled Video Effects (ADR 0014), in order, after its Grade; sizes in the Canvas's pixels.
   video_effects?: VideoEffect[];
+  // A cut-out Segment's (ADR 0015): its Background removal, the feather as drawn (times its picture's
+  // scale); a Source Segment's Background in force (its own, else the picture blurred; a video's is
+  // its Scene's) and what it reads of the Source's Matte (its pieces; the rest is the render's).
+  background_removal?: BackgroundRemoval | null;
+  background?: Background | null;
+  matte?: MatteRead | null;
+}
+
+/**
+ * What a picture with Background removal reads of its item's Matte (ADR 0015): its pieces, by their
+ * starts in seconds (10 s each). The files, where its first frame is in them and a reversed copy are
+ * filled in by the render only, so a Preview Plan has none (the preview reads `mattes` instead).
+ */
+export interface MatteRead {
+  pieces: number[];
+  files: string[];
+  at: number;
+  copy: string | null;
+  copy_at: number;
 }
 
 export interface RenderPlan {
@@ -1172,13 +1232,17 @@ export interface RenderPlan {
   source_width: number;
   source_height: number;
   fps: number;
+  // The Source's own frame rate (0 when it isn't known), which its Matte's pieces have (ADR 0015).
+  source_fps?: number;
   scenes: ScenePlan[];
   captions: Cue[];
   hook: HookEvent | null;
   caption_style: CaptionStyle;
   hook_style: HookStyle;
+  // The Canvas (docs/adr/0022): the frame's size, and its Safe Area, in its pixels.
   width: number;
   height: number;
+  safe_area: Box;
   watermark: WatermarkEvent | null;
   watermark_style: WatermarkStyle;
   // The Text Layers that show, in drawing order.
@@ -1190,6 +1254,9 @@ export interface RenderPlan {
   segments: SegmentPlan[];
   // Laid over the Segments, in drawing order.
   overlays: OverlayEvent[];
+  // Behind the Main Track (ADR 0015), in drawing order: over each Segment's Background, under its
+  // picture. Missing from a plan made before them.
+  behind?: OverlayEvent[];
   // Between Segments, in order.
   transitions: TransitionEvent[];
   // The Shapes that show, in drawing order, under the Text Layers.
@@ -1244,6 +1311,35 @@ export interface PreviewPlan {
   words_errors: Record<string, string>;
   // False while the Clip is planned as one Scene, unanalysed.
   analysed: boolean;
+  // The Matte pieces its cut-out Segments and Overlays read (ADR 0015), in order: the preview draws
+  // the cut from them, and the picture whole where a piece isn't served yet. None in a plan made by hand.
+  mattes?: MattePiece[];
+  // The reversed copies of the Matte its reversed cut-out Segments read (ADR 0015, 0009).
+  matte_copies?: MatteCopy[];
+}
+
+// A reversed copy of an item's Matte (backend/app/matte.py's `Reversed`; the Source's, or the
+// Media Library video `media`'s): what a reversed cut-out picture playing its range from `start` to
+// `end` reads, where it is served once it is made, and seconds into it where it shows the range
+// (`at`, as a Retimed copy's).
+export interface MatteCopy {
+  start: number;
+  end: number;
+  url: string;
+  at: number;
+  media?: string | null;
+}
+
+// A piece of an item's Matte (backend/app/matte.py; the Source's, or the Media Library item
+// `media`'s), by its `start` in seconds (an image's one, 0, a PNG), and where it is served once it
+// is made; with what its frames are found by (ADR 0001): the frame rate of its item's Matte (the
+// Source's, or the video's own) and how long its item's pieces are.
+export interface MattePiece {
+  start: number;
+  url: string;
+  media?: string | null;
+  fps: number;
+  piece_secs: number;
 }
 
 export interface NewPreset {
@@ -1315,12 +1411,27 @@ export interface ClipSegment extends Retiming {
   // Empty when missing.
   audio_effects?: AudioEffect[];
   // Its whole frame's Video Effects (ADR 0014), in order, after its Grade and before the joins; sizes
-  // the 1080x1920 frame's. Empty when missing.
+  // in the Canvas's pixels. Empty when missing.
   video_effects?: VideoEffect[];
   // The Template that put it there (a Template item: a Segment of its intro or outro), as a Text
   // Layer's; never one of the Source.
   template?: string | null;
+  // Its Background removal (ADR 0015): only its subject kept by its Matte, over its Background. Off when missing.
+  background_removal?: BackgroundRemoval | null;
+  // A Segment of the Source's own Background (ADR 0015), shown while it is cut out (in Blur in place of
+  // its fill). The picture blurred when missing; a video's Segment has its Framing's.
+  background?: Background | null;
 }
+
+// Background removal (GLOSSARY; ADR 0015): the subject kept (a person, for now), its edge softened by
+// `feather` output pixels at the picture's fitted size, 0 to FEATHER_MAX.
+export interface BackgroundRemoval {
+  subject: "person";
+  feather: number;
+}
+
+export const FEATHER_MAX = 40;
+export const FEATHER_DEFAULT = 4;
 
 // An Audio Effect applied to an item's sound (GLOSSARY: Audio Effect; ADR 0017): a catalogue
 // effect's `id`, its settings by key (the server fills in each one left out with its default), and
@@ -1477,6 +1588,8 @@ export interface Candidate {
   window_score: number | null;
   origin: "ai" | "manual";
   layout: Layout;
+  // Its Canvas Aspect: everything it owns is placed in its Canvas's pixels (the Preview Plan's width and height).
+  aspect: Aspect;
   // How its Manual Layout frames every Scene without an override; null for another Layout.
   framing: Framing | null;
   // Chosen for rendering.
@@ -1535,6 +1648,8 @@ export interface CandidateChange {
   end?: number;
   hook_text?: string;
   layout?: Layout;
+  // Positions are kept where they are, in pixels.
+  aspect?: Aspect;
   // The Manual Layout's, needed with it and refused with another; null leaves it (dropped with Manual).
   framing?: Framing | null;
   selected?: boolean;
@@ -1687,6 +1802,8 @@ export interface RenderedClip {
   export: ExportSettings | null;
   // CBR was asked for and the encoder did VBR.
   bitrate_fallback: boolean;
+  // Its Candidate's Canvas Aspect as rendered: the Clip's shape ("9:16" in a Clip rendered before aspects).
+  aspect: Aspect;
 }
 
 export type ClipStatus = "queued" | "rendering" | "done" | "error";
@@ -1840,9 +1957,9 @@ export const api = {
   useExportPresetAsDefault: (id: string) =>
     request<ExportPreset>("/export-presets/default", { method: "PUT", body: JSON.stringify({ preset_id: id }) }),
   // The bytes Clips `secs` long in all come to as `settings` say, at the Source's frame rate `fps`
-  // when they keep it: the formula is the backend's alone.
-  estimateExport: (settings: ExportSettings, secs: number, fps: number) =>
-    request<{ bytes: number }>("/export-presets/estimate", { method: "POST", body: JSON.stringify({ settings, secs, fps }) }).then(
+  // when they keep it, of the Canvas Aspect `aspect`: the formula is the backend's alone.
+  estimateExport: (settings: ExportSettings, secs: number, fps: number, aspect: Aspect = "9:16") =>
+    request<{ bytes: number }>("/export-presets/estimate", { method: "POST", body: JSON.stringify({ settings, secs, fps, aspect }) }).then(
       (answer) => answer.bytes,
     ),
   // The Candidate's sound alone, at the Export Preset's loudness (the default's when left out).
@@ -1869,7 +1986,7 @@ export const api = {
   // draft, at an Export Preset's size (the default's), saved as a PNG in the Job (an Export file).
   saveFrame: (jobId: string, id: string, frame: { at: number; draft?: CandidateChange; export_preset_id?: string }) =>
     request<SavedExport>(`/jobs/${jobId}/candidates/${id}/frame`, { method: "POST", body: JSON.stringify(frame) }),
-  // Compare render: the frame at `at` (Timeline time) as the render draws it at 1080x1920, of the
+  // Compare render: the frame at `at` (Timeline time) as the render draws it at its Canvas's size, of the
   // Candidate or of an unsaved draft, as a PNG; never kept in the Job.
   compareFrame: (jobId: string, id: string, frame: { at: number; draft?: CandidateChange }, signal?: AbortSignal) =>
     send(`/jobs/${jobId}/candidates/${id}/compare-frame`, { method: "POST", body: JSON.stringify(frame), signal }).then((response) =>
@@ -1988,6 +2105,18 @@ export const api = {
   cancelKokoroDownload: () => request<void>("/voices/kokoro/download", { method: "DELETE" }),
   // Removes Kokoro's model from this Mac. Rejects with a 409 while a Narration or sample is being made.
   removeKokoro: () => request<void>("/voices/kokoro", { method: "DELETE" }),
+  // The person model's state, polled while it downloads.
+  personModel: () => request<PersonModelInfo>("/models/person"),
+  // Starts downloading the person model in the background (nothing when it is here or downloading).
+  downloadPersonModel: () => request<PersonModelInfo>("/models/person/download", { method: "POST" }),
+  // Cancels the download, what it fetched kept for the next.
+  cancelPersonModelDownload: () => request<void>("/models/person/download", { method: "DELETE" }),
+  // Removes the person model from this Mac. Rejects with a 409 while it is being downloaded.
+  removePersonModel: () => request<void>("/models/person", { method: "DELETE" }),
+  // How the saved Candidate's Matte is coming along, its missing pieces asked for; with `retry`, its
+  // failed pieces made again. Polled by the Remove background section.
+  candidateMatte: (jobId: string, candidateId: string, retry = false) =>
+    request<CandidateMatte>(`/jobs/${jobId}/candidates/${candidateId}/matte`, { method: "POST", body: JSON.stringify({ retry }) }),
   // A Narration started: its id, whose events tell its outcome (narrationEventsUrl). Rejects with a 409
   // while another is being made, a 422 for a script, engine or Voice that can't be narrated.
   startNarration: (body: NarrationRequest) =>

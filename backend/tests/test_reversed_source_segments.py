@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from app.candidates import EASE_IN, EASE_OUT, Keyframe, KeyProperty, Layout, LayoutOverride, Segment, WordEdit
+from app.canvas import PORTRAIT
 from app.config import CameraTuning, load_settings
 from app.keyframes import value_at
 from app.planner import Scene, SceneLayout, SegmentInput, plan_render
@@ -41,7 +42,7 @@ def test_a_reversed_source_segment_has_no_captions_and_those_either_side_are_unc
             SegmentInput(30, 32, words=[Word("empat", 0.2, 0.6)]),
         ]
 
-    forwards, backwards = (plan_render(10, 32, SOURCE, main_track=track(reverse)) for reverse in (False, True))
+    forwards, backwards = (plan_render(10, 32, SOURCE, main_track=track(reverse), canvas=PORTRAIT) for reverse in (False, True))
     middle = backwards.segments[1]
     assert (middle.start, middle.end, middle.reverse) == (2, 6, True)
     assert not [event for event in backwards.captions if event.end > middle.start and event.start < middle.end]
@@ -62,7 +63,7 @@ def test_a_word_edit_in_a_reversed_segment_is_kept_and_applied_where_its_time_pl
 @pytest.mark.parametrize("speed", [1, 2])
 def test_a_scene_cut_2_s_into_a_10_s_range_sits_at_8_s_into_it_reversed_divided_by_its_speed(speed):
     reversed_segment = SegmentInput(10, 20, [Scene(0, 2), Scene(2, 10)], speed=speed, reverse=True)
-    planned = plan_render(10, 20, SOURCE, layout=Layout.TRACK, main_track=[SegmentInput(30, 31), reversed_segment])
+    planned = plan_render(10, 20, SOURCE, layout=Layout.TRACK, main_track=[SegmentInput(30, 31), reversed_segment], canvas=PORTRAIT)
     assert [(scene.start, scene.end) for scene in planned.scenes] == [(0, 1), (1, 1 + 8 / speed), (1 + 8 / speed, 1 + 10 / speed)]
 
 
@@ -77,7 +78,7 @@ def test_the_camera_path_of_a_reversed_segment_is_the_forward_one_run_backwards(
 
     def planned(reverse: bool, at: float):
         segment = SegmentInput(10, 14, shots, GLIDE, speed=at, reverse=reverse)
-        return plan_render(10, 14, SOURCE, layout=Layout.TRACK, main_track=[segment]).scenes
+        return plan_render(10, 14, SOURCE, layout=Layout.TRACK, main_track=[segment], canvas=PORTRAIT).scenes
 
     forwards, backwards = planned(False, 1), planned(True, speed)
     assert [(scene.start, scene.end) for scene in backwards] == [(0, 2.5 / speed), (2.5 / speed, 4 / speed)]
@@ -93,7 +94,7 @@ def test_the_camera_path_of_a_reversed_segment_is_the_forward_one_run_backwards(
 
 def test_a_layout_override_in_a_reversed_segment_applies_to_the_mirrored_scene_holding_its_source_time():
     backwards = SegmentInput(10, 20, [Scene(0, 2), Scene(2, 10)], reverse=True, layout_overrides=[LayoutOverride(1.0, Layout.BLUR)])
-    planned = plan_render(10, 20, SOURCE, layout=Layout.TRACK, main_track=[SegmentInput(30, 31), backwards])
+    planned = plan_render(10, 20, SOURCE, layout=Layout.TRACK, main_track=[SegmentInput(30, 31), backwards], canvas=PORTRAIT)
     assert [(scene.start, scene.end, scene.layout) for scene in planned.scenes] == [
         (0, 1, SceneLayout.TRACK), (1, 9, SceneLayout.TRACK), (9, 11, SceneLayout.BLUR),
     ]
@@ -104,14 +105,14 @@ def test_a_manual_scenes_motion_in_a_reversed_segment_runs_backwards_on_the_same
     # easing in, then back to 500 by 6 s, easing out.
     pan = {KeyProperty.X: [Keyframe(0, 300), Keyframe(4, 800, EASE_IN), Keyframe(6, 500, EASE_OUT)]}
     backwards = SegmentInput(10, 20, [Scene(0, 2), Scene(2, 10)], reverse=True, layout_overrides=[by_hand(3, pan)])
-    manual_scene, _ = plan_render(10, 20, SOURCE, main_track=[backwards]).scenes
+    manual_scene, _ = plan_render(10, 20, SOURCE, main_track=[backwards], canvas=PORTRAIT).scenes
     assert (manual_scene.start, manual_scene.end, manual_scene.keys_from) == (0, 8, None)
     # 12 s + k on the Source shows at 8 − k into the Clip.
     keys = manual_scene.picture.motion["x"]
     assert [(key.at, key.value) for key in keys] == [(2, 500), (4, 800), (8, 300)]
     # An ease out run backwards is an ease in, and the other way round.
     assert (keys[1].ease, keys[2].ease) == (EASE_IN, EASE_OUT)
-    forwards = plan_render(10, 20, SOURCE, main_track=[SegmentInput(10, 20, [Scene(0, 2), Scene(2, 10)], layout_overrides=[by_hand(3, pan)])])
+    forwards = plan_render(10, 20, SOURCE, main_track=[SegmentInput(10, 20, [Scene(0, 2), Scene(2, 10)], layout_overrides=[by_hand(3, pan)])], canvas=PORTRAIT)
     forward_keys = forwards.scenes[1].picture.motion["x"]
     for k in (0.5, 3.0, 4.7, 5.5):
         assert value_at(keys, 8 - k, 0) == pytest.approx(value_at(forward_keys, 2 + k, 0), abs=1e-6), k

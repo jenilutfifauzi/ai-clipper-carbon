@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from app.candidates import Adjust, Grade, Overlay
+from app.canvas import PORTRAIT
 from app.planner import MediaInfo, overlay_events
 from test_media_library import make, upload
 from test_mcp import HALO_KABAR, anyio_backend, call, manual, mcp  # noqa: F401
@@ -34,7 +35,7 @@ def test_overlay_events_carry_their_grade_as_given():
     events = overlay_events([
         Overlay("v", VIDEO, 0.0, 1.0, grade=warm),
         Overlay("i", IMAGE, 0.0, 1.0),
-    ], 10, items)
+    ], 10, items, canvas=PORTRAIT)
     assert [event.grade for event in events] == [warm, Grade()]
 
 

@@ -11,6 +11,7 @@ from app.config import Settings, load_settings
 from app.jobs import JobStore
 from app.kokoro import KokoroSpeech
 from app.logos import LOGOS_DIR, LogoStore
+from app.matte import MatteRunner
 from app.mcp_server import build_mcp
 from app.media import MEDIA_DIR, MediaStore
 from app.media_words import MediaWordsStore
@@ -40,7 +41,9 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     ports = ports or real_ports(settings)
     # One for the app, so that what the render queue has queued shows in the editor.
     media_words = MediaWordsStore(settings.data_dir / MEDIA_DIR, settings.whisper_model)
-    renders = Renders(store, settings, ports.transcriber, media_words)
+    # One for the app: a Matte piece is made one at a time, for the editor or a render.
+    mattes = MatteRunner(ports.person_model, ports.matter, settings.ffmpeg_bin)
+    renders = Renders(store, settings, ports.transcriber, media_words, mattes)
     templates = TemplateStore(settings.data_dir / TEMPLATES_FILE)
     worker = Worker(store, Pipeline(store, ports, settings, templates, media.lengths), renders)
 
@@ -67,6 +70,9 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     # One for the app: a Narration is made one at a time, whichever tab or agent asks. Kokoro, on this
     # Mac, after the cloud engines; its model downloaded one at a time, apart from the runner.
     app.state.kokoro = ports.kokoro
+    # The person model, for Background removal's Matte: downloaded from the Inspector or by the agent.
+    app.state.person_model = ports.person_model
+    app.state.mattes = mattes
     engines = [*ports.voices, *([KokoroSpeech(ports.kokoro)] if ports.kokoro else [])]
     app.state.narrations = NarrationRunner(
         media, engines, settings.ffmpeg_bin, settings.data_dir / NARRATIONS_DIR, samples_dir=settings.data_dir / VOICE_SAMPLES_DIR

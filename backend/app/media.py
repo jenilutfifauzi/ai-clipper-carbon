@@ -5,9 +5,9 @@ An upload is written to disk as it comes, then read by ffprobe to tell what it i
 says: a video (a moving picture, with or without sound), audio (sound only; a song's cover picture
 doesn't make it a video), or an image (one picture). Each is then normalized by ffmpeg into one known
 format that the browser plays and the Renderer reads alike:
-- a video into H.264 and AAC at 30 fps, no larger than MAX_SIDE, with a small proxy for the editor's
-  preview, a thumbnail and the chunks of its Filmstrip and (with sound) its Peaks (app/derived.py),
-  from one decode;
+- a video into H.264 and AAC at FPS (its rate recorded on the item), no larger than MAX_SIDE, with a
+  small proxy for the editor's preview, a thumbnail and the chunks of its Filmstrip and (with sound)
+  its Peaks (app/derived.py), from one decode;
 - audio into AAC, with the chunks of its Peaks;
 - an image into an RGBA PNG no larger than MAX_SIDE, as the Logos are.
 A Candidate refers to an item by its id; an item in use can't be deleted (the API checks).
@@ -19,6 +19,7 @@ import subprocess
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
+from fractions import Fraction
 from pathlib import Path
 from typing import BinaryIO
 from uuid import uuid4
@@ -36,6 +37,7 @@ from app.derived import (
     strip_outputs,
 )
 from app.library import Index, shrink
+from app.matte import Mattes
 from app.renderer import last_lines
 from app.retimed import Copies, CopySize
 from app.transcript import Language
@@ -61,6 +63,8 @@ MAX_SIDE = 1920
 PROXY_SIDE = 640
 THUMBNAIL_SIDE = 320
 FPS = 30
+# What every video was kept at before an item recorded its own rate.
+UNRECORDED_FPS = 30.0
 # What is taken, as ffprobe names it: MP4, MOV or WebM video; MP3, M4A, WAV or AAC songs; PNG, JPEG
 # or WebP images. (Matroska is WebM's container; only WebM's codecs make it one.)
 _MP4 = "mov,mp4,m4a,3gp,3g2,mj2"
@@ -96,6 +100,14 @@ class MediaItem:
     # A video's Media Words are transcribed in this language in every Job (docs/adr/0020); empty
     # means each Job's own.
     language: Language | None = None
+    # A video's frame rate, as it was kept (FPS when it was added); None for any other item, and for
+    # a video added before it was recorded (`rate`).
+    fps: float | None = None
+
+    @property
+    def rate(self) -> float:
+        """The frames a second its picture is kept at, which its Retimed copies and its Matte have."""
+        return self.fps or UNRECORDED_FPS
 
 
 _ITEMS = TypeAdapter(list[MediaItem])
@@ -106,7 +118,8 @@ MEDIA_TYPES = {MediaKind.VIDEO: "video/mp4", MediaKind.AUDIO: "audio/mp4", Media
 class MediaStore:
     """The Media Library, in `folder`: per item <id>.mp4 (and <id>.proxy.mp4, <id>.jpg, the
     Filmstrip's chunks in <id>.strips and Retimed copies in <id>.retimed), <id>.m4a or <id>.png, the
-    Peaks' chunks of one with sound in <id>.peaks, and their index."""
+    Peaks' chunks of one with sound in <id>.peaks, a video's or an image's Matte in <id>.mattes, and
+    their index."""
 
     def __init__(self, folder: Path, ffmpeg: Path, ffprobe: Path) -> None:
         self.folder = folder
@@ -183,7 +196,16 @@ class MediaStore:
         if item.kind is not MediaKind.VIDEO or not item.width or not item.height:
             raise MediaNotFound(media_id)
         videos = {CopySize.PREVIEW: self.proxy(media_id), CopySize.FULL: self.file(media_id)}
-        return Copies(self.folder / f"{media_id}.retimed", videos, (item.width, item.height, FPS))
+        return Copies(self.folder / f"{media_id}.retimed", videos, (item.width, item.height, item.rate))
+
+    def mattes(self, media_id: str) -> Mattes:
+        """A video's or an image's Matte (app/matte.py), in <id>.mattes, made from its file (an image's
+        one PNG); MediaNotFound for a song."""
+        item = self.get(media_id)
+        if item.kind is MediaKind.AUDIO or not item.width or not item.height:
+            raise MediaNotFound(media_id)
+        still = item.kind is MediaKind.IMAGE
+        return Mattes(self.folder / f"{media_id}.mattes", self.file(media_id), (item.width, item.height, item.rate), item.duration or 0.0, still)
 
     def add(self, upload: BinaryIO, filename: str) -> MediaItem:
         """Keep what `upload` holds, uploaded as `filename`, as an item. BadMedia when it is too large
@@ -331,7 +353,17 @@ class MediaStore:
             height=picture["height"] if picture else None,
             has_audio=any(s.get("codec_type") == "audio" for s in streams),
             created=datetime.now(UTC),
+            fps=_rate(picture) if kind is MediaKind.VIDEO and picture else None,
         )
+
+
+def _rate(stream: dict) -> float | None:
+    """A video stream's frame rate, as ffprobe gives it ("30/1"); None when it gives none."""
+    try:
+        rate = float(Fraction(stream.get("avg_frame_rate") or "0"))
+    except (ValueError, ZeroDivisionError):
+        return None
+    return rate or None
 
 
 def _copy(source: BinaryIO, target: BinaryIO, limit: int) -> int:

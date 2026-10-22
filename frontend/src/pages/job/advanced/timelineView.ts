@@ -9,7 +9,7 @@ import type { PlayedSegment } from "../editor/playback";
 import { playingFrom, sourceAt, transitionOverlap } from "../editor/segmentTime";
 import { fadesWithin, type AdvancedEdits } from "./edits";
 import { KEY_GAP_SECS, toMillionth } from "./keyActions";
-import { isPicked, itemsOf, LISTS, TRACK_OF, type ItemKind, type Pick } from "./pick";
+import { isPicked, itemsOf, LISTS, trackOf, type ItemKind, type Pick } from "./pick";
 import type { TrackKind } from "./trackState";
 import { TRANSITION_BOUNDS } from "./Transitions";
 
@@ -124,9 +124,10 @@ export function edgesOf(
 ): number[] {
   const edges: number[] = [];
   if (edits.hook_text.trim() && !hidden.includes("hook")) edges.push(edits.hook_start, edits.hook_start + edits.hook_secs);
-  const left = (kind: ItemKind, id: string) => hidden.includes(TRACK_OF[kind]) || (itemsOf(moving).length > 1 && isPicked(moving, kind, id));
+  const left = (kind: ItemKind, item: { id: string; behind?: boolean }) =>
+    hidden.includes(trackOf(kind, item)) || (itemsOf(moving).length > 1 && isPicked(moving, kind, item.id));
   for (const kind of ["text", "shape", "music", "overlay", "adjustment"] as const) {
-    for (const item of edits[LISTS[kind]] ?? []) if (!left(kind, item.id)) edges.push(item.start, item.start + item.secs);
+    for (const item of edits[LISTS[kind]] ?? []) if (!left(kind, item)) edges.push(item.start, item.start + item.secs);
   }
   if (!hidden.includes("video")) for (const shown of played) edges.push(shown.end);
   return edges;

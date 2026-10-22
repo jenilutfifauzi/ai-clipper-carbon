@@ -103,11 +103,18 @@ def test_job_stores_the_options_it_was_created_with(client):
         "brief": "find the funny moments",
         "transcribe_locally": True,
         "template": None,
+        "aspect": "4:5",
     }
     job = create_job(client, **options)
 
     assert job["options"] == options
     assert client.get(f"/api/jobs/{job['id']}").json()["options"] == options
+
+
+def test_a_wide_job_keeps_its_aspect_in_its_options(client):
+    job = create_job(client, aspect="16:9")
+    assert job["options"]["aspect"] == "16:9"
+    assert client.get(f"/api/jobs/{job['id']}").json()["options"]["aspect"] == "16:9"
 
 
 @pytest.mark.parametrize(

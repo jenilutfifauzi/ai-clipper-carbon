@@ -1,7 +1,7 @@
 import { ArrowRight, ChevronRight } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useNavigate } from "react-router";
-import { api, DEFAULT_TEMPLATE, uploadJob, type JobOptions, type TemplateInfo, type UploadProgress } from "../../api";
+import { api, DEFAULT_TEMPLATE, uploadJob, type Aspect, type JobOptions, type TemplateInfo, type UploadProgress } from "../../api";
 import { Button } from "../../components/Button";
 import { Panel } from "../../components/Panel";
 import { ProgressBar } from "../../components/ProgressBar";
@@ -20,6 +20,20 @@ const ORIGINS = [
   { value: "upload", label: "Upload a file" },
 ] as const satisfies readonly { value: Origin; label: string }[];
 
+// The Canvas Aspect its Candidates are made in (docs/adr/0022): Shorts, TikTok and Reels by default.
+const ASPECTS = [
+  { value: "9:16", label: "9:16" },
+  { value: "4:5", label: "4:5" },
+  { value: "1:1", label: "1:1" },
+  { value: "16:9", label: "16:9" },
+] as const satisfies readonly { value: Aspect; label: string }[];
+const ASPECT_HINTS: Record<Aspect, string> = {
+  "9:16": "Vertical, for Shorts, TikTok and Reels.",
+  "4:5": "Tall, for Instagram and Facebook feeds.",
+  "1:1": "Square, for feeds.",
+  "16:9": "Landscape, for YouTube and other players.",
+};
+
 const INPUT = cx(
   "w-full min-w-0 rounded-control border border-border bg-fill px-3.5 py-2.5 text-base text-text",
   "placeholder:text-muted user-invalid:border-danger",
@@ -36,6 +50,7 @@ export function NewJobForm() {
   const [maxSecs, setMaxSecs] = useState("90");
   const [captions, setCaptions] = useState(true);
   const [language, setLanguage] = useState("id");
+  const [aspect, setAspect] = useState<Aspect>("9:16");
   const [brief, setBrief] = useState("");
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   const [template, setTemplate] = useState<TemplateChoice>(DEFAULT_TEMPLATE);
@@ -85,6 +100,7 @@ export function NewJobForm() {
       captions,
       language: language.trim(),
       ...templateOption(template),
+      aspect,
     };
     try {
       let job;
@@ -175,6 +191,17 @@ export function NewJobForm() {
             <FileDrop id={`${id}-file`} file={file} onFile={setFile} disabled={pending} />
           </div>
         )}
+
+        <div className="flex flex-col gap-1.5">
+          <Segmented
+            legend="Shape"
+            options={ASPECTS}
+            value={aspect}
+            onChange={setAspect}
+            className={cx("sm:max-w-sm", pending && "pointer-events-none opacity-60")}
+          />
+          <span className={HINT}>{ASPECT_HINTS[aspect]}</span>
+        </div>
 
         <details
           ref={advancedSection}

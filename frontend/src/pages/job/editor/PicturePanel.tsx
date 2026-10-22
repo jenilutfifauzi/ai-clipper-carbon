@@ -57,18 +57,18 @@ export function PicturePanel({
   const shown = useRef<HTMLDivElement>(null);
   const edge = useRef<HTMLDivElement>(null);
   const moving = isKeyed(picture) || look ? playback : undefined;
-  const drawn = moving ? drawnAt(picture, moving.shownTime, look) : picture;
+  const drawn = moving ? drawnAt(picture, moving.shownTime, frame, look) : picture;
   const { opacity, inner, radius, border, shadow, ...place } = pictureStyle(drawn, frame);
   // Hidden, or as its box is: a MediaSegment's box hides it outside its span, which "visible" would undo.
   const visibility = hidden ? "hidden" : undefined;
   const graded = useGradeFilter(grade);
-  const effected = effectsFilter(effects, pictureBox(picture), start);
+  const effected = effectsFilter(effects, pictureBox(picture), start, frame);
   const filter = [graded, effected].filter(Boolean).join(" ") || undefined;
 
   useLayoutEffect(() => {
     if (!moving) return;
     const paint = () => {
-      const { left, top, width, height, transform, opacity, radius } = pictureStyle(drawnAt(picture, moving.shownTime, look), frame);
+      const { left, top, width, height, transform, opacity, radius } = pictureStyle(drawnAt(picture, moving.shownTime, frame, look), frame);
       if (box.current) Object.assign(box.current.style, { left, top, width, height, transform });
       if (shown.current) {
         if (faded === undefined) shown.current.style.opacity = String(opacity);
@@ -95,6 +95,6 @@ export function PicturePanel({
   );
 }
 
-// A moving `picture` as drawn at `time`: sampled from its Keyframes, and animated by its `look` there when it has one.
-const drawnAt = (picture: Picture, time: number, look?: (time: number) => Look) =>
-  look ? animatedPicture(picture, time, look(time)) : pictureAt(picture, time);
+// A moving `picture` as drawn at `time` on the Canvas `frame`: sampled from its Keyframes, and animated by its `look` there when it has one.
+const drawnAt = (picture: Picture, time: number, frame: { width: number; height: number }, look?: (time: number) => Look) =>
+  look ? animatedPicture(picture, time, look(time), frame) : pictureAt(picture, time, frame);

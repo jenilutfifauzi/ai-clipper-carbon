@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from app.candidates import LINEAR, Ease, Framing, Keyframe, MusicClip, TransitionKind
+from app.canvas import PORTRAIT
 from app.config import DuckTuning
 from app.planner import AudioEvent, Join, MediaInfo, RenderPlan, SegmentInput, SegmentPlan, audio_events, gain_at, plan_render
 from app.video_source import SourceMetadata
@@ -55,7 +56,7 @@ def played(sound: dict) -> tuple[SegmentPlan, RenderPlan]:
     before = [video(sound["start"])] if sound["start"] else []
     segment = SegmentInput(100, 100 + secs, **fields) if sound.get("source") else video(secs, **fields)
     after = [video(4 * sound["tail"], join=Join(TransitionKind.FADE, sound["tail"]))] if sound.get("tail") else []
-    plan = plan_render(0, 1, SOURCE, main_track=[*before, segment, *after], source_volume=sound.get("source_volume", 1.0))
+    plan = plan_render(0, 1, SOURCE, main_track=[*before, segment, *after], source_volume=sound.get("source_volume", 1.0), canvas=PORTRAIT)
     return plan.segments[len(before)], plan
 
 

@@ -18,6 +18,7 @@ import type { AdvancedEdits } from "./edits";
 import { EffectCards } from "./EffectsPanel";
 import { picked, type Pick } from "./pick";
 import { stepped, undone, type Steps } from "./useEditHistory";
+import { PORTRAIT } from "../editor/canvas";
 
 const kinds = catalogue as VideoEffectKind[];
 const kindOf = (id: string) => kinds.find((kind) => kind.id === id)!;
@@ -130,7 +131,7 @@ describe("an Effects card dropped on the Timeline", () => {
 });
 
 describe("hovering an Effects card", () => {
-  const plan = { start: 0, end: 20, segments: [{ id: "s1" }, { id: "s2" }], overlays: [{ id: "o1" }], adjustment_layers: [] } as unknown as RenderPlan;
+  const plan = { ...PORTRAIT, start: 0, end: 20, segments: [{ id: "s1" }, { id: "s2" }], overlays: [{ id: "o1" }], adjustment_layers: [] } as unknown as RenderPlan;
 
   test("on a Pick draws the effect on it in the preview, and saves nothing", () => {
     const before = edits(SEGMENTS, [overlay("o1")]);

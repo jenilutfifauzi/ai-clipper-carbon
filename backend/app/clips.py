@@ -6,6 +6,7 @@ from enum import StrEnum
 
 from app.caption_files import CaptionFormat
 from app.candidates import Framing, Layout, LayoutOverride, MusicClip, Overlay, Segment, Shape, TextLayer, Transition, WordEdit
+from app.canvas import Aspect
 from app.encoding import ExportSettings
 from app.styles import CaptionStyle, HookStyle, StyleOverrides, WatermarkStyle
 
@@ -78,6 +79,9 @@ class RenderedClip:
     export: ExportSettings | None = None
     # Whether CBR was asked for and the encoder did VBR.
     bitrate_fallback: bool = False
+    # The Candidate's Canvas Aspect as rendered, the Clip's shape (docs/adr/0022); a Clip rendered
+    # before aspects was 9:16.
+    aspect: Aspect = Aspect.PORTRAIT
 
 
 @dataclass(frozen=True)

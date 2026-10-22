@@ -264,3 +264,31 @@ class FakeVoiceEngine:
             raise self.error
         times = np.arange(round(self.rate / speed)) / self.rate
         return Pcm((np.sin(2 * np.pi * 660 * times) * self.level * 32767).astype("<i2"), self.rate)
+
+
+class FakeMatter:
+    """The matter seam's stand-in (app/matte.py): it keeps what is red (a red disc of a test pattern)
+    and takes the rest away, frame by frame, without a model. `failing` makes each run fail with it;
+    `loads` counts the models it was made from. Tests make a subclass of their own (`matter_kind`)."""
+
+    version = "fake-1"
+    failing: str | None = None
+    loads: list[Path] = []
+
+    def __init__(self, model: Path) -> None:
+        type(self).loads.append(model)
+
+    def run(self) -> Callable[[np.ndarray], np.ndarray]:
+        def alpha(frame: np.ndarray) -> np.ndarray:
+            if type(self).failing is not None:
+                raise RuntimeError(type(self).failing)
+            rgb = frame.astype(int)
+            red = (rgb[..., 0] > 150) & (rgb[..., 1] < 100) & (rgb[..., 2] < 100)
+            return np.where(red, 255, 0).astype(np.uint8)
+
+        return alpha
+
+
+def matter_kind() -> type[FakeMatter]:
+    """A FakeMatter of a test's own, so that its `failing` and `loads` are the test's."""
+    return type("TestMatter", (FakeMatter,), {"failing": None, "loads": []})

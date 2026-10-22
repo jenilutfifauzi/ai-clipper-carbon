@@ -1,10 +1,12 @@
 import type { ClipSegment, Framing, Keyframe, KeyProperty, Keys, LayoutOverride, MediaItem, Overlay, RenderPlan, Shape, TextLayer, Transform } from "../../../api";
+import { canvasOf, type Canvas } from "../editor/canvas";
 import { NO_CROP } from "../editor/cropGestures";
 import { PICTURE_KEYS, valueAt } from "../editor/keyframes";
 import { playedFrom, type PlayedSegment } from "../editor/playback";
 import { sourceSceneAt, type LayoutEdits } from "../editor/manual";
 import { firstSceneOf, sceneOverride, segmentOfScene } from "../editor/ScenesTrack";
 import { segmentLength } from "../editor/segmentTime";
+import type { Size } from "../editor/pictureGestures";
 import { tidyTransform } from "../editor/stagePicture";
 import type { Outcome } from "./actions";
 import type { AdvancedEdits } from "./edits";
@@ -54,7 +56,12 @@ export interface KeyScene {
   locked?: TrackKind[];
   track?: PlayedSegment[];
   plan?: RenderPlan | null;
+  // The Canvas the items are on (canvas.ts), which holds their centres' Keyframes: when not given, the plan's.
+  canvas?: Canvas;
 }
+
+/** The Canvas of `scene`'s items. */
+export const canvasIn = (scene: KeyScene): Canvas => scene.canvas ?? canvasOf(scene.plan);
 
 /**
  * Where an item's Keyframes count from on the Timeline (`start`), and for how long (`secs`). A Manual
@@ -298,7 +305,9 @@ export const keyedGroup = (group: string, keyed: boolean, at: number | null) => 
 
 // Item `ref` as keyed in `scene`; null when it can't be edited (gone, or on a locked Track).
 function editableItem(scene: KeyScene, ref: KeyedRef): KeyedItem | null {
-  if ((scene.locked ?? []).includes(kindOf(ref).track)) return null;
+  // An Overlay Behind the Main Track is on the Behind Track (ADR 0015).
+  const behind = ref.kind === "overlay" && scene.edits.overlays.some((overlay) => overlay.id === ref.id && overlay.behind);
+  if ((scene.locked ?? []).includes(behind ? "behind" : kindOf(ref).track)) return null;
   return keyedItem(scene.edits, ref, scene.track, scene.plan);
 }
 
@@ -310,7 +319,7 @@ export function toggleItemKey(scene: KeyScene, ref: KeyedRef, prop: KeyProperty,
   const item = editableItem(scene, ref);
   const at = item && keyTime(item, time);
   if (!item || at === null) return null;
-  const { keys, constant, full } = toggleKey(item.keys, prop, at, item.constant(prop));
+  const { keys, constant, full } = toggleKey(item.keys, prop, at, item.constant(prop), canvasIn(scene));
   if (full) return refused(scene, full);
   return { edits: withKeyed(scene, ref, item, keys, prop, constant), pick: scene.pick };
 }
@@ -324,7 +333,7 @@ export function writeItemKey(scene: KeyScene, ref: KeyedRef, prop: KeyProperty, 
   if (!item) return null;
   const at = keyTime(item, time);
   if (item.keys[prop]?.length && at === null) return null;
-  const { keys, constant, full } = writeKey(item.keys, prop, at ?? item.first ?? 0, value, item.constant(prop));
+  const { keys, constant, full } = writeKey(item.keys, prop, at ?? item.first ?? 0, value, item.constant(prop), canvasIn(scene));
   if (full) return refused(scene, full);
   return { edits: withKeyed(scene, ref, item, keys, prop, constant), pick: scene.pick };
 }
@@ -337,7 +346,7 @@ export function writeItemKey(scene: KeyScene, ref: KeyedRef, prop: KeyProperty, 
 export function writeItemTransform(scene: KeyScene, ref: KeyedRef, next: Transform, time: number, shown?: Transform): Outcome | null {
   const item = editableItem(scene, ref);
   if (!item?.transform) return null;
-  const written = writtenTransform(item.transform, item.keys, next, keyTime(item, time), shown);
+  const written = writtenTransform(item.transform, item.keys, next, keyTime(item, time), canvasIn(scene), shown);
   if (written.full) return refused(scene, written.full);
   return { edits: kindOf(ref).write(scene.edits, ref, written.keys, { transform: written.transform }, scene.plan), pick: scene.pick };
 }
@@ -358,7 +367,7 @@ export function withSceneTransform<T extends LayoutEdits>(
 ): { edits: T; notice?: string } | null {
   const found = manualScene(edits.layout_overrides, plan, index);
   if (!found) return null;
-  const written = writtenTransform(found.framing.transform, found.keys, next, keyTime(found, time), shown);
+  const written = writtenTransform(found.framing.transform, found.keys, next, keyTime(found, time), canvasOf(plan), shown);
   if (written.full) return { edits, notice: tooManyKeys(written.full) };
   return { edits: withSceneKeys(edits, plan, index, written.keys, written.transform) };
 }
@@ -463,12 +472,12 @@ export const resetTextLayer = <T extends TextLayer | Shape>(layer: T): T => ({
 
 /**
  * A Transform keyed by `keys`, of an item playing over `span` of the Timeline, as the stage's Grips
- * hold it at `time`: its keyed fields at the playhead (held at its ends outside it), tidied as the
+ * hold it at `time` on the Canvas `frame`: its keyed fields at the playhead (held at its ends outside it), tidied as the
  * stage tidies what it puts.
  */
-export function heldTransform(transform: Transform, keys: Keys, span: KeySpan, time: number): Transform {
+export function heldTransform(transform: Transform, keys: Keys, span: KeySpan, time: number, frame: Size): Transform {
   if (!PICTURE_KEYS.some((prop) => keys[prop]?.length)) return transform;
-  return tidyTransform(shownTransform(transform, keys, heldKeyTime(span, time)));
+  return tidyTransform(shownTransform(transform, keys, heldKeyTime(span, time), frame));
 }
 
 /**

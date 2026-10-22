@@ -7,7 +7,7 @@ range, and otherwise the episode Transcript's Words and a single Scene. A video'
 item's Media Words once they are saved (app/media_words.py), and none until then.
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 
@@ -15,6 +15,7 @@ from app.candidates import Candidate, WordEdit
 from app.config import BLAZE_FACE_MODEL, Settings
 from app.jobs import Job
 from app.layer_pictures import PICTURES_DIR, make_pictures
+from app.matte import PIECE_SECS, Mattes, Reversed
 from app.logos import LogoStore
 from app.media import MediaStore
 from app.media_words import MediaWordsStatus, MediaWordsStore
@@ -24,12 +25,15 @@ from app.rendering import (
     analysed_range,
     candidate_plan,
     captioned_media,
+    matte_reads,
+    media_mattes,
     media_language,
     media_segment_words,
     music_words,
     needed_analysis,
     saved_analysis,
     saved_words,
+    source_mattes,
     transcript_words,
     words_at_hand,
 )
@@ -82,6 +86,35 @@ class PreviewWord:
 
 
 @dataclass(frozen=True)
+class MattePiece:
+    """A piece of an item's Matte a cut-out picture reads (app/matte.py), by its `start` in seconds, and
+    where the preview reads it: served once it is made, missing until then. Its item is the Source,
+    or the Media Library's `media` (an image's one piece, 0, a PNG). The preview finds a frame in it
+    by its item's Matte's frame rate `fps` (`matte_rate`: the Source's, or the video's own) and the
+    length of the item's pieces, `piece_secs` (docs/adr/0001: neither is copied into the frontend)."""
+
+    start: int
+    url: str
+    media: str | None = None
+    fps: float = 0.0
+    piece_secs: int = PIECE_SECS
+
+
+@dataclass(frozen=True)
+class MatteCopy:
+    """The reversed copy of an item's Matte (the Source's, or the video `media`'s) a reversed cut-out
+    picture playing its range from `start` to `end` reads (app/matte.py's `Reversed`), where the
+    preview reads it (served once it is made: the one serving it, of a wider range if there is one),
+    and seconds into it where it shows the range (`at`, as a Retimed copy's)."""
+
+    start: float
+    end: float
+    url: str
+    at: float
+    media: str | None = None
+
+
+@dataclass(frozen=True)
 class PreviewPlan:
     plan: RenderPlan
     # Those whose middle is in the Clip.
@@ -93,6 +126,11 @@ class PreviewPlan:
     words_errors: dict[str, str]
     # Whether the Scenes and faces are the Clip's own: False while it is one Scene, unanalysed.
     analysed: bool
+    # The Matte pieces its cut-out Segments read (docs/adr/0015), in order: the preview draws the cut
+    # from them, and each Segment's picture whole where its piece isn't served yet.
+    mattes: list[MattePiece] = field(default_factory=list)
+    # The reversed copies of the Matte its reversed cut-out Segments read, each once.
+    matte_copies: list[MatteCopy] = field(default_factory=list)
 
 
 def captions_pending(preview: PreviewPlan) -> bool:
@@ -113,6 +151,7 @@ def preview_plan(
     media: MediaStore | None = None,
     media_words: MediaWordsStore | None = None,
     fps: float | None = None,
+    matte_version: str | None = None,
 ) -> PreviewPlan:
     """The Candidate's Preview Plan, `job_dir` being its Job's directory. Each of its Segments is
     planned from what is saved for its range: its Words are the Clip's own only when every Source
@@ -120,7 +159,8 @@ def preview_plan(
     its item's Media Words in `media_words`, pending while they are queued there, its item is queued
     for the Job, or its Candidate is being prepared; failed, with the error, until a Retry; off when
     its Captions switch is. It is planned at the Source's frame rate, or at `fps` (a saved frame's,
-    at its Export Preset's)."""
+    at its Export Preset's). With `matte_version` (the Matte runner's), it lists the Matte pieces its
+    cut-out Segments read (`preview_mattes`)."""
     assert job.source is not None
     source = job.source.metadata
     segments = candidate.main_track()
@@ -196,4 +236,33 @@ def preview_plan(
         ]
         at += played.length
     analysed = all(analysis is not None for analysis, wanted in zip(analyses, needed) if wanted is not Analysis.NONE)
-    return PreviewPlan(plan, shown, words_source, status, errors, analysed=analysed)
+    mattes, copies = [], []
+    if matte_version:
+        mattes, copies = preview_mattes(plan, job.id, matte_version, source_mattes(job_dir, job.source), media)
+    return PreviewPlan(plan, shown, words_source, status, errors, analysed=analysed, mattes=mattes, matte_copies=copies)
+
+
+def preview_mattes(
+    plan: RenderPlan, job_id: str, version: str, source: Mattes, media: MediaStore | None
+) -> tuple[list[MattePiece], list[MatteCopy]]:
+    """The Matte pieces `plan`'s cut-out pictures read (`matte_reads`: of the Source's Matte `source`,
+    or of their Media Library items' in `media`), made by the matter `version`, in order, each once,
+    and the reversed copies its reversed ones read, each once; and where they are served: the Job's
+    media (the Source's), or the Media Library's (app/matte.py's names)."""
+    pieces: dict[tuple[str | None, str, int], MattePiece] = {}
+    copies: dict[tuple[str | None, float, float], MatteCopy] = {}
+    for (kind, i), (own, parts) in matte_reads(plan, source, media_mattes(media)).items():
+        item = plan.segments[i] if kind == "segment" else (plan.overlays if kind == "overlay" else plan.behind)[i]
+        assert item.background_removal is not None
+        subject = item.background_removal.subject
+        media_id = item.media if kind != "segment" else plan.segments[i].media
+        served = f"/media/{job_id}/" if media_id is None else f"/api/media/{media_id}/mattes/"
+        for part in parts:
+            path = own.path(subject, version, part)
+            url = served + path.relative_to(own.folder.parent if media_id is None else own.folder).as_posix()
+            if isinstance(part, Reversed):
+                copies[(media_id, part.start, part.end)] = MatteCopy(part.start, part.end, url, own.reversed_copy(subject, version, part)[1], media_id)
+            else:
+                pieces[(media_id, str(subject), part)] = MattePiece(part, url, media_id, own.frame[2])
+    ordered = sorted(pieces.items(), key=lambda found: (found[0][0] or "", found[0][2], found[0][1]))
+    return [piece for _, piece in ordered], list(copies.values())

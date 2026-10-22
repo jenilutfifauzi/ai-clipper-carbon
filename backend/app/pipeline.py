@@ -304,7 +304,9 @@ class Pipeline:
             progress=progress,
             window_audio=audio,
         )
-        selection = replace(selection, llm=self.settings.llm)
+        # Its Candidates take the Job's Canvas Aspect (docs/adr/0022).
+        candidates = [replace(candidate, aspect=job.options.aspect) for candidate in selection.candidates]
+        selection = replace(selection, llm=self.settings.llm, candidates=candidates)
         self.store.save_selection(job.id, selection)
         if selection.audio_signal and (left_out := [w for w in selection.shortlist if w not in selection.audio_windows]):
             warning = JobWarning(
@@ -324,7 +326,10 @@ class Pipeline:
             job = self.store.update(job.id, options=self.templates.for_new_job(job.options))
         template, notices = self.templates.for_new_candidates(job.options.template)
         if template is not None:
-            episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, self.settings.selection)
+            metadata = job.source.metadata
+            episode = Episode(
+                transcript, metadata.duration, job.options.max_secs, self.settings.selection, job.options.aspect, (metadata.width, metadata.height)
+            )
             fresh = branded(template, fresh, episode, self.lengths())
         if notices:
             told = [JobWarning(JobStatus.ANALYZING, notice) for notice in notices]

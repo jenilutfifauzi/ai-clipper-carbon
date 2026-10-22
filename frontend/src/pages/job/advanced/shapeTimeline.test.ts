@@ -18,6 +18,7 @@ import { picked, type Pick } from "./pick";
 import { addShape, newShapeStyle } from "./shapeStyle";
 import { ShapesFields } from "./Shapes";
 import { editPoints, zoomToFit } from "./timelineView";
+import { PORTRAIT } from "../editor/canvas";
 
 // A white rectangle from `start` for `secs`, `side` px square.
 function shape(id: string, start: number, secs: number, changes: Partial<Shape> = {}, side = 400): Shape {
@@ -266,7 +267,7 @@ describe("several Shapes picked", () => {
 
   test("the inspector edits them together, a field they differ in marked Mixed", () => {
     const markup = renderToStaticMarkup(
-      createElement(ShapesFields, { shapes: [a, b], onChange: () => {}, onDuplicate: () => {}, onCopy: () => {}, onDelete: () => {} }),
+      createElement(ShapesFields, { shapes: [a, b], frame: PORTRAIT, onChange: () => {}, onDuplicate: () => {}, onCopy: () => {}, onDelete: () => {} }),
     );
 
     expect(markup).toContain("Editing 2 shapes");

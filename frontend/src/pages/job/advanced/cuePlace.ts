@@ -1,5 +1,5 @@
 import { CUE_MAX_SCALE, CUE_MIN_SCALE, type CueEdit, type CueKey } from "../../../api";
-import { FRAME } from "../editor/picture";
+import { canvasOf } from "../editor/canvas";
 import { placedOverrides, type Place } from "../editor/placing";
 import type { Outcome } from "./actions";
 import { timelineOf } from "../editor/timelineKey";
@@ -22,7 +22,7 @@ const scaled = (value: number) => Math.round(Math.min(Math.max(value, CUE_MIN_SC
 export function placedCaptions(scene: CueScene, pick: Pick, place: Place): Outcome | null {
   const { edits, plan } = scene;
   if (captionsLocked(scene)) return null;
-  if (pick?.kind === "captions") return { edits: { ...edits, style_overrides: placedOverrides(edits.style_overrides, "caption", place) }, pick };
+  if (pick?.kind === "captions") return { edits: { ...edits, style_overrides: placedOverrides(edits.style_overrides, "caption", place, canvasOf(plan)) }, pick };
   if (pick?.kind !== "cue" || !plan) return null;
   const size = place.size === null ? {} : { scale: place.size / plan.caption_style.size };
   return placeCue(scene, pick.key, { x: place.x, y: place.y, ...size });
@@ -30,8 +30,8 @@ export function placedCaptions(scene: CueScene, pick: Pick, place: Place): Outco
 
 /**
  * The Cue keyed `key` given its own place or size (`fields`, as the inspector sets them, each one
- * kept within its bounds): its Cue Edit changed, or one made at its key. Null while the Captions
- * Track is locked or the plan has no such Cue.
+ * kept within its bounds: its centre on the plan's Canvas): its Cue Edit changed, or one made at its
+ * key. Null while the Captions Track is locked or the plan has no such Cue.
  */
 export function placeCue(scene: CueScene, key: CueKey, fields: { x?: number; y?: number; scale?: number }): Outcome | null {
   const { edits } = scene;
@@ -40,8 +40,9 @@ export function placeCue(scene: CueScene, key: CueKey, fields: { x?: number; y?:
   const current = cueEditOf(edits.cue_edits, plan, key);
   // A join that didn't take starts its Cue: placed, it is a start.
   const next: CueEdit = { ...(current ?? bare(key.at, timelineOf(key))), join: false };
-  if (fields.x !== undefined) next.x = Math.round(Math.min(Math.max(fields.x, 0), FRAME.width));
-  if (fields.y !== undefined) next.y = Math.round(Math.min(Math.max(fields.y, 0), FRAME.height));
+  const frame = canvasOf(plan);
+  if (fields.x !== undefined) next.x = Math.round(Math.min(Math.max(fields.x, 0), frame.width));
+  if (fields.y !== undefined) next.y = Math.round(Math.min(Math.max(fields.y, 0), frame.height));
   if (fields.scale !== undefined) next.scale = scaled(fields.scale);
   return { edits: withCueEdit(edits, current, next), pick: { kind: "cue", key } };
 }

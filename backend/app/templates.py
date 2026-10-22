@@ -46,6 +46,7 @@ from app.candidates import (
     Transition,
     Volume,
     WordEdit,
+    backgrounds_of,
     grades_of,
     timeline_length,
 )
@@ -298,11 +299,14 @@ class Template:
     # Watermark's Logo isn't held: a Logo deleted later shows no Watermark, as a Preset's does.)
 
     def media_ids(self) -> set[str]:
-        """The Media Library items it uses: its layers' and its intro's and outro's videos."""
+        """The Media Library items it uses: its layers' and its intro's and outro's videos, and its
+        Backgrounds' images (docs/adr/0015): its Manual Framing's and its intro's and outro's videos'."""
+        segments = self.intro.segments + self.outro.segments
         return (
             {layer.item.media for layer in self.layers.music if layer.item.media}
             | {layer.item.media for layer in self.layers.overlays}
-            | {segment.media for segment in self.intro.segments + self.outro.segments if segment.media}
+            | {segment.media for segment in segments if segment.media}
+            | {image for _, background in backgrounds_of(self.framing, [], segments) if (image := background.image)}
         )
 
     def grades(self) -> Iterator[tuple[str, Grade]]:

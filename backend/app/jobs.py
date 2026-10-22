@@ -19,6 +19,7 @@ from uuid import uuid4
 from pydantic import Field, TypeAdapter, ValidationError
 
 from app.candidates import Candidate, TemplateId
+from app.canvas import Aspect
 from app.clips import Clip
 from app.llm import ScoreResponse
 from app.migration import Sizes, migrated_candidate, migrated_clip
@@ -88,6 +89,8 @@ class JobOptions:
     # The Template its new Candidates get (GLOSSARY.md, Template): DEFAULT_TEMPLATE as asked, resolved
     # to the default Template's id (or None) when the Job is created; an id; or None for none.
     template: TemplateId | None = DEFAULT_TEMPLATE
+    # The Canvas Aspect (docs/adr/0022) of its Candidates, Selection's and those added by hand.
+    aspect: Aspect = Aspect.PORTRAIT
 
     def __post_init__(self) -> None:
         if self.min_secs >= self.max_secs:

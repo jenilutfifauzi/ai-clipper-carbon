@@ -24,7 +24,7 @@ import {
   type Sized,
 } from "./pictureGestures";
 import { useShown, type Playback } from "./playback";
-import { GUIDES_X, GUIDES_Y, guideTargets, snapMoved, snapScaled, SNAP_CSS_PX, type SmartGuides } from "./smartGuides";
+import { fixedGuides, guideTargets, snapMoved, snapScaled, SNAP_CSS_PX, type GuideLines, type SmartGuides } from "./smartGuides";
 import { croppedPicture, cropKept, fittedOf, gripCursor, gripsIn, gripsOnFrame, heldPicture, pressTogglesPick, tidyTransform, wholeOnStage, type GripSet } from "./stagePicture";
 import type { BoxEdge } from "./textBox";
 import { TextBoxGrips } from "./TextBoxGrips";
@@ -82,6 +82,14 @@ export interface StagePicture {
   transform: Transform | null;
   // The picture behind: the whole frame picks it, and it moves by itself, never with the others picked.
   behind?: boolean;
+  // The picture behind's: the Behind Overlay ("overlay:<id>") a press at `point` reaches instead,
+  // where the picture doesn't show over it (ClipPreview's stagePictures); null: none.
+  through?: (point: Point) => string | null;
+  // A Behind Overlay (ADR 0015), drawn under the picture behind: its handle is under that one's but
+  // while it is picked. Picked, a click (not a drag) on it where the picture behind shows over it
+  // (`coveredBy`, that one's id) picks that one.
+  under?: boolean;
+  coveredBy?: (point: Point) => string | null;
   // Its Grips: all of them (by default), only its corners (the clip editor's), or its corners and
   // the rotate handle (a Text Layer's).
   grips?: GripSet;
@@ -280,7 +288,7 @@ export function useStageEdit(
     const snapped: { x: number | null; y: number | null } = { x: null, y: null };
     if (reach !== null) {
       // The guide nearest an edge or the middle, and how far that has to move to meet it.
-      const nearest = (start: number, length: number, lines: { start?: number; middle: number; end: number }) => {
+      const nearest = (start: number, length: number, lines: GuideLines) => {
         let best: { line: number; by: number } | null = null;
         const pairs: [number | undefined, number][] = [
           [lines.start, start],
@@ -293,8 +301,10 @@ export function useStageEdit(
         }
         return best;
       };
-      const sx = nearest(x, from.width, GUIDES_X);
-      const sy = nearest(y, from.height, GUIDES_Y);
+      // The plan's Canvas's centre and Safe Area.
+      const guides = fixedGuides(plan);
+      const sx = nearest(x, from.width, guides.x);
+      const sy = nearest(y, from.height, guides.y);
       if (sx) [x, snapped.x] = [x + sx.by, sx.line];
       if (sy && keepY(y + sy.by) === y + sy.by) [y, snapped.y] = [y + sy.by, sy.line];
     }
@@ -448,6 +458,12 @@ export function useStageEdit(
     return resized(fingers.grab, grip, from, to, item.resize?.aboutCentre);
   }
 
+  // What is drawn over `item` where `pointer` is: the picture behind, over a Behind Overlay.
+  function coveredAt(item: StagePicture, pointer: PointerEvent<HTMLElement>): string | null {
+    const point = item.coveredBy && at(pointer);
+    return point ? item.coveredBy!(point) : null;
+  }
+
   function pictureHandlers(item: StagePicture) {
     // Whether `point` is on the picture as drawn, not on the frame around it.
     const onPicture = (point: { x: number; y: number }) => {
@@ -546,6 +562,8 @@ export function useStageEdit(
       else if (current.moved && current.picture) commit(item, current.picture.now, current.kind, current.group);
       // A click on one of several picked picks it alone.
       else if (current.together) onSelect(item.id, false);
+      // A click on a Behind Overlay where the picture behind shows over it picks that one.
+      else if (current.picture.fingers.grip === "body" && coveredAt(item, pointer)) onSelect(coveredAt(item, pointer)!, false);
       // Two taps on its body edit it, or open Crop mode.
       else if (current.picture.fingers.grip === "body") {
         const now = performance.now();
@@ -771,12 +789,16 @@ export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan
   const picturesOn = shownAt.splice(0, edit.pictures.length);
   // The one picture picked alone, with a Transform to set: its Grips.
   const gripped = edit.picked.length === 1 ? edit.pictures.find((picture) => picture.id === edit.picked[0] && picture.transform && picture.picture) : undefined;
+  // A Behind Overlay's handle is under the picture behind's (which covers the frame), but while it is picked.
+  const lifted = (picture: StagePicture) => !picture.under || edit.picked.includes(picture.id);
+  const handle = (picture: StagePicture, i: number) => (
+    // The picture behind keeps its handle from one Scene to the next, and so the pointer it holds.
+    <PictureHandle key={picture.behind ? "behind" : picture.id} plan={plan} edit={edit} item={picture} on={picturesOn[i] === 0} />
+  );
   return (
     <>
-      {edit.pictures.map((picture, i) => (
-        // The picture behind keeps its handle from one Scene to the next, and so the pointer it holds.
-        <PictureHandle key={picture.behind ? "behind" : picture.id} plan={plan} edit={edit} item={picture} on={picturesOn[i] === 0} />
-      ))}
+      {edit.pictures.map((picture, i) => (lifted(picture) ? null : handle(picture, i)))}
+      {edit.pictures.map((picture, i) => (lifted(picture) ? handle(picture, i) : null))}
       {edit.items.map((item, i) => {
         const selected = edit.picked.includes(item.id);
         const index = shownAt[i] ?? -1;
@@ -854,12 +876,31 @@ function turnedBox(picture: Picture, plan: RenderPlan): CSSProperties {
 /**
  * A picture's handle: an Overlay's box as turned, to pick, move and nudge it; for the picture behind,
  * the whole frame, which picks it (and moves it where the picture is), with its box, or for an
- * automatic Scene the frame, outlined while picked. Shown while `on` screen, or faded while picked.
+ * automatic Scene the frame, outlined while picked; a press on it where a Behind Overlay shows
+ * through it (`through`) picks and moves that one. Shown while `on` screen, or faded while picked.
  */
 function PictureHandle({ plan, edit, item, on }: { plan: RenderPlan; edit: StageEdit; item: StagePicture; on: boolean }) {
+  // The Behind Overlay a press on the picture behind reached, which the pointer moves until it is lifted.
+  const reached = useRef<StagePicture | null>(null);
   const selected = edit.picked.includes(item.id);
   if (!on && !selected) return null;
-  const { body } = edit.pictureHandlers(item);
+  const own = edit.pictureHandlers(item).body;
+  // The pointer's handlers of what the press reached.
+  const held = () => (reached.current ? edit.pictureHandlers(reached.current).body : own);
+  const body: typeof own = !item.through
+    ? own
+    : {
+        ...own,
+        onPointerDown: (pointer) => {
+          const point = edit.at(pointer);
+          const id = point && item.through!(point);
+          reached.current = (id && edit.pictures.find((picture) => picture.id === id)) || null;
+          held().onPointerDown(pointer);
+        },
+        onPointerMove: (pointer) => held().onPointerMove(pointer),
+        onPointerUp: (pointer) => held().onPointerUp(pointer),
+        onPointerCancel: () => held().onPointerCancel(),
+      };
   const picture = item.picture && edit.cropMode?.id !== item.id && edit.shownPicture(item.id, item.picture);
   const outline = selected ? "outline-2 outline-white outline-dashed" : "hover:outline-1 hover:outline-white/70 hover:outline-dashed";
   const edges = item.resize ? "set its width and height" : "stretch it";

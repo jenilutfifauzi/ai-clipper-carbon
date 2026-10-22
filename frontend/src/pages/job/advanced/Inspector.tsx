@@ -3,6 +3,7 @@ import { useContext, useState, type ReactNode } from "react";
 import type { AdjustmentLayer, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TemplateInfo, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
+import { canvasOf, useCanvas } from "../editor/canvas";
 import { CaptionStylePanel } from "../editor/CaptionStylePanel";
 import { PresetBar } from "../editor/PresetBar";
 import { usePlayback, type Playback } from "../editor/playback";
@@ -11,18 +12,19 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { StyleFieldsSkeleton } from "../editor/StyleFields";
 import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, reshape, restyle, setAdjustment, setBlend, setDuck, setFade, setSpeech, setVolume, sharedBlend, type Detacher, type ItemActions, type Outcome, type SpeedRef, type StackRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setAdjustment, setBehind, setBlend, sharedBehind, setDuck, setFade, setSpeech, setVolume, sharedBlend, type Detacher, type ItemActions, type Outcome, type SpeedRef, type StackRef } from "./actions";
 import { audioEffectChanges, AudioEffectsFields } from "./AudioEffectsFields";
 import { videoEffectChanges, VideoEffectsFields } from "./VideoEffectsFields";
 import { AdjustmentLayerFields } from "./AdjustmentLayers";
 import { colorChanges, ColorFields } from "./ColorFields";
+import { backgroundRemovalChanges, RemoveBackground } from "./RemoveBackgroundFields";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
 import { SegmentFields } from "./MainTrack";
 import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
-import { BlendModeField, OverlayFields } from "./Overlays";
+import { BehindSwitch, BlendModeField, OverlayFields } from "./Overlays";
 import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
 import { CueFields } from "./CueFields";
 import type { TrackKind } from "./trackState";
@@ -87,6 +89,7 @@ function InspectorFields({
   effectsPreparing,
   effectsElsewhere = false,
   videoEffectsShown = true,
+  matte,
 }: {
   pick: Pick;
   edits: AdvancedEdits;
@@ -134,6 +137,8 @@ function InspectorFields({
   effectsElsewhere?: boolean;
   // Whether the Video Effects section is shown: on a desktop only (a phone plays them, not edits them).
   videoEffectsShown?: boolean;
+  // The Job and Candidate whose Matte the Remove background section follows (ADR 0015).
+  matte?: { job: string; candidate: string };
 }) {
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const only = onlyItem(pick);
@@ -156,6 +161,10 @@ function InspectorFields({
     const index = edits.segments.findIndex((segment) => segment.id === detached_from);
     return detached_from && index !== -1 && detaching ? { index, onReattach: () => detaching.reattach(detached_from) } : undefined;
   };
+
+  // The picked Segments' and Overlays' Remove background section: the Source Segments' switch and
+  // feather (each one change) and their Matte's progress, and the person model.
+  const removeBackgroundOf = () => <RemoveBackground removal={backgroundRemovalChanges({ edits, pick }, onEdits)} matte={matte} />;
 
   // The picked Segments', Overlays' and Adjustment Layers' Color section: a dial set on all of them, or all reset, each one change.
   const colorOf = () => <ColorFields {...colorChanges({ edits, pick }, onEdits)} />;
@@ -196,6 +205,7 @@ function InspectorFields({
         <ShapesFields
           shapes={edits.shapes.filter((shape) => items.some((item) => item.id === shape.id))}
           onChange={(change, group) => onEdits(reshape({ edits, pick }, change).edits, group)}
+          frame={canvasOf(preview?.plan)}
           onDuplicate={actions.duplicate}
           onCopy={actions.copy}
           onDelete={actions.remove}
@@ -214,6 +224,20 @@ function InspectorFields({
         }}
       />
     );
+    // The picked Overlays Behind the Main Track or over it, switched for them all: its own step of undo, refused onto or off a locked Track.
+    const behind = sharedBehind({ edits, pick });
+    const behindField = behind !== null && (
+      <BehindSwitch
+        behind={behind}
+        onChange={(on) => {
+          const outcome = setBehind({ edits, pick, locked }, on);
+          if (outcome?.notice) keying?.onNotice?.(outcome.notice);
+          else if (outcome) onEdits(outcome.edits);
+        }}
+      />
+    );
+    // Several Segments and Overlays: their Remove background section.
+    const cut = items.every((item) => item.kind === "segment" || item.kind === "overlay");
     // Several Segments, Overlays and Adjustment Layers: their Grades edited together.
     const graded = items.every((item) => item.kind === "segment" || item.kind === "overlay" || item.kind === "adjustment");
     // Those with sound: their Audio Effects edited together.
@@ -223,6 +247,8 @@ function InspectorFields({
       <div className="flex flex-col gap-4">
         {summary}
         {blendField}
+        {behindField}
+        {cut && removeBackgroundOf()}
         {graded && colorOf()}
         {graded && pictureEffectsOf()}
         {effects}
@@ -268,6 +294,7 @@ function InspectorFields({
         playback={playback}
         span={segmentSpan(edits.segments, segment.id, track)}
         captions={segment.media && mediaById.get(segment.media) ? captionsOf?.(segment, mediaById.get(segment.media)!) : undefined}
+        removeBackground={removeBackgroundOf()}
         color={colorOf()}
         pictureEffects={pictureEffectsOf()}
         effects={effectsOf()}
@@ -302,7 +329,7 @@ function InspectorFields({
   }
   const shape = find(edits.shapes, "shape");
   if (shape && actions) {
-    return <ShapeFields key={shape.id} shape={shape} duration={duration} onChange={onShape} onDuplicate={actions.duplicate} onDelete={actions.remove} />;
+    return <ShapeFields key={shape.id} shape={shape} duration={duration} onChange={onShape} frame={canvasOf(preview?.plan)} onDuplicate={actions.duplicate} onDelete={actions.remove} />;
   }
   const adjustment = find(edits.adjustment_layers ?? [], "adjustment");
   if (adjustment && actions) {
@@ -373,9 +400,16 @@ function InspectorFields({
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
         onCropMode={cropMode?.("overlay", overlay.id)}
+        removeBackground={removeBackgroundOf()}
         color={colorOf()}
         pictureEffects={pictureEffectsOf()}
         effects={effectsOf()}
+        onBehind={(behind) => {
+          // Its own step of undo; refused onto a locked Track.
+          const outcome = setBehind({ edits, pick, locked }, behind);
+          if (outcome?.notice) keying?.onNotice?.(outcome.notice);
+          else if (outcome) onEdits(outcome.edits);
+        }}
       />
     );
   }
@@ -437,6 +471,7 @@ function CaptionsFields({
   onEdits: (edits: AdvancedEdits, group?: string) => void;
 }) {
   const [more, setMore] = useState(false);
+  const canvas = useCanvas();
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -445,7 +480,7 @@ function CaptionsFields({
       </div>
       <ResetPlace edits={edits} part="caption" onEdits={onEdits} />
       <PresetBar style={style} error={error} />
-      {style ? <CaptionStylePanel style={style} fonts={fonts} more={more} onMore={setMore} inspector /> : !error && <StyleFieldsSkeleton />}
+      {style ? <CaptionStylePanel style={style} fonts={fonts} more={more} onMore={setMore} inspector canvas={canvas} /> : !error && <StyleFieldsSkeleton />}
     </div>
   );
 }

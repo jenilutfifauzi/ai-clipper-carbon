@@ -8,7 +8,7 @@ import { curvePath, curveRange, easeHandles, handleShares, plotPoint, plotValue,
 import { easedKey, easeName, handleEase, keyAt, keyedRange, moveKey, setEase, type EaseName, type KeyGrid } from "./keyActions";
 import { applyKeyed, KeyCluster, useKeyTime, usePickedKeyed, type Keying } from "./KeyCluster";
 import { EaseSelect, KEY_FIELDS } from "./KeyEase";
-import { activeKey, clearItemKeys, heldKeyTime, keyedGroup, keyedItem, keyRows, keyTime, refName, setItemKeys, writeItemKey, type KeyedItem, type KeyedRef } from "./keying";
+import { activeKey, canvasIn, clearItemKeys, heldKeyTime, keyedGroup, keyedItem, keyRows, keyTime, refName, setItemKeys, writeItemKey, type KeyedItem, type KeyedRef } from "./keying";
 import { onFrame } from "./playhead";
 
 /**
@@ -74,7 +74,7 @@ function Pane({ keying, fps, item: ref, keyed, rows }: { keying: Keying; fps: nu
   // Each keyed row's plot, its own range; the one being dragged over keeps the one it began with.
   const plotOf = (prop: KeyProperty): Plot => {
     if (drag.current?.prop === prop) return drag.current.plot;
-    const [low, high] = curveRange(prop, listOf(prop));
+    const [low, high] = curveRange(prop, listOf(prop), canvasIn(keying));
     return { secs: keyed.secs, low, high };
   };
   const seek = (secs: number) => keying.playback.seek(keyed.start + Math.min(Math.max(secs, keyed.first ?? 0), keyed.secs));
@@ -118,7 +118,7 @@ function Pane({ keying, fps, item: ref, keyed, rows }: { keying: Keying; fps: nu
     // In the Curves, its value too: held to the plot, to a thousandth of its range (a power of ten).
     const digits = Math.max(0, -Math.floor(Math.log10(Math.max(plot.high - plot.low, 1e-6) / 1000)));
     const dragged = plotValue(plot, Math.min(Math.max(start + (event.clientY - gesture.y) / box.height, 0), 1));
-    const value = curves ? { prop, value: Number(dragged.toFixed(digits)) } : undefined;
+    const value = curves ? { prop, value: Number(dragged.toFixed(digits)), frame: canvasIn(keying) } : undefined;
     const moved = moveKey(list, index, to, grid, value);
     save(prop, moved, gesture.group);
     seek(moved[index].at);
@@ -431,7 +431,7 @@ function Row({
   const { label, unit, scale } = KEY_FIELDS[prop];
   const isKeyed = !!keyed.keys[prop]?.length;
   // A keyed turn may go further than the Transform's own ±360°.
-  const [low, high] = keyedRange(prop, isKeyed);
+  const [low, high] = keyedRange(prop, isKeyed, canvasIn(keying));
   const write = (shown: number) => {
     const outcome = writeItemKey(keying, item, prop, Math.min(Math.max(shown / scale, low), high), time);
     applyKeyed(keying, outcome, keyedGroup(`keyframes:${refName(item)}:${prop}`, isKeyed, at));

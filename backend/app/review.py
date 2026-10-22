@@ -3,11 +3,12 @@ work when Selection runs again."""
 
 from bisect import bisect_left
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from uuid import uuid4
 
 from app.candidates import (
     DEFAULT_DUCK,
+    PICTURE_KEYS,
     AdjustmentLayer,
     Candidate,
     CueEdit,
@@ -24,12 +25,16 @@ from app.candidates import (
     TextLayer,
     Transition,
     WordEdit,
+    check_cue_edits,
     manual_candidate,
+    on_canvas,
     timeline_length,
     with_join_transition,
 )
+from app.canvas import Aspect, Canvas, canvas_for
 from app.config import SelectionTuning
 from app.keyframes import rewindow
+from app.rescale import Sizes, rescaled
 from app.segment_time import SegmentTime, overlay_time, segment_time
 from app.selection import snap
 from app.styles import JoinTransition, StyleOverrides
@@ -67,6 +72,9 @@ class CandidateChange:
     end: float | None = None
     hook_text: str | None = None
     layout: Layout | None = None
+    # Its Canvas Aspect (docs/adr/0022): changing it rescales the positions it owns onto the new
+    # Canvas (app/rescale.py), but those this change sends, taken as on it already.
+    aspect: Aspect | None = None
     selected: bool | None = None
     preset_id: str | None = None
     style_overrides: StyleOverrides | None = None
@@ -97,16 +105,23 @@ class CandidateChange:
     # The Music Clips of `music` (by id) whose `duck` the edit didn't set: a new song's ducks by
     # default (docs/adr/0016).
     duck_unset: frozenset[str] = frozenset()
+    # The centres the edit's items left out (`Unplaced`): at the Candidate's Canvas's centre.
+    unplaced: "Unplaced" = frozenset()
 
 
 @dataclass(frozen=True)
 class Episode:
-    """What edits are checked against: the Job's Transcript, Source duration and longest clip."""
+    """What edits are checked against: the Job's Transcript, Source duration and longest clip; the
+    Canvas Aspect a Candidate added by hand takes, the Job's; and the sizes of the Source and the
+    Media Library's pictures, which a change of aspect rescales by."""
 
     transcript: Transcript
     duration: float
     max_secs: float
     tuning: SelectionTuning
+    aspect: Aspect = Aspect.PORTRAIT
+    source: tuple[int, int] | None = None
+    sizes: Sizes = field(default_factory=dict)
 
     def bounds(self, start: float, end: float, keep_start: bool = False, keep_end: bool = False) -> tuple[float, float]:
         """`start`..`end` snapped to Words (see selection.snap), but for the ends kept where they are;
@@ -178,6 +193,46 @@ class Episode:
             raise InvalidEdit(f"A clip can last at most {longest:g} s; its Segments would last {length:.0f} s")
 
 
+# A centre an edit's item left out, as (field, index in its list, axis "x" or "y"): of the
+# Transform of the item (`PLACED_BY`), of its Framing's (a None Framing is centred already), or with
+# index None of the Candidate's own Framing's.
+type Unplaced = frozenset[tuple[str, int | None, str]]
+# Where each list's items keep their Transform: under these fields.
+PLACED_BY = {
+    "overlays": ("transform",),
+    "text_layers": ("transform",),
+    "shapes": ("transform",),
+    "segments": ("framing", "transform"),
+    "layout_overrides": ("framing", "transform"),
+}
+
+
+def _centred(change: CandidateChange, canvas: Canvas) -> CandidateChange:
+    """`change` with the centres it left out (`change.unplaced`) at `canvas`'s centre, as a new item's
+    is on every aspect (its Transform's default is 9:16's, docs/adr/0022)."""
+    if not change.unplaced:
+        return change
+    centre = dict(zip("xy", canvas.centre))
+
+    def placed[T](item: T, path: tuple[str, ...], axes: set[str]) -> T:
+        name, *rest = path
+        inner = getattr(item, name)
+        now = placed(inner, tuple(rest), axes) if rest else replace(inner, **{axis: centre[axis] for axis in axes})
+        return replace(item, **{name: now})  # type: ignore[type-var]
+
+    lists = {name: list(getattr(change, name)) for name in PLACED_BY if getattr(change, name) is not None}
+    framing = change.framing
+    by_item: dict[tuple[str, int | None], set[str]] = {}
+    for name, index, axis in change.unplaced:
+        by_item.setdefault((name, index), set()).add(axis)
+    for (name, index), axes in by_item.items():
+        if index is None:
+            framing = placed(framing, ("transform",), axes) if framing is not None else None
+        elif name in lists and index < len(lists[name]):
+            lists[name][index] = placed(lists[name][index], PLACED_BY[name], axes)
+    return replace(change, framing=framing, **lists)
+
+
 def update(
     candidates: list[Candidate],
     candidate_id: str,
@@ -193,7 +248,11 @@ def update(
     old = candidates[i]
     if change.revision is not None and change.revision != old.revision:
         raise StaleRevision(old)
-    start, end, segments = old.start, old.end, old.segments
+    aspect = _pick(change.aspect, old.aspect)
+    change = _centred(change, canvas_for(aspect))
+    # What the change doesn't send is kept as it looks: rescaled onto the new Canvas (docs/adr/0022).
+    kept = old if aspect == old.aspect else rescaled(old, aspect, episode.sizes, episode.source)
+    start, end, segments = old.start, old.end, kept.segments
     transitions = _pick(change.transitions, old.transitions)
     if change.start is not None or change.end is not None:
         if old.segments and change.segments is None:
@@ -209,14 +268,16 @@ def update(
         episode.check_length(segments, transitions)
         # The hull of the Source they play, snapped to Words; one Segment of it played as it was
         # filmed is a plain range (one at a Speed, faded, Muted, graded, with Audio or Video Effects
-        # (even all off, which are kept), or at a volume or Keyframes of its own, is kept as its Segment).
+        # (even all off, which are kept), cut out or with a Background, or at a volume or Keyframes of
+        # its own, is kept as its Segment).
         shown = [segment for segment in segments if segment.media is None and segment.hold is None]
         start, end = min(s.start for s in shown), max(s.end for s in shown)
         [first, *more] = segments
         as_filmed = segment_time(first) == SegmentTime(start, end)
         plain = (
             first.volume == 1 and not first.keys and not (first.fade_in or first.fade_out) and not first.muted and first.grade.neutral
-            and not first.audio_effects and not first.video_effects
+            and not first.audio_effects and not first.video_effects and first.background_removal is None
+            and first.background is None
         )
         if not more and as_filmed and plain:
             segments = []
@@ -241,8 +302,13 @@ def update(
     layout = _pick(change.layout, old.layout)
     if change.framing is not None:
         _check_framing(f"A {layout} clip", layout, change.framing)
+    if change.cue_edits is not None:
+        try:
+            check_cue_edits(change.cue_edits, canvas_for(aspect))
+        except ValueError as exc:
+            raise InvalidEdit(str(exc)) from None
     # Kept while the clip is Manual; dropped with its Layout.
-    framing = _pick(change.framing, old.framing) if layout is Layout.MANUAL else None
+    framing = _pick(change.framing, kept.framing) if layout is Layout.MANUAL else None
     _check_framing(f"A {layout} clip", layout, framing)
     new = replace(
         old,
@@ -251,25 +317,30 @@ def update(
         hook_text=old.hook_text if change.hook_text is None else " ".join(change.hook_text.split()),
         layout=layout,
         framing=framing,
+        aspect=aspect,
         selected=_pick(change.selected, old.selected),
         preset_id=_pick(change.preset_id, old.preset_id),
         style_overrides=_pick(change.style_overrides, old.style_overrides),
         word_edits=old.word_edits if change.word_edits is None else _merged(change.word_edits),
-        cue_edits=old.cue_edits if change.cue_edits is None else _keyed(change.cue_edits),
+        cue_edits=kept.cue_edits if change.cue_edits is None else _keyed(change.cue_edits),
         hook_start=_pick(change.hook_start, old.hook_start),
         hook_secs=_pick(change.hook_secs, old.hook_secs),
-        layout_overrides=_pick(change.layout_overrides, old.layout_overrides),
+        layout_overrides=_pick(change.layout_overrides, kept.layout_overrides),
         hook_kicker=old.hook_kicker if change.hook_kicker is None else " ".join(change.hook_kicker.split()),
-        text_layers=_pick(change.text_layers, old.text_layers),
-        shapes=_pick(change.shapes, old.shapes),
+        text_layers=_pick(change.text_layers, kept.text_layers),
+        shapes=_pick(change.shapes, kept.shapes),
         music=music,
         source_volume=_pick(change.source_volume, old.source_volume),
         grade=_pick(change.grade, old.grade),
         adjustment_layers=_pick(change.adjustment_layers, old.adjustment_layers),
         segments=segments,
-        overlays=_pick(change.overlays, old.overlays),
+        overlays=_pick(change.overlays, kept.overlays),
         transitions=_joined(transitions, segments),
     )
+    # What it owns stays on its Canvas (docs/adr/0022).
+    new = on_canvas(new)
+    if change.segments is not None or change.layout_overrides is not None:
+        _check_removal_keyframes(new)
     if change.text_layers is not None or change.shapes is not None:
         _check_inside(new, old)
     if change.music is not None:
@@ -287,7 +358,7 @@ def add_manual(
     """The Candidates with a manual one for `start`..`end` (snapped to Words) added after the AI's,
     and the new one. It may overlap others: that is the owner's call."""
     start, end = episode.bounds(start, end)
-    new = manual_candidate(uuid4().hex[:8], start, end)
+    new = manual_candidate(uuid4().hex[:8], start, end, episode.aspect)
     return ranked([*candidates, new]), new
 
 
@@ -318,7 +389,7 @@ def _share_words(starts: list[float], a: Candidate, b: Candidate) -> bool:
 def _look(candidate: Candidate) -> tuple:
     """What the owner's edits change about a Candidate's Clip."""
     return (
-        candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.preset_id,
+        candidate.start, candidate.end, candidate.hook_text, candidate.layout, candidate.aspect, candidate.preset_id,
         candidate.style_overrides, candidate.word_edits, candidate.cue_edits, candidate.hook_start, candidate.hook_secs,
         candidate.layout_overrides, candidate.hook_kicker, candidate.text_layers, candidate.shapes, candidate.music,
         candidate.source_volume, candidate.segments, candidate.overlays, candidate.transitions, candidate.framing,
@@ -386,6 +457,29 @@ def _check_framing(what: str, layout: Layout, framing: Framing | None) -> None:
         raise InvalidEdit(f"{what} needs its framing: the transform, crop and background it frames the episode by")
     if layout is not Layout.MANUAL and framing is not None:
         raise InvalidEdit(f"{what} has no framing: only the Manual Layout frames the episode by hand")
+
+
+def _check_removal_keyframes(candidate: Candidate) -> None:
+    """InvalidEdit for a cut-out Segment (docs/adr/0015) whose picture has Keyframes: a video's own,
+    or those of a Manual Layout Override that frames a Scene of its range (a Freeze frame holds one
+    unkeyed). The render can't cut out a keyed picture yet (its frames are drawn by a frame process),
+    so the preview, which could, would show a cut the render wouldn't: refused when it is saved or
+    drafted, naming the Segment, rather than when the Clip is rendered."""
+    for segment in candidate.segments:
+        if segment.background_removal is None:
+            continue
+        if segment.media is not None:
+            keyed = any(keys for prop, keys in segment.keys.items() if prop in PICTURE_KEYS)
+        else:
+            keyed = segment.hold is None and any(
+                override.layout is Layout.MANUAL and any(override.keys.values()) and segment.start <= override.at <= segment.end
+                for override in candidate.layout_overrides
+            )
+        if keyed:
+            raise InvalidEdit(
+                f"Segment {segment.id} is cut out (Background removal) but its picture has Keyframes, which Background removal "
+                "can't draw yet: remove its Keyframes or switch Background removal off"
+            )
 
 
 def _check_detached(music: list[MusicClip], old: list[MusicClip], segments: list[Segment]) -> None:

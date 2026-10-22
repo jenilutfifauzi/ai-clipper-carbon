@@ -1,11 +1,12 @@
 import { useId } from "react";
-import type { FontInfo, StyleValue, WatermarkKind, WatermarkPosition } from "../../../api";
+import type { Aspect, FontInfo, StyleValue, WatermarkKind, WatermarkPosition } from "../../../api";
 import { AnchorGrid } from "../../../components/AnchorGrid";
 import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
+import { aspectParts } from "./canvas";
 import { LogoPicker } from "./LogoPicker";
 import { FacePicker } from "./FacePicker";
 import { StyleMarker } from "./StyleFields";
@@ -34,7 +35,7 @@ const ANCHORS: readonly { value: Exclude<WatermarkPosition, "custom">; label: st
  * The Watermark: off, a line of text or one of the Logos, then where it sits (one of nine places,
  * or anywhere it is dragged on the preview), how large and how opaque it is.
  */
-export function WatermarkPanel({ style, fonts }: { style: StyleControls; fonts: FontInfo[] | null }) {
+export function WatermarkPanel({ style, fonts, aspect = "9:16" }: { style: StyleControls; fonts: FontInfo[] | null; aspect?: Aspect }) {
   const id = useId();
   const watermark = style.watermark;
   const set = (field: string, value: StyleValue) => style.set("watermark", field, value);
@@ -98,6 +99,7 @@ export function WatermarkPanel({ style, fonts }: { style: StyleControls; fonts: 
           </h4>
           <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
             <AnchorGrid
+              frame={aspectParts(aspect)}
               legend="Place"
               options={ANCHORS}
               value={custom ? null : (watermark.position as Exclude<WatermarkPosition, "custom">)}

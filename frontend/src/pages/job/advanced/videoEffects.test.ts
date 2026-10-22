@@ -10,7 +10,7 @@ import { isColourSetting, type AdjustmentEvent, type AdjustmentLayer, type Audio
 import { adjustmentFilters } from "../editor/adjustments";
 import { EffectFilters, EffectsClock, GradeFilter } from "../editor/GradeFilters";
 import { NEUTRAL_GRADE } from "../editor/grading";
-import { FRAME } from "../editor/picture";
+import { PORTRAIT } from "../editor/canvas";
 import { videoLibraryOf } from "../../../videoEffects";
 import { NO_CROP } from "../editor/cropGestures";
 import { mergeEdits } from "../editor/merge";
@@ -369,7 +369,7 @@ describe("an Adjustment Layer's stack", () => {
 
     // Its filter blurs over the frame's box, then mixes the blurred picture over the picture as it was.
     const markup = renderToStaticMarkup(
-      createElement("svg", null, createElement(GradeFilter, { id: "f", grade: shown.grade, mix: shown.weight, effects: shown.effects, box: FRAME })),
+      createElement("svg", null, createElement(GradeFilter, { id: "f", grade: shown.grade, mix: shown.weight, effects: shown.effects, box: PORTRAIT })),
     );
     expect(markup).toContain('primitiveUnits="objectBoundingBox"');
     expect(markup.indexOf("feGaussianBlur")).toBeLessThan(markup.indexOf("feComposite"));
@@ -399,6 +399,21 @@ describe("Glow, Bloom pulse and Film grain in the preview", () => {
     // A picture drawn at half the frame's size glows half as wide, in pixels.
     const half = effectPrimitives([effect("glow", { amount: 45 })], { width: 540, height: 960 });
     expect(half.find((primitive) => primitive.element === "feGaussianBlur")!.attributes.stdDeviation).toBe("0.014815 0.008333");
+  });
+
+  test("a full-frame picture's light spreads as far on every Canvas, as the render's (canvas-aspect/07)", () => {
+    const spread = (box: { width: number; height: number }, canvas: { width: number; height: number }, id = "glow") => {
+      const primitives = effectPrimitives([effect(id, { amount: 45, speed: 2 })], box, canvas);
+      const [across] = primitives.find((primitive) => primitive.element === "feGaussianBlur")!.attributes.stdDeviation.split(" ");
+      return Number(across) * box.width;
+    };
+    const wide = { width: 1920, height: 1080 };
+    for (const id of ["glow", "bloom-pulse"]) {
+      expect(spread(wide, wide, id)).toBeCloseTo(spread(frame, frame, id), 1);
+      expect(spread(frame, frame, id)).toBeCloseTo(16 * (id === "glow" ? 1 : 0.75), 1);
+    }
+    // Its filter is the Canvas's own: the same stack and box on another Canvas is another filter.
+    expect(effectsFilterId([effect("glow", { amount: 45 })], wide, 0, wide)).not.toBe(effectsFilterId([effect("glow", { amount: 45 })], wide, 0, frame));
   });
 
   test("Bloom pulse's strength breathes as the render's, from its item's start", () => {

@@ -11,6 +11,7 @@ import { dragSegment, split, type PickContext } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { heldTransform, keyableOf, keyedInPick, keyedItem, manualSceneAt, pickedKeyed, sceneRef, toggleItemKey, withSceneTransform, writeItemKey, writeItemTransform } from "./keying";
 import { picked } from "./pick";
+import { PORTRAIT } from "../editor/canvas";
 
 const key = (at: number, value: number, ease = LINEAR): Keyframe => ({ at, value, ease });
 const pan = [key(0, 300), key(4, 800)];
@@ -26,6 +27,7 @@ const sceneOf = (start: number, end: number, keys_from: number | null): ScenePla
 const segmentOf = (start: number, end: number, source_start: number, scenes: number): SegmentPlan =>
   ({ start, end, source_start, source_end: source_start + end - start, media: null, volume: 1, silent: false, scenes }) as SegmentPlan;
 const plan = {
+  ...PORTRAIT,
   start: 10,
   end: 20,
   segments: [segmentOf(0, 10, 10, 2), segmentOf(10, 14, 14, 1)],
@@ -87,9 +89,9 @@ describe("a Keyframe edit on a Manual Scene", () => {
   test("its Grips hold it where it is at the playhead and write a keyed field there", () => {
     const item = keyedItem(edits(), AGAIN, undefined, plan)!;
     // 2 s into the later Segment: 4 s into the shot, where it has reached 800.
-    expect(heldTransform(framing.transform, item.keys, item, 12).x).toBe(800);
+    expect(heldTransform(framing.transform, item.keys, item, 12, PORTRAIT).x).toBe(800);
     // Before it shows: held at where it first shows, 2 s in.
-    expect(heldTransform(framing.transform, item.keys, item, 0).x).toBe(550);
+    expect(heldTransform(framing.transform, item.keys, item, 0, PORTRAIT).x).toBe(550);
     const moved = writeItemTransform(keying(), FIRST, { ...framing.transform, x: 100, scale: 2 }, 3)!.edits.layout_overrides[0];
     expect(moved.keys?.x).toEqual([key(0, 300), key(1, 100), key(4, 800)]);
     expect(moved.framing?.transform).toEqual({ ...framing.transform, scale: 2 });

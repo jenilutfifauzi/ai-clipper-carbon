@@ -9,6 +9,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import Candidate, Keyframe, MusicClip, Overlay, Segment
+from app.canvas import PORTRAIT
 from app.config import CameraTuning
 from app.planner import MediaInfo, audio_events, gain_at, overlay_sound
 from app.rendering import candidate_plan
@@ -61,7 +62,7 @@ def test_a_muted_segment_is_planned_muted_at_its_volume(tmp_path):
 def test_a_muted_music_clip_and_overlay_keep_their_volume_and_keys_and_are_heard_at_gain_0():
     [music] = audio_events([MusicClip("m", 1.0, 3.0, media=SONG, volume=0.5, fade_in=0.5, keys={"volume": DIP}, muted=True)], 10, ITEMS)
     # An Overlay at volume 1, Muted, as the editor makes a new one.
-    [sound] = overlay_sound([Overlay("o", CLIP, 2.0, 3.0, volume=1.0, muted=True)], 10, ITEMS)
+    [sound] = overlay_sound([Overlay("o", CLIP, 2.0, 3.0, volume=1.0, muted=True)], 10, ITEMS, canvas=PORTRAIT)
     assert (music.muted, music.volume, music.gain, music.fade_in) == (True, 0.5, DIP, 0.5)
     assert (sound.id, sound.muted, sound.volume) == ("o", True, 1.0)
     for time in np.linspace(0, 6, 61):

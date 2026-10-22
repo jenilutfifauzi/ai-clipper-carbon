@@ -1,4 +1,4 @@
-import { mainTrackOf, type Candidate, type Clip, type ExportPresetList, type ExportSettings, type RenderedClip, type SourceMetadata } from "../../api";
+import { mainTrackOf, type Aspect, type Candidate, type Clip, type ExportPresetList, type ExportSettings, type RenderedClip, type SourceMetadata } from "../../api";
 import { trackLength } from "./editor/segmentTime";
 
 export const CODECS: Record<ExportSettings["codec"], string> = { h264: "H.264", hevc: "HEVC", av1: "AV1" };
@@ -17,6 +17,15 @@ export function batchSecs(candidates: Pick<Candidate, "start" | "end" | "segment
     const joins = segments.map((segment) => candidate.transitions.find((transition) => transition.after === segment.id)?.secs ?? null);
     return sum + trackLength(segments, joins);
   }, 0);
+}
+
+/**
+ * How long the Clips of `candidates` last in all of each Canvas Aspect, the aspects in their first
+ * Candidate's order: a size is estimated per aspect, as a wide Clip has more pixels than a square one.
+ */
+export function batchParts(candidates: Pick<Candidate, "start" | "end" | "segments" | "transitions" | "aspect">[]): { aspect: Aspect; secs: number }[] {
+  const aspects = [...new Set(candidates.map((candidate) => candidate.aspect))];
+  return aspects.map((aspect) => ({ aspect, secs: batchSecs(candidates.filter((candidate) => candidate.aspect === aspect)) }));
 }
 
 /** The Export Preset the Render button renders with: the one picked this session while it exists, else the default. */

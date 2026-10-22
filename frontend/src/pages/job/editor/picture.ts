@@ -1,5 +1,11 @@
-import type { Background, Box, MediaItem, Panel, Picture, PictureLayerEvent, RenderPlan, ScenePlan, ShapeKind, Transform } from "../../../api";
-import { KEY_RANGES, valueAt, type PictureKey } from "./keyframes";
+import type { CSSProperties } from "react";
+import { mediaItemUrl, type Background, type Box, type MediaItem, type Panel, type Picture, type PictureLayerEvent, type RenderPlan, type ScenePlan, type ShapeKind, type Transform } from "../../../api";
+import { centreOf, PORTRAIT } from "./canvas";
+import { keyRange, valueAt, type PictureKey } from "./keyframes";
+
+// Blur's background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
+export const BLUR_SIGMA = 40;
+export const BLUR_BRIGHTNESS = 0.9;
 
 /**
  * Pictures as the preview draws them (ADR 0007): a Picture of the plan as CSS, and the fitted-size
@@ -7,9 +13,6 @@ import { KEY_RANGES, valueAt, type PictureKey } from "./keyframes";
  * new Overlay and the stage's gestures go by. The plan resolves every Picture (ADR 0001); this only
  * turns it into boxes.
  */
-
-// The frame's size, in output pixels.
-export const FRAME = { width: 1080, height: 1920 } as const;
 
 // The Transform's limits (backend/app/candidates.py).
 export const SCALE_RANGE = [0.05, 8] as const;
@@ -24,8 +27,14 @@ export const SHAPE_SIZE_RANGE = [2, 4096] as const;
  */
 export const allStroke = (kind: ShapeKind): boolean => kind === "line" || kind === "arrow";
 
-// Every field at its identity: fitted, centred, upright, unflipped and opaque.
-export const IDENTITY: Transform = { x: 540, y: 960, scale: 1, stretch_x: 1, stretch_y: 1, rotation: 0, flip_h: false, flip_v: false, opacity: 1 };
+// A frame's size, in output pixels: the Canvas's (canvas.ts), or a box on it.
+type Size = { width: number; height: number };
+
+/** Every field at its identity on a Canvas `frame` large: fitted, centred, upright, unflipped and opaque. */
+export const identity = (frame: Size): Transform => ({ ...centreOf(frame), scale: 1, stretch_x: 1, stretch_y: 1, rotation: 0, flip_h: false, flip_v: false, opacity: 1 });
+
+// The identity on the 9:16 Canvas, as worked examples (tests) take it.
+export const IDENTITY: Transform = identity(PORTRAIT);
 
 export interface PictureStyle {
   left: string;
@@ -92,19 +101,19 @@ export const isKeyed = (picture: Picture) => !!picture.motion && Object.keys(pic
 
 /**
  * `picture` as drawn at `time` seconds into the Clip (backend/app/planner.py's picture_at, which
- * the renderer draws by): each keyed property sampled from its motion and held to its range (but a
- * rotation, which may turn any number of times), its size its drawn size at scale 1 times the
+ * the renderer draws by): each keyed property sampled from its motion and held to its range on the
+ * Canvas `frame` (but a rotation, which may turn any number of times), its size its drawn size at scale 1 times the
  * sampled scale (in fractions of a pixel), its corners' radius in step with its shorter side (its
  * border and shadow stay as they are), and its bounds turned about the sampled centre; a still Picture, without motion. An unkeyed picture is itself.
  */
-export function pictureAt(picture: Picture, time: number): Picture {
+export function pictureAt(picture: Picture, time: number, frame: Size): Picture {
   const motion = picture.motion;
   if (!motion || !isKeyed(picture)) return picture;
   const sampled = (prop: PictureKey, constant: number) => {
     const keys = motion[prop];
     if (!keys?.length) return constant;
     const value = valueAt(keys, time, constant);
-    return prop === "rotation" ? value : clamp(value, KEY_RANGES[prop]);
+    return prop === "rotation" ? value : clamp(value, keyRange(prop, frame));
   };
   let [width, height] = [picture.width, picture.height];
   if (motion.scale?.length && picture.unscaled) {
@@ -145,14 +154,14 @@ function roundHalfEven(value: number): number {
   return floor % 2 === 0 ? floor : floor + 1;
 }
 
-/** The plan's Overlays as drawn at `time`: each keyed one's picture sampled there (`pictureAt`). */
-export function overlaysAt(plan: RenderPlan, time: number): RenderPlan["overlays"] {
-  return plan.overlays.map((event) => (isKeyed(event.picture) ? { ...event, picture: pictureAt(event.picture, time) } : event));
+/** The plan's Overlays (or `events`, its Behind ones) as drawn at `time`: each keyed one's picture sampled there (`pictureAt`). */
+export function overlaysAt(plan: RenderPlan, time: number, events: RenderPlan["overlays"] = plan.overlays): RenderPlan["overlays"] {
+  return events.map((event) => (isKeyed(event.picture) ? { ...event, picture: pictureAt(event.picture, time, plan) } : event));
 }
 
 /** The plan's Scenes as drawn at `time`: each keyed picture (a video Segment's or a Manual Scene's) sampled there (`pictureAt`). */
 export function scenesAt(plan: RenderPlan, time: number): RenderPlan["scenes"] {
-  return plan.scenes.map((scene) => (scene.picture && isKeyed(scene.picture) ? { ...scene, picture: pictureAt(scene.picture, time) } : scene));
+  return plan.scenes.map((scene) => (scene.picture && isKeyed(scene.picture) ? { ...scene, picture: pictureAt(scene.picture, time, plan) } : scene));
 }
 
 // A picture layer of the plan as the preview draws it (docs/adr/0010): its event, and its id on the
@@ -168,9 +177,9 @@ export const pictureLayers = (plan: RenderPlan): ShownLayer[] => [
   ...plan.texts.map((event): ShownLayer => ({ id: `text:${event.layer.id}`, event })),
 ];
 
-/** Whether any picture of the plan moves: an Overlay's, a Scene's or a picture layer's. */
+/** Whether any picture of the plan moves: an Overlay's (a Behind one's too), a Scene's or a picture layer's. */
 export const hasKeyedPictures = (plan: RenderPlan) =>
-  plan.overlays.some((event) => isKeyed(event.picture)) ||
+  [...plan.overlays, ...(plan.behind ?? [])].some((event) => isKeyed(event.picture)) ||
   plan.scenes.some((scene) => !!scene.picture && isKeyed(scene.picture)) ||
   pictureLayers(plan).some(({ event }) => isKeyed(event.picture));
 
@@ -203,58 +212,76 @@ export interface SlotView {
   panel: Panel | null;
   picture: Picture | null;
   colour: string | null;
+  image?: string | null;
 }
 
 /**
  * What a deck's video `slot` shows in `scene` (docs/adr/0006): the Scene's panel for the slot; but in
- * a Manual Scene (ADR 0007) the first shows its Background (the blurred cover panel, or its colour)
- * and the second its picture, so that the Source is drawn from the decks as every other Scene is.
+ * a Manual Scene (ADR 0007) the first shows its Background (the blurred cover panel, its colour, or
+ * its image) and the second its picture, so that the Source is drawn from the decks as every other Scene is.
  */
 export function slotView(scene: ScenePlan | undefined, slot: number): SlotView {
   if (scene?.layout !== "manual") return { panel: scene?.panels[slot] ?? null, picture: null, colour: null };
-  return slot === 0 ? { panel: scene.panels[0] ?? null, picture: null, colour: scene.colour } : { panel: null, picture: scene.picture, colour: null };
+  return slot === 0
+    ? { panel: scene.panels[0] ?? null, picture: null, colour: scene.colour, ...(scene.image ? { image: scene.image } : {}) }
+    : { panel: null, picture: scene.picture, colour: null };
+}
+
+/**
+ * A box filled with a Background of a colour, or of a Media Library image (ADR 0015) covering it and
+ * centred, as the render's `_plain` draws one over the frame.
+ */
+export function filledStyle(colour: string | null, image?: string | null): CSSProperties {
+  return {
+    backgroundColor: colour ?? undefined,
+    ...(image ? { backgroundImage: `url("${mediaItemUrl(image)}")`, backgroundSize: "cover", backgroundPosition: "center" } : {}),
+  };
 }
 
 // The Background of the picture itself, blurred (the colour is kept for when it is switched to one).
 export const BLURRED: Background = { kind: "blur", colour: "#000000" };
 
-/** The largest size `size` fits in `frame` at, keeping its aspect: a picture's size at scale 1. */
-export function fittedSize(size: { width: number; height: number }, frame: { width: number; height: number } = FRAME): { width: number; height: number } {
+/** The largest size `size` fits in `frame` (the Canvas) at, keeping its aspect: a picture's size at scale 1. */
+export function fittedSize(size: Size, frame: Size): Size {
   const fit = Math.min(frame.width / size.width, frame.height / size.height);
   return { width: size.width * fit, height: size.height * fit };
 }
 
-/** The scale at which a `width` x `height` picture covers the frame. */
-export function coverScale(width: number, height: number): number {
-  return Math.max(FRAME.width / width, FRAME.height / height) / Math.min(FRAME.width / width, FRAME.height / height);
+/** The scale at which a `width` x `height` picture covers the Canvas `frame`. */
+export function coverScale(width: number, height: number, frame: Size): number {
+  return Math.max(frame.width / width, frame.height / height) / Math.min(frame.width / width, frame.height / height);
 }
 
 /**
- * The scale at which a `width` x `height` picture turned `rotation` degrees covers the frame: Fill.
+ * The scale at which a `width` x `height` picture turned `rotation` degrees covers the Canvas `frame`: Fill.
  * Turned a quarter (or three), its fitted width stands up the frame and its height across it; at
  * any other angle it is the cover scale of the picture unturned.
  */
-export function fillScale(width: number, height: number, rotation: number): number {
-  if (Math.abs(rotation % 180) !== 90) return coverScale(width, height);
-  const fitted = fittedSize({ width, height });
-  return Math.max(FRAME.width / fitted.height, FRAME.height / fitted.width);
+export function fillScale(width: number, height: number, rotation: number, frame: Size): number {
+  if (Math.abs(rotation % 180) !== 90) return coverScale(width, height, frame);
+  const fitted = fittedSize({ width, height }, frame);
+  return Math.max(frame.width / fitted.height, frame.height / fitted.width);
 }
 
-/** The scale that draws a `width` x `height` picture `pixels` wide, within the Transform's range. */
-export function scaleForWidth(width: number, height: number, pixels: number): number {
-  return clamp(pixels / fittedSize({ width, height }).width, SCALE_RANGE);
+/** The scale that draws a `width` x `height` picture `pixels` wide on the Canvas `frame`, within the Transform's range. */
+export function scaleForWidth(width: number, height: number, pixels: number, frame: Size): number {
+  return clamp(pixels / fittedSize({ width, height }, frame).width, SCALE_RANGE);
 }
 
 /** The size of a Media Library item's picture, in pixels; undefined while it isn't known (or it has none). */
 export const mediaSize = (item: MediaItem | undefined) => (item?.width && item.height ? { width: item.width, height: item.height } : undefined);
 
+// How far down the frame a new Overlay's centre is: 760 px on 9:16.
+const OVERLAY_DOWN = 760 / 1920;
+
 /**
- * Where a new Overlay of an item `size` pixels large is placed, and what its Reset puts it back to:
- * half the frame wide (540 px, at the scale its size gives that) in its upper middle; at half scale
- * while its size isn't known.
+ * Where a new Overlay of an item `size` pixels large is placed on the Canvas `frame`, and what its
+ * Reset puts it back to: half the frame wide (540 px on 9:16, at the scale its size gives that) in
+ * its upper middle; at half scale while its size isn't known.
  */
-export function overlayPlacement(size: { width: number; height: number } | undefined): Transform {
-  return { ...IDENTITY, y: 760, scale: size ? Number(scaleForWidth(size.width, size.height, 540).toFixed(4)) : 0.5 };
+export function overlayPlacement(size: Size | undefined, frame: Size): Transform {
+  const scale = size ? Number(scaleForWidth(size.width, size.height, frame.width / 2, frame).toFixed(4)) : 0.5;
+  return { ...identity(frame), y: Math.round(frame.height * OVERLAY_DOWN), scale };
 }
 
 export const clamp = (value: number, [low, high]: readonly [number, number]) => Math.min(Math.max(value, low), high);

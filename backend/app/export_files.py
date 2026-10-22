@@ -28,6 +28,7 @@ from app.config import Settings
 from app.encoding import ExportSettings
 from app.jobs import Job
 from app.logos import LogoStore
+from app.matte import MatteRunner
 from app.media import MediaStore
 from app.planner import RenderPlan
 from app.renderer import AudioFormat, Renderer, shown_frame
@@ -78,12 +79,14 @@ def save_frame(
     settings: Settings,
     media: MediaStore,
     logos: LogoStore,
+    mattes: MatteRunner | None = None,
 ) -> Path:
     """Write the frame of `plan` (the Candidate's, at `export`'s frame rate) shown at `at` seconds
-    into it, drawn at `export`'s size, as its `frame_name`, and return its path."""
+    into it, drawn at `export`'s size, as its `frame_name`, and return its path. Its cut-out Segments'
+    Matte pieces are made by `mattes` when they aren't there."""
     return _written(
         job_dir, frame_name(candidate_id, at, plan.fps, plan.duration), settings,
-        lambda _, path: draw_frame(job, job_dir, plan, at, path, export, settings, media, logos),
+        lambda _, path: draw_frame(job, job_dir, plan, at, path, export, settings, media, logos, mattes),
     )
 
 
@@ -97,13 +100,14 @@ def draw_frame(
     settings: Settings,
     media: MediaStore,
     logos: LogoStore,
+    mattes: MatteRunner | None = None,
 ) -> None:
     """Draw the frame of `plan` shown at `at` seconds into it, at `export`'s size, as a PNG at `path`,
     as the render draws it (with a Renderer of its own): save_frame's drawing, which Compare render
     (GLOSSARY) uses too, writing it outside the Job."""
     assert job.source is not None
     source = job.source
-    drawn, logo, files, pictures = drawing_inputs(plan, export, job_dir, source, settings, media, logos)
+    drawn, logo, files, pictures = drawing_inputs(plan, export, job_dir, source, settings, media, logos, mattes=mattes)
     Renderer(settings.ffmpeg_bin, settings.render).frame(job_dir / source.video, drawn, at, path, logo, files, pictures, export)
 
 

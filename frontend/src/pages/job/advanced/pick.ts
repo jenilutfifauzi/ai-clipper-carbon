@@ -95,16 +95,32 @@ export const counted = (n: number, kind: ItemKind) => `${n} ${NAMES[kind]}${n ==
 /** Parts of a sentence listed: "a", "a and b", "a, b and c". */
 export const listed = (parts: string[]) => (parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? ""));
 
-/** The Track each kind of item is on. */
+/** The Track each kind of item is on: an Overlay Behind the Main Track is on the Behind Track instead (`trackOf`). */
 export const TRACK_OF: Record<ItemKind, TrackKind> = { segment: "video", text: "text", shape: "shape", music: "music", overlay: "overlay", adjustment: "adjust" };
 
-/** `pick` without what is on the `locked` Tracks, which can't be picked: a join is on the Video Track, a Cue on the Captions Track. */
-export function unlockedPick(pick: Pick, locked: TrackKind[]): Pick {
+/** The Track `item` (of `kind`) is on: its kind's, or the Behind Track for an Overlay Behind the Main Track (ADR 0015). */
+export const trackOf = (kind: ItemKind, item: { behind?: boolean } | undefined): TrackKind =>
+  kind === "overlay" && item?.behind ? "behind" : TRACK_OF[kind];
+
+/** The Overlays on `track`: the Overlay Track's, over the Main Track, or the Behind Track's (ADR 0015). */
+export const overlaysOn = <T extends { behind?: boolean }>(overlays: T[], track: "overlay" | "behind"): T[] =>
+  overlays.filter((overlay) => trackOf("overlay", overlay) === track);
+
+/** The Track the item `ref` names is on, in `edits` (`trackOf`). */
+export const trackOfRef = (ref: ItemRef, edits: Partial<AdvancedEdits> | undefined): TrackKind =>
+  trackOf(ref.kind, edits && (listOf(edits, ref.kind) as { id: string; behind?: boolean }[]).find((item) => item.id === ref.id));
+
+/**
+ * `pick` without what is on the `locked` Tracks, which can't be picked: a join is on the Video Track, a
+ * Cue on the Captions Track, an Overlay on the Overlay Track or, Behind the Main Track, on the Behind
+ * Track (as `edits` has it).
+ */
+export function unlockedPick(pick: Pick, locked: TrackKind[], edits?: Partial<AdvancedEdits>): Pick {
   if (!locked.length || pick === null) return pick;
   if (pick.kind === "join") return locked.includes("video") ? null : pick;
   if (pick.kind === "cue") return locked.includes("captions") ? null : pick;
   if (pick.kind !== "items") return locked.includes(pick.kind) ? null : pick;
-  const kept = pick.items.filter((item) => !locked.includes(TRACK_OF[item.kind]));
+  const kept = pick.items.filter((item) => !locked.includes(trackOfRef(item, edits)));
   return kept.length === pick.items.length ? pick : picked(...kept);
 }
 

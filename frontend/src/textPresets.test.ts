@@ -2,6 +2,7 @@
 // and a look saved from a Text Layer landing under Mine.
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { api, type TextPreset } from "./api";
+import { PORTRAIT } from "./pages/job/editor/canvas";
 import { IDENTITY } from "./pages/job/editor/picture";
 import { fromPreset } from "./pages/job/advanced/TextPresets";
 import { newTextLayer } from "./pages/job/advanced/TextLayers";
@@ -52,7 +53,7 @@ describe("the Text tab's shelves", () => {
     const chosen = forNewTitles([...BUILTIN, { ...mine, default: true }]);
     expect(chosen?.id).toBe("brand");
     // The new Text Layer copies its look and sample, at the frame's centre.
-    const layer = newTextLayer(fromPreset(chosen!), 2, 10);
+    const layer = newTextLayer(fromPreset(chosen!, PORTRAIT), 2, 10);
     expect(layer).toMatchObject({ text: "Brand", style: mine.style, transform: IDENTITY, start: 2, secs: 3, animation_in: "none" });
   });
 });

@@ -11,6 +11,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import Overlay, Transform
+from app.canvas import PORTRAIT
 from app.frames import _effects_at
 from app.config import load_settings
 from app.planner import MediaInfo, overlay_events, plan_render
@@ -50,7 +51,7 @@ def played(filters: list[str]) -> tuple[tuple[int, int], int]:
 def test_each_effect_runs_at_its_default_minimum_and_maximum_and_keeps_a_1_s_clips_size_and_length(effect, corner):
     # A colour has no range: its default.
     params = {setting.key: setting.default if setting.type == "color" else getattr(setting, corner) for setting in effect.settings}
-    chain = video_effect_chain([VideoEffect(effect.id, params)], (1080, 1920))
+    chain = video_effect_chain([VideoEffect(effect.id, params)], (1080, 1920), frame=PORTRAIT.size)
     assert chain
     assert played(chain) == ((1080, 1920), 30)
 
@@ -89,8 +90,8 @@ def test_a_stack_is_checked_its_defaults_filled_and_a_disabled_entry_adds_nothin
         with pytest.raises(ValueError) as refused:
             checked_video_effects(stack, "Overlay o")
         assert message in str(refused.value), str(refused.value)
-    assert video_effect_chain([VideoEffect("gaussian-blur", {"radius": 10.0}, enabled=False)], (1080, 1920)) == []
-    assert video_effect_chain([], (1080, 1920)) == []
+    assert video_effect_chain([VideoEffect("gaussian-blur", {"radius": 10.0}, enabled=False)], (1080, 1920), frame=PORTRAIT.size) == []
+    assert video_effect_chain([], (1080, 1920), frame=PORTRAIT.size) == []
 
 
 # Seam B: the planner
@@ -103,7 +104,7 @@ def test_an_overlays_enabled_effects_reach_its_event_their_sizes_times_its_scale
         Overlay("i", IMAGE, 0.0, 1.0, transform=Transform(scale=2), video_effects=[blur]),
         Overlay("off", IMAGE, 0.0, 1.0, video_effects=[VideoEffect("gaussian-blur", enabled=False)]),
         Overlay("plain", IMAGE, 0.0, 1.0),
-    ], 10, ITEMS)
+    ], 10, ITEMS, canvas=PORTRAIT)
     # The larger of scale x stretch on each axis: 1.5 across; 2.
     assert [event.video_effects for event in events] == [
         [VideoEffect("gaussian-blur", {"radius": 12.0})],
@@ -120,9 +121,9 @@ def test_a_keyed_stretched_pictures_effect_is_sized_by_its_more_stretched_axis_w
     across, down = overlay_events([
         Overlay("x", IMAGE, 0.0, 1.0, transform=Transform(stretch_x=2), video_effects=[blur]),
         Overlay("y", IMAGE, 0.0, 1.0, transform=Transform(stretch_y=2), video_effects=[blur]),
-    ], 10, ITEMS)
+    ], 10, ITEMS, canvas=PORTRAIT)
     item = ITEMS[IMAGE]
-    sigmas = [float(_effects_at(event.picture, event.video_effects, (item.width, item.height))[-1].split("=")[-1]) for event in (across, down)]
+    sigmas = [float(_effects_at(event.picture, event.video_effects, (item.width, item.height), frame=PORTRAIT.size)[-1].split("=")[-1]) for event in (across, down)]
     # Planned 16 (8 x 2) on a picture drawn twice as long along the stretch as at scale 1 (1080 px
     # wide, fitted): 8 of its own 320 / 1080 pixels per fitted pixel, stretched with it, either way.
     assert sigmas == pytest.approx([8 * 320 / 1080] * 2, abs=0.01), sigmas
@@ -130,7 +131,7 @@ def test_a_keyed_stretched_pictures_effect_is_sized_by_its_more_stretched_axis_w
 
 def test_a_plan_drawn_at_another_size_scales_its_overlays_effects_sizes_with_it():
     blurred = Overlay("i", IMAGE, 0.0, 1.0, video_effects=[VideoEffect("gaussian-blur", {"radius": 9})])
-    plan = plan_render(10, 14, SOURCE, overlays=[blurred], media_info=ITEMS)
+    plan = plan_render(10, 14, SOURCE, overlays=[blurred], media_info=ITEMS, canvas=PORTRAIT)
     [drawn] = scaled_plan(plan, (720, 1280)).overlays
     # At 720p, two thirds: 9 x 0.5 (its scale) x 2/3.
     assert drawn.video_effects == [VideoEffect("gaussian-blur", {"radius": 3.0})]
@@ -140,7 +141,7 @@ def test_an_overlay_stored_without_effects_has_none_and_plans_as_before():
     stored = {"id": "o", "media": IMAGE, "start": 0.0, "secs": 1.0}
     overlay = TypeAdapter(Overlay).validate_python(stored)
     assert overlay.video_effects == []
-    [event] = overlay_events([overlay], 10, ITEMS)
+    [event] = overlay_events([overlay], 10, ITEMS, canvas=PORTRAIT)
     assert event.video_effects == []
 
 

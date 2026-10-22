@@ -1,15 +1,16 @@
 import { Crop as CropIcon, FlipHorizontal2, FlipVertical2 } from "lucide-react";
-import { useContext, useId, useState, type ReactNode } from "react";
-import type { Background, Crop, Keys, Shape, TextLayer, Transform } from "../../../api";
+import { createContext, useContext, useId, useState, type ReactNode } from "react";
+import { mediaThumbnailUrl, type Background, type Crop, type Keys, type MediaItem, type Shape, type TextLayer, type Transform } from "../../../api";
 import { Button } from "../../../components/Button";
 import { ColorField } from "../../../components/ColorField";
 import { Segmented } from "../../../components/Segmented";
 import { Slider } from "../../../components/Slider";
 import { cx } from "../../../format";
 import { croppedSize, NO_CROP, tidyCrop } from "../editor/cropGestures";
-import { Group } from "../editor/StyleFields";
+import { Group, Mixed } from "../editor/StyleFields";
 import { PICTURE_KEYS, type PictureKey } from "../editor/keyframes";
-import { clamp, FRAME, fillScale, SCALE_RANGE, STRETCH_RANGE } from "../editor/picture";
+import { centreOf, useCanvas } from "../editor/canvas";
+import { clamp, fillScale, SCALE_RANGE, STRETCH_RANGE } from "../editor/picture";
 import type { Playback } from "../editor/playback";
 import { keyedRange, shownTransform, tooManyKeys, writtenTransform } from "./keyActions";
 import { KeyCluster, KeyingContext, useKeyNotice, useKeyTime, useTouch, type Keying } from "./KeyCluster";
@@ -39,7 +40,7 @@ type TransformFieldsProps = {
 /**
  * A picture's Transform as numbers (ADR 0007): its centre, its scale in percent of its fitted size
  * and its stretch across and down, its rotation, flips and opacity; and Fit (scale 1, no stretch,
- * centred), Fill (the scale that covers the frame with what its Crop keeps of its item's `size`, as
+ * centred), Fill (the scale that covers the Canvas with what its Crop keeps of its item's `size`, as
  * turned: `fillScale`) and Reset (the Transform at its `defaults`, and no Crop, as one change). Its
  * Crop's four edges in percent of its width and height, tidied as they change (a tenth kept), and
  * with `onCropMode` a Crop button that opens Crop mode on the stage. Each field's changes are one
@@ -63,6 +64,7 @@ export function TransformFields(props: TransformFieldsProps) {
   const off = (prop: PictureKey) => !!keyed && !keyed.inside && !!keyed.keys[prop]?.length;
   const fitOff = off("x") || off("y") || off("scale");
   const touch = useTouch();
+  const canvas = useCanvas();
   const set = (field: keyof Transform, value: Transform[keyof Transform]) => {
     if (keyed && (PICTURE_KEYS as readonly string[]).includes(field)) touch(field as PictureKey);
     onChange({ ...transform, [field]: value }, field);
@@ -71,8 +73,8 @@ export function TransformFields(props: TransformFieldsProps) {
     <Group title="Transform">
       {PICTURE_KEYS.some(off) && <p className="text-sm text-pretty text-muted">Its keyed fields change with the playhead on it.</p>}
       <div className="grid grid-cols-2 gap-3">
-        <NumberField label="X" unit="px" value={transform.x} range={[0, FRAME.width]} onChange={(x) => set("x", x)} cluster={cluster("x", "X")} disabled={off("x")} />
-        <NumberField label="Y" unit="px" value={transform.y} range={[0, FRAME.height]} onChange={(y) => set("y", y)} cluster={cluster("y", "Y")} disabled={off("y")} />
+        <NumberField label="X" unit="px" value={transform.x} range={[0, canvas.width]} onChange={(x) => set("x", x)} cluster={cluster("x", "X")} disabled={off("x")} />
+        <NumberField label="Y" unit="px" value={transform.y} range={[0, canvas.height]} onChange={(y) => set("y", y)} cluster={cluster("y", "Y")} disabled={off("y")} />
         <NumberField
           label="Scale"
           unit="%"
@@ -86,7 +88,7 @@ export function TransformFields(props: TransformFieldsProps) {
           label="Rotation"
           unit="°"
           value={transform.rotation}
-          range={keyedRange("rotation", !!keyed?.keys.rotation?.length)}
+          range={keyedRange("rotation", !!keyed?.keys.rotation?.length, canvas)}
           onChange={(rotation) => set("rotation", rotation)}
           cluster={cluster("rotation", "Rotation")}
           disabled={off("rotation")}
@@ -148,7 +150,8 @@ function CropAndFit({
   const { crop, size, defaults, onCrop, onCropMode } = picture;
   const cut = (edge: keyof Crop) => (value: number) => onCrop(tidyCrop({ ...crop, [edge]: value / 100 }), edge);
   const kept = size && croppedSize(size, crop);
-  const centred = { x: FRAME.width / 2, y: FRAME.height / 2, stretch_x: 1, stretch_y: 1 };
+  const canvas = useCanvas();
+  const centred = { ...centreOf(canvas), stretch_x: 1, stretch_y: 1 };
   return (
     <>
       <fieldset className="flex min-w-0 flex-col gap-1.5">
@@ -173,7 +176,7 @@ function CropAndFit({
         <Button
           size="sm"
           disabled={!kept || fitOff}
-          onClick={() => kept && onChange({ ...transform, ...centred, scale: clamp(fillScale(kept.width, kept.height, transform.rotation), SCALE_RANGE) }, "fill")}
+          onClick={() => kept && onChange({ ...transform, ...centred, scale: clamp(fillScale(kept.width, kept.height, transform.rotation, canvas), SCALE_RANGE) }, "fill")}
         >
           Fill
         </Button>
@@ -211,13 +214,14 @@ export function useKeyedTransform({
   onWritten: (written: { transform: Transform; keys: Keys }, group: string) => void;
 }): Pick<TransformFieldsProps, "transform" | "onChange" | "keyed"> {
   const time = useKeyTime(playback);
+  const canvas = useCanvas();
   const at = span && keyTime(span, time);
-  const shown = shownTransform(transform, keys, at ?? (span ? heldKeyTime(span, time) : 0));
+  const shown = shownTransform(transform, keys, at ?? (span ? heldKeyTime(span, time) : 0), canvas);
   const notify = useKeyNotice();
   return {
     transform: shown,
     onChange: (next, field) => {
-      const written = writtenTransform(transform, keys, next, at, shown);
+      const written = writtenTransform(transform, keys, next, at, canvas, shown);
       if (written.full) return notify(tooManyKeys(written.full));
       onWritten({ transform: written.transform, keys: written.keys }, keyedGroup(`${group}.${field}`, written.keys !== keys, at));
     },
@@ -286,25 +290,102 @@ function KeyedLayerTransform<T extends TextLayer | Shape>({
   return <TransformFields {...fields} onReset={() => onChange(resetTextLayer(layer), `${kind}:${layer.id}:transform.reset`)} />;
 }
 
-const BACKGROUNDS = [
-  { value: "blur", label: "Blur" },
-  { value: "colour", label: "Colour" },
-] as const;
+/** The Media Library's images, which an image Background (ADR 0015) is picked from: given by the Inspector's host. */
+export const LibraryImages = createContext<MediaItem[]>([]);
 
 /**
- * A Framing's Background (ADR 0007): the picture itself blurred, or a colour, which shows wherever
- * the picture doesn't cover the frame. Each change is one `group` of the history, named after its field.
+ * `background` as `kind`: its colour kept, so that changing back restores it; an image only while
+ * it is an image (the first of `images` when it had none), as a Background's image counts as used.
+ * Null for an image without any image to show.
+ */
+export function backgroundOfKind(background: Background, kind: Background["kind"], images: MediaItem[]): Background | null {
+  if (kind !== "image") return { kind, colour: background.colour };
+  const image = background.image ?? images[0]?.id;
+  return image ? { kind, colour: background.colour, image } : null;
+}
+
+/**
+ * What shows behind a picture (ADR 0007, 0015), without its section: the picture itself blurred, a
+ * colour, or an image of the Media Library (`LibraryImages`) covering the frame, picked from their
+ * thumbnails. Image is offered once there is an image to pick. `mixed` marks the kind when the
+ * picked items' differ. Each change is one `field` ("kind", "colour" or "image").
+ */
+export function BackgroundPicker({
+  background,
+  onChange,
+  legend = "Behind the picture",
+  mixed = false,
+}: {
+  background: Background;
+  onChange: (background: Background, field: string) => void;
+  legend?: string;
+  mixed?: boolean;
+}) {
+  const images = useContext(LibraryImages);
+  const options: { value: Background["kind"]; label: string }[] = [
+    { value: "blur", label: "Blur" },
+    { value: "colour", label: "Colour" },
+    ...(images.length || background.kind === "image" ? [{ value: "image" as const, label: "Image" }] : []),
+  ];
+  const name = useId();
+  return (
+    <>
+      <Segmented
+        legend={legend}
+        options={options}
+        value={background.kind}
+        marker={mixed ? <Mixed /> : undefined}
+        onChange={(kind: Background["kind"]) => {
+          const changed = backgroundOfKind(background, kind, images);
+          if (changed) onChange(changed, "kind");
+        }}
+      />
+      {background.kind === "colour" && <ColorField label="Colour" value={background.colour} onChange={(colour) => onChange({ ...background, colour }, "colour")} />}
+      {background.kind === "image" && (
+        <fieldset className="flex min-w-0 flex-col gap-1.5">
+          <legend className="mb-1.5 text-sm font-medium">Image</legend>
+          {background.image && !images.some((image) => image.id === background.image) && <p className="text-sm text-muted">Its image isn't in the Media Library.</p>}
+          <div className="grid grid-cols-4 gap-2">
+            {images.map((image) => (
+              <label key={image.id} className="relative flex aspect-square min-w-0 cursor-pointer" title={image.name}>
+                <input
+                  type="radio"
+                  name={name}
+                  value={image.id}
+                  checked={background.image === image.id}
+                  onChange={() => onChange({ ...background, image: image.id }, "image")}
+                  aria-label={image.name}
+                  className="peer sr-only"
+                />
+                <img
+                  src={mediaThumbnailUrl(image.id)}
+                  alt=""
+                  loading="lazy"
+                  className={cx(
+                    "size-full rounded-[10px] border border-border bg-fill object-cover",
+                    "peer-checked:outline-2 peer-checked:outline-offset-2 peer-checked:outline-accent",
+                    "peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-focus",
+                  )}
+                />
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+      {!images.length && background.kind !== "image" && <p className="text-xs text-pretty text-muted">Add an image to the Media Library to show it here.</p>}
+    </>
+  );
+}
+
+/**
+ * A Framing's Background (ADR 0007): the picture itself blurred, a colour, or a Media Library image
+ * covering the frame (ADR 0015), which shows wherever the picture doesn't cover the frame. Each change
+ * is one `group` of the history, named after its field.
  */
 export function BackgroundFields({ background, onChange }: { background: Background; onChange: (background: Background, field: string) => void }) {
   return (
     <Group title="Background">
-      <Segmented
-        legend="Behind the picture"
-        options={BACKGROUNDS}
-        value={background.kind}
-        onChange={(kind: Background["kind"]) => onChange({ ...background, kind }, "kind")}
-      />
-      {background.kind === "colour" && <ColorField label="Colour" value={background.colour} onChange={(colour) => onChange({ ...background, colour }, "colour")} />}
+      <BackgroundPicker background={background} onChange={onChange} />
     </Group>
   );
 }

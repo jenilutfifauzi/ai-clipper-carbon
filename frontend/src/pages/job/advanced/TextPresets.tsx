@@ -9,14 +9,16 @@ import { Select } from "../../../components/Select";
 import { fontFamily } from "../../../fonts";
 import { chooseForNewTitles, deleteTextPreset, forNewTitles, renameTextPreset, saveTextPreset, shelvesOf, useTextPresets } from "../../../textPresets";
 import { ImportFont } from "../editor/ImportFont";
-import { IDENTITY } from "../editor/picture";
+import { useCanvas } from "../editor/canvas";
+import { identity } from "../editor/picture";
+import type { Size } from "../editor/pictureGestures";
 import { shadowOffset, shadowOn } from "../editor/shadow";
 import { DRAG_TEXT } from "./drag";
 import type { UntimedTextLayer } from "./TextLayers";
 
-/** What a Text Layer made from `preset` is: its sample text in its Text Style, a copy, at the frame's centre and without animations. */
-export function fromPreset(preset: TextPreset): UntimedTextLayer {
-  return { text: preset.sample, transform: IDENTITY, style: preset.style, animation_in: "none", animation_out: "none", animation_ms: 300 };
+/** What a Text Layer made from `preset` is: its sample text in its Text Style, a copy, at the centre of the Canvas `frame` and without animations. */
+export function fromPreset(preset: TextPreset, frame: Size): UntimedTextLayer {
+  return { text: preset.sample, transform: identity(frame), style: preset.style, animation_in: "none", animation_out: "none", animation_ms: 300 };
 }
 
 /**
@@ -26,10 +28,11 @@ export function fromPreset(preset: TextPreset): UntimedTextLayer {
  */
 export function TextAssets({ fonts, onAdd }: { fonts: FontInfo[] | null; onAdd: (made: UntimedTextLayer) => void }) {
   const presets = useTextPresets();
+  const canvas = useCanvas();
   const forNew = presets && forNewTitles(presets);
   return (
     <div className="flex flex-col gap-3">
-      <Button variant="primary" size="sm" className="self-start" disabled={!forNew} onClick={() => forNew && onAdd(fromPreset(forNew))}>
+      <Button variant="primary" size="sm" className="self-start" disabled={!forNew} onClick={() => forNew && onAdd(fromPreset(forNew, canvas))}>
         <Plus aria-hidden size={16} />
         Add text
       </Button>
@@ -43,7 +46,7 @@ export function TextAssets({ fonts, onAdd }: { fonts: FontInfo[] | null; onAdd: 
             <h3 className="text-sm font-medium text-muted">{shelf.category}</h3>
             <div className="grid grid-cols-2 gap-2">
               {shelf.presets.map((preset) => (
-                <PresetTile key={preset.id} preset={preset} fonts={fonts} onAdd={() => onAdd(fromPreset(preset))} />
+                <PresetTile key={preset.id} preset={preset} fonts={fonts} onAdd={() => onAdd(fromPreset(preset, canvas))} />
               ))}
             </div>
           </section>

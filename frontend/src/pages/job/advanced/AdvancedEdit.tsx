@@ -8,6 +8,7 @@ import {
   type Candidate,
   type CandidateChange,
   type AdjustmentLayer,
+  type Aspect,
   type ClipSegment,
   type Grade,
   type JobDetail,
@@ -35,6 +36,7 @@ import { cx } from "../../../format";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
 import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
+import { CanvasContext, useCanvasOf } from "../editor/canvas";
 import { ClipPreview, type StageControls } from "../editor/ClipPreview";
 import { ShowOriginal } from "../editor/GradeFilters";
 import { PICTURE_KEYS } from "../editor/keyframes";
@@ -56,6 +58,7 @@ import { useVideoEffects } from "../../../videoEffects";
 import { draftGrades } from "../editor/grading";
 import { failedSegments, pendingSpans, useReplanWhilePending } from "../editor/wordsStatus";
 import { styleControls, usePresets } from "../editor/useStyleDraft";
+import { LibraryImages } from "./TransformFields";
 import { eventCopy, segmentCopy, soundAsk, type RetimedAsk } from "../editor/retimedCopy";
 import {
   addAdjustmentLayer,
@@ -100,6 +103,7 @@ import {
 import { effectsPreparing, useEffectedCopies, useEffectedVersion } from "../editor/effectedCopy";
 import { copy, cut, paste, setClipboard, useClipboard } from "./clipboard";
 import { AdvancedTimeline } from "./AdvancedTimeline";
+import { AspectPicker, changeAspect } from "./AspectPicker";
 import { AssetPanel } from "./AssetPanel";
 import { audioEffectChanges, AudioEffectsFields } from "./AudioEffectsFields";
 import { AdjustPanel } from "./ColorFields";
@@ -173,6 +177,7 @@ import {
   samePick,
   stageIdsOf,
   stageItem,
+  trackOf,
   unlockedPick,
   type ItemRef,
   type Pick,
@@ -200,8 +205,9 @@ const EDITABLE = new Set(["review", "rendering"]);
 const WIDE = "(min-width: 64rem)";
 // The Timeline's labels' column on a desktop, wide enough for each Track's buttons.
 const TRACK_LABEL_WIDTH = 140;
-// How a newer Revision came: saved elsewhere, carried by the refusal of a save here, or restored here.
-type Taken = "elsewhere" | "refused" | "restored";
+// How a newer Revision came: saved elsewhere, carried by the refusal of a save here, restored here,
+// or made by a change of aspect here.
+type Taken = "elsewhere" | "refused" | "restored" | "reshaped";
 
 // How long items changed in another editor are shown as changed on the Timeline.
 const CHANGED_MS = 1600;
@@ -317,6 +323,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [looping, setLooping] = useState(false);
   const library = useMediaLibrary();
   const mediaById = new Map((library.items ?? []).map((item) => [item.id, item]));
+  // The images a Background may show (ADR 0015), offered by the Inspector's Background pickers.
+  const libraryImages = useMemo(() => (library.items ?? []).filter((item) => item.kind === "image"), [library.items]);
   // The Timeline's Filmstrips, fetched and decoded for as long as this editor is open.
   const [mediaCache] = useState(() => new MediaCache());
   useEffect(() => () => mediaCache.clear(), [mediaCache]);
@@ -427,7 +435,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     setEnded(how);
   }
   // A newer Revision: saved elsewhere, the one a save here was refused for (then all the edits here
-  // are unsaved), or a Restore asked for here. The edits here not yet saved are merged onto it.
+  // are unsaved), or a Restore or a change of aspect asked for here. The edits here not yet saved are
+  // merged onto it.
   function incoming(next: Candidate, source: SavedBy, parts: string[], how: Taken) {
     if (next.revision <= revision.current) return;
     if (unanswered.current > 0 && how === "elsewhere") {
@@ -447,7 +456,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     merging.current = unsaved ? theirs : null;
     history.elsewhere(merged, rebase, unsaved);
     setChanged(changedItems(edits, merged));
-    if (how === "restored") return;
+    if (how === "restored" || how === "reshaped") return;
     if (collisions.length) {
       const who = source === "unknown" ? "a change made elsewhere" : `${savedByLabel(source, null, "advanced-edit")}'s change`;
       setNotice({
@@ -473,6 +482,35 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       return null;
     } catch (reason) {
       return staleCandidate(reason) ? "This clip changed meanwhile (another tab or the agent): look again, then restore." : (reason as Error).message;
+    }
+  }
+
+  // The aspect picker's change (docs/adr/0022): the edits waiting here saved first, then the aspect
+  // alone, whose Revision (the Candidate rescaled onto its new Canvas by the backend) is taken as a
+  // Restore's is. Restoring the Revision before it, in the Revision History, undoes it.
+  const [reshaping, setReshaping] = useState(false);
+  async function pickAspect(aspect: Aspect) {
+    if (reshaping || lockedForTake()) return;
+    setReshaping(true);
+    try {
+      const answer = await changeAspect(candidate.aspect, aspect, {
+        flush: async () => {
+          await history.flush();
+          await sending.current;
+        },
+        send: (picked) => api.updateCandidate(job.id, initial.id, { aspect: picked, revision: revision.current }, "advanced-edit"),
+      });
+      if (answer) {
+        setSaveError(null);
+        latest.current.incoming(answer, "advanced-edit", [], "reshaped");
+      }
+    } catch (reason) {
+      const text = staleCandidate(reason)
+        ? "This clip changed meanwhile (another tab or the agent): look again, then change its aspect."
+        : `Couldn't change the aspect: ${(reason as Error).message}`;
+      setNotice({ id: Date.now(), text });
+    } finally {
+      setReshaping(false);
     }
   }
 
@@ -514,9 +552,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   useEffectedCopies(job.id, candidate.id, plannedDraft, preview?.plan ?? null);
   useEffectedVersion();
   useReplanWhilePending(preview?.words_status, setReplan);
+  // The Canvas the Candidate is drawn on (its aspect's until its plan comes), which new items are
+  // placed on and the inspector's fields hold positions to.
+  const canvas = useCanvasOf(preview?.plan, candidate.aspect);
   // What is picked of the edits as they are now: an undo or a change from elsewhere may have taken
   // some of it away (a Cue, once the plan has none of its key), and nothing on a locked Track is picked.
-  const pick = prunedCue(unlockedPick(prunedPick(pickState, edits), tracks.locked), preview?.plan ?? null);
+  const pick = prunedCue(unlockedPick(prunedPick(pickState, edits), tracks.locked, edits), preview?.plan ?? null);
   useEffect(() => {
     if (pick !== pickState) setPickState(pick);
   }, [pick, pickState]);
@@ -755,9 +796,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     change({ music: [...edits.music, clip] });
     added(picked({ kind: "music", id: clip.id }));
   }
-  function addOverlay(item: MediaItem, at = playback.time) {
-    if (refused("overlay")) return;
-    const overlay = newOverlay(item, at, duration);
+  // An Overlay of `item` at `at`: over the Main Track, or `behind` it on the Behind Track (ADR 0015).
+  function addOverlay(item: MediaItem, at = playback.time, behind = false) {
+    if (refused(behind ? "behind" : "overlay")) return;
+    const overlay = newOverlay(item, at, duration, canvas, behind);
     change({ overlays: [...edits.overlays, overlay] });
     added(picked({ kind: "overlay", id: overlay.id }));
   }
@@ -782,9 +824,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     const item = mediaById.get(media);
     if (!item) return;
     if (onto === "music" && item.has_audio) addMusic(item, time);
-    else if (onto === "overlay" && item.kind !== "audio") addOverlay(item, time);
+    else if ((onto === "overlay" || onto === "behind") && item.kind !== "audio") addOverlay(item, time, onto === "behind");
     else if (onto === "segment" && item.kind === "video") {
-      addSegment(newMediaSegment(item, newId()), placeDropped(played, time));
+      addSegment(newMediaSegment(item, newId(), canvas), placeDropped(played, time));
     }
   }
   // The Transition at the join after Segment `after`: set to `kind` (its length and sound kept), changed, or removed.
@@ -892,7 +934,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     tell: (text) => setNotice({ id: Date.now(), text }),
     atEnd: () => atClipEnd(playback.time, playback.duration, fps),
   };
-  const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time), magnetic, locked: tracks.locked, join };
+  const scene = { edits, pick, played, duration, gap: (time: number) => wordGap(job.transcript?.words ?? [], time), magnetic, locked: tracks.locked, join, canvas };
   // The captions' look, from the inspector's Caption Style panel and Preset bar: each change a step of undo.
   const presets = usePresets();
   const captionStyle =
@@ -1090,20 +1132,22 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (moved) history.set(moved.edits, group);
   }
 
-  // The Overlays on the preview, picked and transformed there; on a locked Track, only drawn. One
-  // of several picked moves them all. A keyed one is held where it is at the playhead, and its
-  // keyed fields are written there as Keyframes (auto-key, ADR 0008).
-  const overlayControls: StageControls["overlays"] = tracks.locked.includes("overlay")
+  // The Overlays on the preview (the Behind ones too, ADR 0015), picked and transformed there; on a
+  // locked Track (the Overlay Track, or the Behind Track), only drawn. One of several picked moves
+  // them all. A keyed one is held where it is at the playhead, and its keyed fields are written
+  // there as Keyframes (auto-key, ADR 0008).
+  const overlayControls: StageControls["overlays"] = tracks.locked.includes("overlay") && tracks.locked.includes("behind")
     ? undefined
     : {
         transformOf: (id, time) => {
           const overlay = edits.overlays.find((other) => other.id === id);
-          return overlay && heldTransform(overlay.transform, overlay.keys, overlay, time);
+          if (!overlay || tracks.locked.includes(trackOf("overlay", overlay))) return undefined;
+          return heldTransform(overlay.transform, overlay.keys, overlay, time, canvas);
         },
         onTransform: (id, transform, group, time) => {
           const overlay = edits.overlays.find((other) => other.id === id);
           if (!overlay) return;
-          const old = heldTransform(overlay.transform, overlay.keys, overlay, time);
+          const old = heldTransform(overlay.transform, overlay.keys, overlay, time, canvas);
           if (placedTogether("overlay", id)) moveOnFrame(transform.x - old.x, transform.y - old.y, group);
           else {
             applyKeyed(writeItemTransform(scene, { kind: "overlay", id }, transform, time, old), group);
@@ -1114,7 +1158,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           const overlay = edits.overlays.find((other) => other.id === id);
           if (!overlay) return;
           const cropped = { ...scene, edits: { ...edits, overlays: replaced(edits.overlays, { ...overlay, crop }) } };
-          const held = heldTransform(overlay.transform, overlay.keys, overlay, playback.time);
+          const held = heldTransform(overlay.transform, overlay.keys, overlay, playback.time, canvas);
           applyKeyed(writeItemTransform(cropped, { kind: "overlay", id }, transform, playback.time, held), group);
         },
       };
@@ -1127,12 +1171,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     : {
         transformOf: (id, time) => {
           const layer = edits.text_layers.find((other) => other.id === id);
-          return layer && heldTransform(layer.transform, layer.keys, layer, time);
+          return layer && heldTransform(layer.transform, layer.keys, layer, time, canvas);
         },
         onTransform: (id, transform, group, time) => {
           const layer = edits.text_layers.find((other) => other.id === id);
           if (!layer) return;
-          const old = heldTransform(layer.transform, layer.keys, layer, time);
+          const old = heldTransform(layer.transform, layer.keys, layer, time, canvas);
           if (placedTogether("text", id)) moveOnFrame(transform.x - old.x, transform.y - old.y, group);
           else applyKeyed(writeItemTransform(scene, { kind: "text", id }, transform, time, old), group);
         },
@@ -1150,23 +1194,23 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     : {
         transformOf: (id, time) => {
           const shape = edits.shapes.find((other) => other.id === id);
-          return shape && heldTransform(shape.transform, shape.keys, shape, time);
+          return shape && heldTransform(shape.transform, shape.keys, shape, time, canvas);
         },
         onTransform: (id, transform, group, time) => {
           const shape = edits.shapes.find((other) => other.id === id);
           if (!shape) return;
-          const old = heldTransform(shape.transform, shape.keys, shape, time);
+          const old = heldTransform(shape.transform, shape.keys, shape, time, canvas);
           if (placedTogether("shape", id)) moveOnFrame(transform.x - old.x, transform.y - old.y, group);
           else applyKeyed(writeItemTransform(scene, { kind: "shape", id }, transform, time, old), group);
         },
         onResize: (id, box, transform, group, time) => {
           const shape = edits.shapes.find((other) => other.id === id);
-          if (shape) applyKeyed(resizeShape(scene, id, box, transform, time, heldTransform(shape.transform, shape.keys, shape, time)), group);
+          if (shape) applyKeyed(resizeShape(scene, id, box, transform, time, heldTransform(shape.transform, shape.keys, shape, time, canvas)), group);
         },
       };
   // What the inspector's ‹ ◆ › and the Keyframes pane edit in: each Keyframe edit one change, a drag one gesture.
   const keying: Keying = {
-    edits, pick, locked: tracks.locked, track, plan, playback, onEdits: (next, group) => history.set(next, group), touched, onTouch: setTouched, onNotice: tellOnce,
+    edits, pick, locked: tracks.locked, track, plan, canvas, playback, onEdits: (next, group) => history.set(next, group), touched, onTouch: setTouched, onNotice: tellOnce,
   };
   // A video Segment keyed in its Framing's Transform, or a Manual Scene in its override's: held on
   // the stage where it is at the playhead, and its keyed fields written there as Keyframes, as a
@@ -1175,7 +1219,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     const item = keyedItem(edits, ref, track, plan);
     const transform = item?.transform;
     if (!item || !transform || !PICTURE_KEYS.some((prop) => item.keys[prop]?.length)) return null;
-    return { ref, transform, held: (time: number) => heldTransform(transform, item.keys, item, time) };
+    return { ref, transform, held: (time: number) => heldTransform(transform, item.keys, item, time, canvas) };
   };
   // The picture behind the Overlays, the Segment under the playhead: picked there (its Video Track
   // unlocked), and transformed when it is a video's or a Manual Scene's (docs/adr/0007).
@@ -1236,6 +1280,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         src={mediaUrl(job.id, source.preview ?? source.video)}
         jobId={job.id}
         preview={shown}
+        aspect={candidate.aspect}
         blank={tracks.hidden.includes("video")}
         fonts={fonts}
         playback={playback}
@@ -1248,7 +1293,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           },
           onPlace: (id, place, group) =>
             id === "hook"
-              ? change({ style_overrides: placedOverrides(edits.style_overrides, "hook", place) }, group)
+              ? change({ style_overrides: placedOverrides(edits.style_overrides, "hook", place, canvas) }, group)
               : placeCaptions({ kind: "captions" }, place, group),
           // A Cue moved or scaled on its own: its Cue Edit.
           cues: { onPlace: (key, place, group) => placeCaptions({ kind: "cue", key }, place, group) },
@@ -1401,7 +1446,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onDropMedia: dropMedia,
             onDropText: (id, time) => {
               const preset = textPresets?.find((p) => p.id === id);
-              if (preset) addText(fromPreset(preset), time);
+              if (preset) addText(fromPreset(preset, canvas), time);
             },
             onDropShape: (kind, time) => addNewShape(kind, time),
             onDropLook: addAdjustment,
@@ -1418,51 +1463,54 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const bottomTabContext: BottomTabContext = { timeline, keying, fps, mediaById };
   const inspector = (
     <KeyingContext.Provider value={keying}>
-      <Inspector
-        templates={templates}
-        effectsPreparing={effectsPreparing}
-        effectsElsewhere={!wide}
-        videoEffectsShown={wide}
-        pick={pick}
-        edits={edits}
-        duration={duration}
-        preview={preview}
-        fonts={fonts}
-        captionStyle={captionStyle}
-        presetsError={presets.error}
-        actions={actions}
-        mediaById={mediaById}
-        sourceLength={sourceLength}
-        playback={playback}
-        transition={transitionPanel(!wide)}
-        onEdits={history.set}
-        onText={updateText}
-        onShape={updateShape}
-        onAdjustment={updateAdjustment}
-        onMusic={updateMusic}
-        onOverlay={updateOverlay}
-        onSegment={updateSegment}
-        onSpeed={setItemSpeed}
-        onReverse={setItemReverse}
-        copyOf={copyOf}
-        onHold={setFreezeHold}
-        cropMode={cropMode}
-        locked={tracks.locked}
-        onCue={applyCue}
-        captionsOf={(segment, item) => (
-          <MediaCaptionFields
-            segment={segment}
-            item={item}
-            job={job.options}
-            status={preview?.words_status[segment.id]}
-            error={preview?.words_errors?.[segment.id]}
-            onChange={updateSegment}
-            onLanguage={(language) => setMediaLanguage(item, language)}
-            onTranscribe={(again) => api.transcribeMediaWords(job.id, item.id, again).then(() => setReplan((n) => n + 1))}
-          />
-        )}
-        detaching={detaching}
-      />
+      <LibraryImages.Provider value={libraryImages}>
+        <Inspector
+          templates={templates}
+          effectsPreparing={effectsPreparing}
+          effectsElsewhere={!wide}
+          videoEffectsShown={wide}
+          matte={here}
+          pick={pick}
+          edits={edits}
+          duration={duration}
+          preview={preview}
+          fonts={fonts}
+          captionStyle={captionStyle}
+          presetsError={presets.error}
+          actions={actions}
+          mediaById={mediaById}
+          sourceLength={sourceLength}
+          playback={playback}
+          transition={transitionPanel(!wide)}
+          onEdits={history.set}
+          onText={updateText}
+          onShape={updateShape}
+          onAdjustment={updateAdjustment}
+          onMusic={updateMusic}
+          onOverlay={updateOverlay}
+          onSegment={updateSegment}
+          onSpeed={setItemSpeed}
+          onReverse={setItemReverse}
+          copyOf={copyOf}
+          onHold={setFreezeHold}
+          cropMode={cropMode}
+          locked={tracks.locked}
+          onCue={applyCue}
+          captionsOf={(segment, item) => (
+            <MediaCaptionFields
+              segment={segment}
+              item={item}
+              job={job.options}
+              status={preview?.words_status[segment.id]}
+              error={preview?.words_errors?.[segment.id]}
+              onChange={updateSegment}
+              onLanguage={(language) => setMediaLanguage(item, language)}
+              onTranscribe={(again) => api.transcribeMediaWords(job.id, item.id, again).then(() => setReplan((n) => n + 1))}
+            />
+          )}
+          detaching={detaching}
+        />
+      </LibraryImages.Provider>
     </KeyingContext.Provider>
   );
   // The picture the Filters cards show at `time` (ADR 0013).
@@ -1530,7 +1578,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       onAddShape={(kind) => addNewShape(kind)}
       onAddMusic={(item) => addMusic(item)}
       onAddSource={(range) => addSegment({ id: newId(), ...range })}
-      onAddVideo={(item) => addSegment(newMediaSegment(item, newId()))}
+      onAddVideo={(item) => addSegment(newMediaSegment(item, newId(), canvas))}
       onAddOverlay={(item) => addOverlay(item)}
       languages={{ job: job.options.language, set: setMediaLanguage }}
     />
@@ -1641,6 +1689,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     </>
   );
   const notes = previewError && <p className="text-center text-sm text-danger">Couldn't preview: {previewError}</p>;
+  // Above the player, but not over it full screen.
+  const aspectPicker = !fullscreen.way && (
+    <AspectPicker value={candidate.aspect} onPick={(aspect) => void pickAspect(aspect)} busy={reshaping} className="shrink-0 self-center" />
+  );
 
   if (ended) {
     return (
@@ -1665,271 +1717,277 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
 
   if (wide) {
     return (
-      <div className="flex h-dvh flex-col gap-3 overflow-hidden bg-bg pb-3">
-        {bar}
-        <div
-          ref={gridRef}
-          className="relative grid min-h-0 flex-1 gap-3 px-3"
-          style={{ gridTemplateColumns: gridTemplateColumns(ws) }}
-        >
-          {/* Source order here is the Tab order: Asset Panel → its Divider → player → Inspector's
-              Divider → Inspector (ticket 05). The Dividers are absolutely positioned, so their place
-              in the flow is free; each is centred in the gap-3 gutter at its boundary (the px-3
-              padding 0.75rem + the sidebar's width + half the 0.75rem gap). A collapsed sidebar
-              renders no Divider, so it exposes no separator. */}
-          {!ws.assetHidden && (
-            <aside aria-label="Assets" className="glass flex min-h-0 flex-col overflow-hidden rounded-panel">
-              <AssetTabs value={assetTab} onChange={setAssetTab} />
-              {/* Its top space is a spacer, not padding: padding would hold the tabs' sticky shelf
-                  headings below the top edge, with the cards scrolling past above them. */}
-              <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 before:block before:h-4 before:content-['']">{assets(assetTab)}</div>
-            </aside>
-          )}
-          {!ws.assetHidden && (
-            <Divider
-              orientation="vertical"
-              label="Resize the Asset Panel"
-              value={ws.assetW}
-              min={ASSET.min}
-              max={ASSET.max}
-              style={{ left: `calc(0.75rem + ${ws.assetW}rem + 0.375rem)` }}
-              onStart={() => {
-                const d = dividerDrag.current;
-                d.remPx = remPx();
-                d.availableRem = (gridRef.current?.clientWidth ?? 0) / d.remPx;
-                d.otherVisibleW = ws.inspectorHidden ? 0 : ws.inspectorW;
-                d.startW = ws.assetW;
-              }}
-              onDrag={(deltaPx) => {
-                const d = dividerDrag.current;
-                layout.setAssetW(nextSidebarW(d.startW, deltaPx, d.remPx, 1, d.otherVisibleW, d.availableRem, ASSET));
-              }}
-              onReset={() => layout.setAssetW(ASSET.def)}
-            />
-          )}
-          <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
-            {room}
-            {notes}
-          </section>
-          {!ws.inspectorHidden && (
-            <Divider
-              orientation="vertical"
-              label="Resize the Inspector"
-              value={ws.inspectorW}
-              min={INSPECTOR.min}
-              max={INSPECTOR.max}
-              style={{ right: `calc(0.75rem + ${ws.inspectorW}rem + 0.375rem)` }}
-              onStart={() => {
-                const d = dividerDrag.current;
-                d.remPx = remPx();
-                d.availableRem = (gridRef.current?.clientWidth ?? 0) / d.remPx;
-                d.otherVisibleW = ws.assetHidden ? 0 : ws.assetW;
-                d.startW = ws.inspectorW;
-              }}
-              onDrag={(deltaPx) => {
-                const d = dividerDrag.current;
-                layout.setInspectorW(
-                  nextSidebarW(d.startW, deltaPx, d.remPx, -1, d.otherVisibleW, d.availableRem, INSPECTOR),
-                );
-              }}
-              onReset={() => layout.setInspectorW(INSPECTOR.def)}
-            />
-          )}
-          {!ws.inspectorHidden && (
-            <aside aria-label="Inspector" className="glass min-h-0 overflow-y-auto rounded-panel p-4">
-              {inspector}
-            </aside>
-          )}
-        </div>
-        {/* One remembered height for every bottom tab (ADR 0024), the Meters' column beside them. */}
-        <div className="mx-3 flex min-h-0 gap-3" style={{ height: bottomHeightCss(ws) }}>
-          <section
-            aria-label="Timeline and Keyframes"
-            className="glass relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-panel"
+      <CanvasContext.Provider value={canvas}>
+        <div className="flex h-dvh flex-col gap-3 overflow-hidden bg-bg pb-3">
+          {bar}
+          <div
+            ref={gridRef}
+            className="relative grid min-h-0 flex-1 gap-3 px-3"
+            style={{ gridTemplateColumns: gridTemplateColumns(ws) }}
           >
-            <BottomTabs value={bottomTab} onChange={setBottomTab} />
-            {/* The bottom Divider: a grab strip along this section's top edge (the section is clipped, so
-                it sits just inside rather than up in the gutter). It comes after the Bottom tabs in
-                source order so Tab reaches it last (ticket 05). */}
-            <Divider
-              orientation="horizontal"
-              label="Resize the Bottom tabs"
-              value={ws.bottomH}
-              min={BOTTOM.min}
-              max={BOTTOM.max}
-              onStart={() => {
-                const d = dividerDrag.current;
-                d.vhPx = window.innerHeight;
-                d.startH = ws.bottomH;
-              }}
-              onDrag={(deltaPx) => {
-                const d = dividerDrag.current;
-                layout.setBottomH(nextBottomH(d.startH, deltaPx, d.vhPx));
-              }}
-              onReset={() => layout.setBottomH(BOTTOM.def)}
-            />
-            {/* Each registered tab's panel (BOTTOM_TABS, ADR 0024): a later tab — Meters with #14 —
-                needs only a registry entry, no edit here. A panel's body renders while it is active or
-                `keepMounted` (the Timeline, so its zoom and scroll survive hidden under another tab);
-                others mount on first activation. */}
-            {BOTTOM_TABS.map((tab) => {
-              const active = bottomTab === tab.value;
-              return (
-                <div
-                  key={tab.value}
-                  id={bottomPanelId(tab.value)}
-                  role="tabpanel"
-                  aria-label={tab.label}
-                  hidden={!active}
-                  className={cx("min-h-0 flex-1 flex-col", active ? "flex" : "hidden")}
-                >
-                  {(active || tab.keepMounted) && tab.render(bottomTabContext)}
-                </div>
-              );
-            })}
-          </section>
-          <Meters playback={playback} />
+            {/* Source order here is the Tab order: Asset Panel → its Divider → player → Inspector's
+                Divider → Inspector (ticket 05). The Dividers are absolutely positioned, so their place
+                in the flow is free; each is centred in the gap-3 gutter at its boundary (the px-3
+                padding 0.75rem + the sidebar's width + half the 0.75rem gap). A collapsed sidebar
+                renders no Divider, so it exposes no separator. */}
+            {!ws.assetHidden && (
+              <aside aria-label="Assets" className="glass flex min-h-0 flex-col overflow-hidden rounded-panel">
+                <AssetTabs value={assetTab} onChange={setAssetTab} />
+                {/* Its top space is a spacer, not padding: padding would hold the tabs' sticky shelf
+                    headings below the top edge, with the cards scrolling past above them. */}
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 before:block before:h-4 before:content-['']">{assets(assetTab)}</div>
+              </aside>
+            )}
+            {!ws.assetHidden && (
+              <Divider
+                orientation="vertical"
+                label="Resize the Asset Panel"
+                value={ws.assetW}
+                min={ASSET.min}
+                max={ASSET.max}
+                style={{ left: `calc(0.75rem + ${ws.assetW}rem + 0.375rem)` }}
+                onStart={() => {
+                  const d = dividerDrag.current;
+                  d.remPx = remPx();
+                  d.availableRem = (gridRef.current?.clientWidth ?? 0) / d.remPx;
+                  d.otherVisibleW = ws.inspectorHidden ? 0 : ws.inspectorW;
+                  d.startW = ws.assetW;
+                }}
+                onDrag={(deltaPx) => {
+                  const d = dividerDrag.current;
+                  layout.setAssetW(nextSidebarW(d.startW, deltaPx, d.remPx, 1, d.otherVisibleW, d.availableRem, ASSET));
+                }}
+                onReset={() => layout.setAssetW(ASSET.def)}
+              />
+            )}
+            <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
+              {aspectPicker}
+              {room}
+              {notes}
+            </section>
+            {!ws.inspectorHidden && (
+              <Divider
+                orientation="vertical"
+                label="Resize the Inspector"
+                value={ws.inspectorW}
+                min={INSPECTOR.min}
+                max={INSPECTOR.max}
+                style={{ right: `calc(0.75rem + ${ws.inspectorW}rem + 0.375rem)` }}
+                onStart={() => {
+                  const d = dividerDrag.current;
+                  d.remPx = remPx();
+                  d.availableRem = (gridRef.current?.clientWidth ?? 0) / d.remPx;
+                  d.otherVisibleW = ws.assetHidden ? 0 : ws.assetW;
+                  d.startW = ws.inspectorW;
+                }}
+                onDrag={(deltaPx) => {
+                  const d = dividerDrag.current;
+                  layout.setInspectorW(
+                    nextSidebarW(d.startW, deltaPx, d.remPx, -1, d.otherVisibleW, d.availableRem, INSPECTOR),
+                  );
+                }}
+                onReset={() => layout.setInspectorW(INSPECTOR.def)}
+              />
+            )}
+            {!ws.inspectorHidden && (
+              <aside aria-label="Inspector" className="glass min-h-0 overflow-y-auto rounded-panel p-4">
+                {inspector}
+              </aside>
+            )}
+          </div>
+          {/* One remembered height for every bottom tab (ADR 0024), the Meters' column beside them. */}
+          <div className="mx-3 flex min-h-0 gap-3" style={{ height: bottomHeightCss(ws) }}>
+            <section
+              aria-label="Timeline and Keyframes"
+              className="glass relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-panel"
+            >
+              <BottomTabs value={bottomTab} onChange={setBottomTab} />
+              {/* The bottom Divider: a grab strip along this section's top edge (the section is clipped, so
+                  it sits just inside rather than up in the gutter). It comes after the Bottom tabs in
+                  source order so Tab reaches it last (ticket 05). */}
+              <Divider
+                orientation="horizontal"
+                label="Resize the Bottom tabs"
+                value={ws.bottomH}
+                min={BOTTOM.min}
+                max={BOTTOM.max}
+                onStart={() => {
+                  const d = dividerDrag.current;
+                  d.vhPx = window.innerHeight;
+                  d.startH = ws.bottomH;
+                }}
+                onDrag={(deltaPx) => {
+                  const d = dividerDrag.current;
+                  layout.setBottomH(nextBottomH(d.startH, deltaPx, d.vhPx));
+                }}
+                onReset={() => layout.setBottomH(BOTTOM.def)}
+              />
+              {/* Each registered tab's panel (BOTTOM_TABS, ADR 0024): a later tab — Meters with #14 —
+                  needs only a registry entry, no edit here. A panel's body renders while it is active or
+                  `keepMounted` (the Timeline, so its zoom and scroll survive hidden under another tab);
+                  others mount on first activation. */}
+              {BOTTOM_TABS.map((tab) => {
+                const active = bottomTab === tab.value;
+                return (
+                  <div
+                    key={tab.value}
+                    id={bottomPanelId(tab.value)}
+                    role="tabpanel"
+                    aria-label={tab.label}
+                    hidden={!active}
+                    className={cx("min-h-0 flex-1 flex-col", active ? "flex" : "hidden")}
+                  >
+                    {(active || tab.keepMounted) && tab.render(bottomTabContext)}
+                  </div>
+                );
+              })}
+            </section>
+            <Meters playback={playback} />
+          </div>
         </div>
-      </div>
+      </CanvasContext.Provider>
     );
   }
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-bg">
-      {bar}
-      <section aria-label="Player" className="flex min-h-0 flex-1 flex-col gap-1 px-3 pt-1 pb-2">
-        {room}
-        {notes}
-      </section>
-      <section aria-label="Timeline" className="flex h-[30dvh] min-h-44 flex-col border-t border-border">
-        {timeline}
-      </section>
-      <Toolbar
-        pick={pick}
-        actions={actions}
-        splitter={splits}
-        freezer={freezes}
-        playback={playback}
-        onAsset={(tab) => {
-          setAssetTab(tab);
-          setSheet(tab);
-        }}
-        picking={picking}
-        paste={pasteHere}
-        mute={muting}
-        onInspect={() => setSheet("inspector")}
-        onTransform={() => setSheet("transform")}
-        onSpeed={speedSheet && (() => setSheet("speed"))}
-        onFilters={colorable ? () => setSheet("filters") : null}
-        onAdjust={colorable ? () => setSheet("adjust") : null}
-        onAudioEffects={audioEffects && (() => setSheet("effects"))}
-        onTracks={() => setSheet("tracks")}
-        onPlayback={() => setSheet("playback")}
-        onPicking={() => setPickingMode(true)}
-        onDeselect={() => {
-          select(null);
-          setPickingMode(false);
-          setSheet(null);
-        }}
-      />
-      {sheet && (
-        <Sheet
-          title={
-            sheet === "inspector"
-              ? "Edit"
-              : sheet === "transform"
-                ? "Transform"
-                : sheet === "speed"
-                  ? "Speed"
-                  : sheet === "adjust"
-                    ? "Adjust"
-                  : sheet === "effects"
-                    ? "Audio effects"
-                  : sheet === "tracks"
-                    ? "Tracks"
-                      : sheet === "playback"
-                        ? "Playback"
-                        : ASSET_TABS.find((tab) => tab.value === sheet)!.label
-          }
-          onClose={() => setSheet(null)}
-        >
-          {/* The Keyframes pane is the desktop's: here, the Ease of the Keyframe at the playhead heads the sheet. */}
-          {sheet === "inspector" ? (
-            <>
+    <CanvasContext.Provider value={canvas}>
+      <div className="flex h-dvh flex-col overflow-hidden bg-bg">
+        {bar}
+        <section aria-label="Player" className="flex min-h-0 flex-1 flex-col gap-1 px-3 pt-1 pb-2">
+          {aspectPicker}
+          {room}
+          {notes}
+        </section>
+        <section aria-label="Timeline" className="flex h-[30dvh] min-h-44 flex-col border-t border-border">
+          {timeline}
+        </section>
+        <Toolbar
+          pick={pick}
+          actions={actions}
+          splitter={splits}
+          freezer={freezes}
+          playback={playback}
+          onAsset={(tab) => {
+            setAssetTab(tab);
+            setSheet(tab);
+          }}
+          picking={picking}
+          paste={pasteHere}
+          mute={muting}
+          onInspect={() => setSheet("inspector")}
+          onTransform={() => setSheet("transform")}
+          onSpeed={speedSheet && (() => setSheet("speed"))}
+          onFilters={colorable ? () => setSheet("filters") : null}
+          onAdjust={colorable ? () => setSheet("adjust") : null}
+          onAudioEffects={audioEffects && (() => setSheet("effects"))}
+          onTracks={() => setSheet("tracks")}
+          onPlayback={() => setSheet("playback")}
+          onPicking={() => setPickingMode(true)}
+          onDeselect={() => {
+            select(null);
+            setPickingMode(false);
+            setSheet(null);
+          }}
+        />
+        {sheet && (
+          <Sheet
+            title={
+              sheet === "inspector"
+                ? "Edit"
+                : sheet === "transform"
+                  ? "Transform"
+                  : sheet === "speed"
+                    ? "Speed"
+                    : sheet === "adjust"
+                      ? "Adjust"
+                    : sheet === "effects"
+                      ? "Audio effects"
+                    : sheet === "tracks"
+                      ? "Tracks"
+                        : sheet === "playback"
+                          ? "Playback"
+                          : ASSET_TABS.find((tab) => tab.value === sheet)!.label
+            }
+            onClose={() => setSheet(null)}
+          >
+            {/* The Keyframes pane is the desktop's: here, the Ease of the Keyframe at the playhead heads the sheet. */}
+            {sheet === "inspector" ? (
+              <>
+                <KeyingContext.Provider value={keying}>
+                  <SheetEase mediaById={mediaById} />
+                </KeyingContext.Provider>
+                {inspector}
+                {/* The desktop's context menu entry, here at the foot of the item's sheet. */}
+                {savable && (
+                  <div className="flex flex-col gap-1 border-t border-border pt-3">
+                    <Button className="self-start" disabled={!!savable.silent || savingSound} onClick={() => saveSound(savable)}>
+                      <Download aria-hidden size={16} />
+                      Save sound as WAV
+                    </Button>
+                    {savable.silent && <p className="text-sm text-muted">{savable.silent}</p>}
+                  </div>
+                )}
+              </>
+            ) : sheet === "transform" ? (
               <KeyingContext.Provider value={keying}>
-                <SheetEase mediaById={mediaById} />
+                <SheetEase mediaById={mediaById} shown={PICTURE_KEYS} />
+                <TransformPanel
+                  pick={pick}
+                  edits={edits}
+                  preview={preview}
+                  mediaById={mediaById}
+                  playback={playback}
+                  onEdits={history.set}
+                  onOverlay={updateOverlay}
+                  onSegment={updateSegment}
+                  cropMode={cropMode}
+                />
               </KeyingContext.Provider>
-              {inspector}
-              {/* The desktop's context menu entry, here at the foot of the item's sheet. */}
-              {savable && (
-                <div className="flex flex-col gap-1 border-t border-border pt-3">
-                  <Button className="self-start" disabled={!!savable.silent || savingSound} onClick={() => saveSound(savable)}>
-                    <Download aria-hidden size={16} />
-                    Save sound as WAV
-                  </Button>
-                  {savable.silent && <p className="text-sm text-muted">{savable.silent}</p>}
-                </div>
-              )}
-            </>
-          ) : sheet === "transform" ? (
-            <KeyingContext.Provider value={keying}>
-              <SheetEase mediaById={mediaById} shown={PICTURE_KEYS} />
-              <TransformPanel
-                pick={pick}
-                edits={edits}
-                preview={preview}
-                mediaById={mediaById}
+            ) : sheet === "speed" ? (
+              speedSheet ? (
+                <SpeedPanel
+                  item={speedSheet}
+                  edits={edits}
+                  mediaById={mediaById}
+                  copyOf={copyOf}
+                  onSpeed={setItemSpeed}
+                  onReverse={setItemReverse}
+                  onHold={setFreezeHold}
+                  onSegment={updateSegment}
+                  onOverlay={updateOverlay}
+                  onMusic={updateMusic}
+                />
+              ) : (
+                <p className="text-sm text-pretty text-muted">Pick a Segment, a video Overlay or a Music Clip to change its Speed.</p>
+              )
+            ) : sheet === "filters" ? (
+              <PhoneFilters
                 playback={playback}
-                onEdits={history.set}
-                onOverlay={updateOverlay}
-                onSegment={updateSegment}
-                cropMode={cropMode}
-              />
-            </KeyingContext.Provider>
-          ) : sheet === "speed" ? (
-            speedSheet ? (
-              <SpeedPanel
-                item={speedSheet}
+                frameAt={lookFrameAt}
                 edits={edits}
-                mediaById={mediaById}
-                copyOf={copyOf}
-                onSpeed={setItemSpeed}
-                onReverse={setItemReverse}
-                onHold={setFreezeHold}
-                onSegment={updateSegment}
-                onOverlay={updateOverlay}
-                onMusic={updateMusic}
+                pick={pick}
+                onEdits={history.set}
+                onAddLayer={(look) => addAdjustment(look, playback.time)}
               />
+            ) : sheet === "adjust" ? (
+              <AdjustPanel edits={edits} pick={pick} onEdits={history.set} />
+            ) : sheet === "effects" ? (
+              audioEffects ? (
+                <AudioEffectsFields {...audioEffects} />
+              ) : (
+                <p className="text-sm text-pretty text-muted">Pick a Segment, a video Overlay or a Music Clip with sound to change its Audio effects.</p>
+              )
+            ) : sheet === "tracks" ? (
+              <TracksPanel tracks={tracks} onTrack={toggleTrack} />
+            ) : sheet === "playback" ? (
+              <PlaybackPanel playback={playback} commands={commands} region={region} looping={looping} editPoints={points} fps={fps} />
             ) : (
-              <p className="text-sm text-pretty text-muted">Pick a Segment, a video Overlay or a Music Clip to change its Speed.</p>
-            )
-          ) : sheet === "filters" ? (
-            <PhoneFilters
-              playback={playback}
-              frameAt={lookFrameAt}
-              edits={edits}
-              pick={pick}
-              onEdits={history.set}
-              onAddLayer={(look) => addAdjustment(look, playback.time)}
-            />
-          ) : sheet === "adjust" ? (
-            <AdjustPanel edits={edits} pick={pick} onEdits={history.set} />
-          ) : sheet === "effects" ? (
-            audioEffects ? (
-              <AudioEffectsFields {...audioEffects} />
-            ) : (
-              <p className="text-sm text-pretty text-muted">Pick a Segment, a video Overlay or a Music Clip with sound to change its Audio effects.</p>
-            )
-          ) : sheet === "tracks" ? (
-            <TracksPanel tracks={tracks} onTrack={toggleTrack} />
-          ) : sheet === "playback" ? (
-            <PlaybackPanel playback={playback} commands={commands} region={region} looping={looping} editPoints={points} fps={fps} />
-          ) : (
-            assets(sheet)
-          )}
-        </Sheet>
-      )}
-    </div>
+              assets(sheet)
+            )}
+          </Sheet>
+        )}
+      </div>
+    </CanvasContext.Provider>
   );
 }
 

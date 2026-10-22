@@ -4,6 +4,7 @@ import { cx } from "../format";
 /**
  * Nine places on a frame, as a 3x3 group of radio buttons (the arrow keys move between them), each
  * drawn as a dot where it puts the thing. `value` null checks none: it was placed some other way.
+ * The grid has the frame's shape, `frame` (width and height in any unit; 9:16 by default).
  */
 export function AnchorGrid<T extends string>({
   legend,
@@ -12,6 +13,7 @@ export function AnchorGrid<T extends string>({
   onChange,
   marker,
   className,
+  frame = { width: 9, height: 16 },
 }: {
   legend: string;
   // In rows, from the top-left corner.
@@ -20,6 +22,7 @@ export function AnchorGrid<T extends string>({
   onChange: (value: T) => void;
   marker?: ReactNode;
   className?: string;
+  frame?: { width: number; height: number };
 }) {
   const name = useId();
   return (
@@ -27,8 +30,11 @@ export function AnchorGrid<T extends string>({
       <legend className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
         {legend} {marker}
       </legend>
-      {/* 9:16, like the frame it places things on. */}
-      <div className="grid aspect-[9/16] w-24 grid-cols-3 grid-rows-3 gap-1 rounded-control bg-fill p-1.5">
+      {/* The shape of the frame it places things on; a wide one wider, so that its rows keep their room. */}
+      <div
+        className={cx("grid grid-cols-3 grid-rows-3 gap-1 rounded-control bg-fill p-1.5", frame.width > frame.height ? "w-40" : "w-24")}
+        style={{ aspectRatio: `${frame.width} / ${frame.height}` }}
+      >
         {options.map((option, i) => (
           <label key={option.value} className="flex min-h-0 min-w-0" title={option.label}>
             <input

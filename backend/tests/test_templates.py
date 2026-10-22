@@ -1215,6 +1215,38 @@ def test_a_video_used_only_as_a_templates_intro_cant_be_deleted_until_it_is(
     assert client.delete(f"/api/media/{sting['id']}").status_code == 204
 
 
+def test_an_image_used_only_as_a_background_in_a_templates_intro_or_framing_cant_be_deleted_until_it_is(
+    client, tmp_path, from_episode, llm, wait_for_status
+):
+    job, source = branded(client, wait_for_status, llm)
+    sting = a_video(client, tmp_path)
+    images = []
+    for name in ("backdrop", "wall"):
+        path = make(tmp_path / f"{name}.png", "-f", "lavfi", "-i", "color=c=blue:size=64x64", "-frames:v", "1")
+        response = client.post("/api/media", files={"file": (f"{name}.png", path.read_bytes(), "application/octet-stream")})
+        assert response.status_code == 201, response.text
+        images.append(response.json())
+    backdrop, wall = images
+    source = patch(client, job, source, layout="manual", framing={"background": {"kind": "image", "image": wall["id"]}}, segments=[
+        {"id": "sting", "start": 0.0, "end": 1.5, "media": sting["id"], "framing": {"background": {"kind": "image", "image": backdrop["id"]}}},
+        {"id": "s1", "start": source["start"], "end": source["end"]},
+    ], transitions=[])
+    template = saved(client, job, source)
+    assert template["framing"]["background"]["image"] == wall["id"]
+    assert template["intro"]["segments"][0]["framing"]["background"]["image"] == backdrop["id"]
+    assert client.delete(f"/api/jobs/{job['id']}").status_code == 204
+
+    for image in images:
+        refused = client.delete(f"/api/media/{image['id']}")
+        assert refused.status_code == 409, image
+        [use] = refused.json()["detail"]["uses"]
+        assert (use["kind"], use["title"]) == ("template", "Brand"), use
+
+    assert client.delete(f"{URL}/{template['id']}").status_code == 204
+    for image in images:
+        assert client.delete(f"/api/media/{image['id']}").status_code == 204
+
+
 def test_a_look_used_only_by_a_templates_main_slot_treatment_cant_be_deleted(client, from_episode, llm, wait_for_status):
     look = imported_look(client)
     job, source = branded(client, wait_for_status, llm)

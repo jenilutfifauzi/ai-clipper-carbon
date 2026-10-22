@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef } from "react";
-import type { RenderPlan, RetimedCopy, RetimedRange, ScenePlan, SegmentPlan, TransitionEvent } from "../../../api";
+import type { MatteCopy, MattePiece, RenderPlan, RetimedCopy, RetimedRange, ScenePlan, SegmentPlan, TransitionEvent } from "../../../api";
+import { useCanvas } from "./canvas";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA, PanelView } from "./ClipPreview";
 import { follow } from "./follow";
 import { GradeVignette, useFrameFilter } from "./GradeFilters";
-import { FRAME, panelStyle, slotView } from "./picture";
+import { filledStyle, panelStyle, slotView } from "./picture";
 import { PicturePanel } from "./PicturePanel";
+import { BehindOverlays, coversFrame } from "./PreviewOverlays";
 import { onOwnVideos, playable, useShown, type Playback } from "./playback";
 import { changing, loudness, segmentSound } from "./loudness";
 import { copyProgress, mediaPlay, segmentCopy, sourcePlay, useRetimedCopies, useRetimedCopy } from "./retimedCopy";
@@ -12,6 +14,9 @@ import { followCurve, setVolume } from "./PreviewMusic";
 import { firstSceneOf, sceneAt } from "./ScenesTrack";
 import { crossedBy } from "./transitionSound";
 import { silencedForCopy } from "./effectedCopy";
+import { backdropView, MaskBackdrop, MaskGroup, MaskedVideo, DeckMatte, useItemMatte } from "./MatteMask";
+import { copyClock, matteCopyOf } from "./matteTime";
+import { rangeOf } from "./segmentTime";
 
 /**
  * The plan's Segments on videos of their own (`onOwnVideos`), over the Source's panels while they
@@ -21,7 +26,22 @@ import { silencedForCopy } from "./effectedCopy";
  * copy (of the Source `src`, the decks' video, of Job `jobId`). One that a Transition overlaps with
  * the next gives way where the Transition starts (PreviewTransitions draws the rest of it).
  */
-export function PreviewSegments({ plan, playback, src, jobId }: { plan: RenderPlan | null; playback: Playback; src: string; jobId: string }) {
+export function PreviewSegments({
+  plan,
+  playback,
+  src,
+  jobId,
+  mattes,
+  matteCopies,
+}: {
+  plan: RenderPlan | null;
+  playback: Playback;
+  src: string;
+  jobId: string;
+  // The Preview Plan's Matte pieces and reversed Matte copies (ADR 0015), which cut its cut-out Segments.
+  mattes?: MattePiece[];
+  matteCopies?: MatteCopy[];
+}) {
   if (!plan || !plan.segments.some(onOwnVideos)) return null;
   const played = playable(plan.segments);
   // The Transition that brings Segment `i` in, if any.
@@ -32,6 +52,7 @@ export function PreviewSegments({ plan, playback, src, jobId }: { plan: RenderPl
         segment.media ? (
           <MediaSegment
             key={`${i}:${segment.start}`}
+            plan={plan}
             segment={segment}
             end={played[i].end}
             scene={segmentScene(plan, i)}
@@ -48,6 +69,8 @@ export function PreviewSegments({ plan, playback, src, jobId }: { plan: RenderPl
             src={src}
             jobId={jobId}
             into={into(i)}
+            mattes={mattes}
+            matteCopies={matteCopies}
           />
         ) : null,
       )}
@@ -63,13 +86,17 @@ export const segmentScene = (plan: RenderPlan, index: number): ScenePlan | undef
  * own; its sound brought in by `into` and taken away by `fade` (the Transitions either side), if any,
  * as their sounds say (`crossedVolumes`). Its video plays at
  * its Speed, its pitch kept or not (`follow`). It is drawn from its
- * `scene` (ADR 0007): the Background, its blurred cover panel or its colour, then the picture. Outside
+ * `scene` (ADR 0007): the Background, its blurred cover panel, its colour or its image, then the picture. Outside
  * its span its video waits at its start, so that its first frame is ready. A keyed picture moves
  * with the playback (PicturePanel), and a keyed or faded sound follows its gain curve (followCurve).
  * A reversed one, or one at a Speed a browser won't play, plays its Retimed copy, and shows its first
- * frame held with the copy's progress until the copy is made (`mediaPlay`).
+ * frame held with the copy's progress until the copy is made (`mediaPlay`). Where its picture doesn't
+ * cover the frame, the `plan`'s Behind Overlays (ADR 0015) show over its Background, under its picture.
+ * Cut out (ADR 0015), its picture is cut by its item's Matte (`useItemMatte`), the Behind Overlays and
+ * its Background showing where it is taken away, and its Grade and Video Effects touch the picture alone.
  */
 export function MediaSegment({
+  plan,
   segment,
   end,
   scene,
@@ -77,6 +104,7 @@ export function MediaSegment({
   fade,
   into,
 }: {
+  plan: RenderPlan;
   segment: SegmentPlan;
   end: number;
   scene: ScenePlan | undefined;
@@ -110,12 +138,18 @@ export function MediaSegment({
   }, [playback, segment, end, fade, into, span]);
 
   const filter = useFrameFilter(segment.grade, segment.video_effects, segment.start);
+  const canvas = useCanvas();
   const picture = scene?.picture;
-  const background = picture && scene.panels[0] ? panelStyle(scene.panels[0], picture.item_size, FRAME) : null;
+  const background = picture && scene.panels[0] ? panelStyle(scene.panels[0], picture.item_size, canvas) : null;
+  // Cut out (ADR 0015): its Matte follows its video, through the copy it plays.
+  const removal = segment.background_removal;
+  const played = useMemo(() => (range ? { ...range } : rangeOf(segment)), [range, segment]);
+  const matte = useItemMatte(segment.media ?? null, removal, played, range, copy, main);
   return (
     <div ref={box} className="absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
-      {/* Its Grade and Video Effects over its whole frame (ADR 0013, 0014): its Background and its picture, its vignette over them. */}
-      <div className="absolute inset-0" style={{ background: scene?.colour ?? "#000", filter }}>
+      {/* Its Grade and Video Effects over its whole frame (ADR 0013, 0014): its Background and its picture, its vignette over
+          them; cut out, over its picture alone. */}
+      <div className="absolute inset-0" style={{ ...filledStyle(scene?.colour ?? "#000", scene?.image), filter: removal ? undefined : filter }}>
         {background && (
           <div className="absolute overflow-hidden" style={background.box}>
             <video
@@ -129,13 +163,20 @@ export function MediaSegment({
             />
           </div>
         )}
+        {(removal || !coversFrame(picture, canvas)) && <BehindOverlays plan={plan} playback={playback} />}
         {picture && (
-          <PicturePanel
-            picture={picture}
-            frame={FRAME}
-            playback={playback}
-            media={<video ref={main} src={src} playsInline preload="auto" className="size-full object-fill" />}
-          />
+          <div className="absolute inset-0" style={{ filter: removal ? filter : undefined }}>
+            <PicturePanel
+              picture={picture}
+              frame={canvas}
+              playback={playback}
+              media={
+                <MaskedVideo matte={matte} feather={removal?.feather ?? 0} videoRef={main} playback={playback} name={`segment:${segment.id}`}>
+                  <video ref={main} src={src} playsInline preload="auto" className="size-full object-fill" />
+                </MaskedVideo>
+              }
+            />
+          </div>
         )}
       </div>
       <GradeVignette grade={segment.grade} />
@@ -151,7 +192,10 @@ export function MediaSegment({
  * shot, a Manual Scene's picture) drawn as the decks draw them, from a master and a follower of its
  * own playing the copy (`sourcePlay`), at the Clip's own volume times its own (or its Keyframes'),
  * through its fades. Outside its span they wait at its start. Until the copy is made they hold the
- * Source's `src` at the frame the copy shows first, with its progress.
+ * Source's `src` at the frame the copy shows first, with its progress. Cut out (ADR 0015), its pictures
+ * are cut by a Matte of its own following its master (`copyClock`): the Source's `mattes` pieces at a
+ * Speed a browser won't play, its reversed Matte copy (`matteCopies`) in Reverse; over its Background
+ * and the Behind Overlays.
  */
 export function CopiedSourceSegment({
   plan,
@@ -162,6 +206,8 @@ export function CopiedSourceSegment({
   jobId,
   fade,
   into,
+  mattes,
+  matteCopies,
 }: {
   plan: RenderPlan;
   index: number;
@@ -171,6 +217,8 @@ export function CopiedSourceSegment({
   jobId: string;
   fade?: TransitionEvent;
   into?: TransitionEvent;
+  mattes?: MattePiece[];
+  matteCopies?: MatteCopy[];
 }) {
   const segment = plan.segments[index];
   const box = useRef<HTMLDivElement>(null);
@@ -183,6 +231,20 @@ export function CopiedSourceSegment({
   const { src: shown, span } = useMemo(() => sourcePlay(segment, end, range, copy, src, frame), [segment, end, range, copy, src, frame]);
   const sceneIndex = useShown(playback, (time) => sceneAt(plan, time, index));
   const scene = plan.scenes[sceneIndex];
+  // Its Matte (ADR 0015), following its master through the copy it plays.
+  const removal = segment.background_removal;
+  const matte = useMemo(() => new DeckMatte(), []);
+  const masters = useMemo(() => [master], []);
+  const copyAt = copy?.url ? copy.at : null;
+  const matteCopy = matteCopyOf(matteCopies, rangeOf(segment));
+  useEffect(() => {
+    matte.setPieces(removal ? mattes : undefined);
+    matte.setClock(removal ? copyClock(rangeOf(segment), range, copyAt, matteCopy) : null);
+  }, [matte, removal, mattes, segment, range, copyAt, matteCopy]);
+  useEffect(() => {
+    matte.attachMaster(master.current);
+    return () => matte.dispose();
+  }, [matte]);
 
   useEffect(() => {
     // Its sound: its volume Keyframes when keyed, under the Clip's own, and its fades, brought in by
@@ -204,12 +266,35 @@ export function CopiedSourceSegment({
   const filter = useFrameFilter(segment.grade, segment.video_effects, segment.start);
   return (
     <div ref={box} className="absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
-      {/* Its Grade and Video Effects over its whole frame (ADR 0013, 0014), its vignette over it. */}
-      <div className="absolute inset-0 bg-black" style={{ filter }}>
-        {[master, follower].map((ref, slot) => (
-          <PanelView key={slot} videoRef={ref} src={shown} plan={plan} {...slotView(scene, slot)} playback={playback} muted={slot > 0} />
-        ))}
-      </div>
+      {/* Cut out (ADR 0015), its picture over its Background while its Matte cuts it. */}
+      <MaskGroup mattes={removal ? [matte] : []} playback={playback} maskNow={() => !!removal} shownMatte={() => matte}>
+        {removal && (
+          <MaskBackdrop
+            plan={plan}
+            view={backdropView(plan, scene?.layout === "manual" ? slotView(scene, 0) : null, segment.background)}
+            masters={masters}
+            master={() => master.current}
+            playback={playback}
+          />
+        )}
+        {/* The Overlays Behind the Main Track (ADR 0015): over the Background, under the cut picture. */}
+        {removal && <BehindOverlays plan={plan} playback={playback} className="invisible group-data-[masked]/mask:visible" />}
+        {/* Its Grade and Video Effects over its whole frame (ADR 0013, 0014), its vignette over it. */}
+        <div className="absolute inset-0 bg-black group-data-[masked]/mask:!bg-transparent" style={{ filter }}>
+          {[master, follower].map((ref, slot) => (
+            <PanelView
+              key={slot}
+              videoRef={ref}
+              src={shown}
+              plan={plan}
+              {...slotView(scene, slot)}
+              playback={playback}
+              muted={slot > 0}
+              mask={removal ? { matte, feather: removal.feather } : null}
+            />
+          ))}
+        </div>
+      </MaskGroup>
       <GradeVignette grade={segment.grade} />
       <CopyProgress range={range} copy={copy} what="Segment" />
     </div>
