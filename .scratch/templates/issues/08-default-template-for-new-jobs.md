@@ -13,17 +13,17 @@
   - If that Template is gone, the Candidates stay plain and the Job records a notice.
 - **The New Job form** has a Template choice: the default (named), another, or none.
 - **`create_job_from_url` and `create_job_from_file`** take it through their options.
-- **The Templates tab** gains "Make default", and the star on the card shows it.
+- **The Templates tab** gains "Make default", and the star on the card shows it. *(Left to 06, which makes the tab: `api.useTemplateAsDefault` and `TemplateInfo.default` are ready for it.)*
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] HTTP with fake Selection:
+- [x] HTTP with fake Selection:
   - A new Job with a default Template has branded Candidates at Revision 1.
   - "None" leaves them plain.
   - A Template deleted before Selection gives plain Candidates and a Job notice.
   - `add_candidate` applies the Job's Template.
   - Deleting the default clears it.
-- [ ] MCP: `create_job_from_url` with a Template, and `use_as_default`.
-- [ ] Vitest: the New Job form sends the chosen Template, or none.
+- [x] MCP: `create_job_from_url` with a Template, and `use_as_default`.
+- [x] Vitest: the New Job form sends the chosen Template, or none.

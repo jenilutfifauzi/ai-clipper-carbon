@@ -11,12 +11,17 @@ import math
 import re
 
 import pytest
+from pydantic import TypeAdapter
 
+from app.candidates import Grade
 from app.llm import QuotaExceeded, TransientLlmError
 from app.prompts import PROMPT_VERSION
 from conftest import FILLER, FIXTURES, caption_track
 from fakes import windows_in
 from test_jobs_api import create_job, statuses
+
+# A Candidate's Grade as Selection makes it: none of its adjustments, no Look.
+NO_GRADE = TypeAdapter(Grade).dump_python(Grade(), mode="json")
 
 DETAIL_RESPONSE = json.loads((FIXTURES / "detail_response.json").read_text())
 
@@ -117,6 +122,8 @@ def test_job_reaches_review_with_candidates_ranked_by_predicted_score(client, fr
         "overlays": [],
         "transitions": [],
         "framing": None,
+        "grade": NO_GRADE,
+        "adjustment_layers": [],
         "revision": 1,
     }
     assert client.get(f"/api/jobs/{job['id']}").json()["candidates"] == job["candidates"]

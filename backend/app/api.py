@@ -65,7 +65,7 @@ from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, 
 from app.effected import EFFECTED_DIR, NoCopy, copies_used as effected_used, effected_copy, sweep as sweep_effected
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.kokoro import KokoroBusy, KokoroModel
-from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
+from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore, JobWarning
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app import audio_effects, video_effects
 from app.looks import MAX_UPLOAD_BYTES as MAX_LOOK_BYTES, BadCube, ImportedLooks, Look, LookNotFound, all_looks, builtin_looks, get_look
@@ -94,7 +94,7 @@ from app.rendering import NothingToRender, has_media_words, media_language, rank
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
-from app.templates import AnchorOverride, Captured, InvalidTemplate, Template, TemplateNotFound, TemplateStore, capture
+from app.templates import AnchorOverride, Captured, InvalidTemplate, Template, TemplateNotFound, TemplateStore, branded, capture
 from app.templates import apply as apply_template_to
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.revisions import Edit, HistoryEntry
@@ -499,6 +499,21 @@ class TemplateBody(TemplateCapture):
     name: Name
 
 
+@dataclass(frozen=True)
+class TemplateInfo(Template):
+    """A Template as listed: whether it is the default, which new Jobs' Candidates get."""
+
+    default: bool = False
+
+
+class TemplateChoice(BaseModel):
+    """The default Template's id, or None for none."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    template_id: str | None
+
+
 class TemplateName(BaseModel):
     """A Template's new name."""
 
@@ -715,15 +730,16 @@ def health() -> dict[str, str]:
 
 
 @router.post("/jobs", status_code=201)
-def create_job(body: JobRequest, store: Store, profiles: Profiles, worker: JobWorker) -> Job:
-    job = store.create(body.url, body.options, profiles.load())
+def create_job(body: JobRequest, store: Store, profiles: Profiles, templates: Templates, worker: JobWorker) -> Job:
+    """Create a Job and queue it. 404 for an unknown Template in its options."""
+    job = store.create(body.url, with_template(body.options, templates), profiles.load())
     worker.submit(job.id)
     return job
 
 
 @router.post("/jobs/upload", status_code=201)
 async def upload_job(
-    request: Request, settings: AppSettings, store: Store, profiles: Profiles, worker: JobWorker
+    request: Request, settings: AppSettings, store: Store, profiles: Profiles, templates: Templates, worker: JobWorker
 ) -> Job:
     """Create a Job from an uploaded master file: a multipart/form-data body with an `options` field
     (JobOptions as JSON; optional) and then a `file`. The file is streamed to disk as it comes. 507
@@ -733,9 +749,10 @@ async def upload_job(
 
     def accept(fields: dict[str, str]) -> JobOptions:
         try:
-            return _OPTIONS.validate_json(fields.get(OPTIONS_FIELD) or "{}")
+            options = _OPTIONS.validate_json(fields.get(OPTIONS_FIELD) or "{}")
         except ValidationError as exc:
             raise RequestValidationError(exc.errors(include_url=False)) from None
+        return with_template(options, templates)
 
     try:
         received, options = await receive(
@@ -748,6 +765,15 @@ async def upload_job(
     job = store.create("", options, profiles.load(), upload=(received.path, received.name))
     worker.submit(job.id)
     return job
+
+
+def with_template(options: JobOptions, templates: TemplateStore) -> JobOptions:
+    """A new Job's options with its Template resolved: the default's id when not chosen, the chosen
+    one's, or None. 404 for an unknown one."""
+    try:
+        return replace(options, template=templates.for_new_job(options.template))
+    except TemplateNotFound:
+        raise HTTPException(404, f"No Template {options.template}") from None
 
 
 @router.get("/jobs/upload/check", status_code=204)
@@ -1351,12 +1377,36 @@ def transcribe_media_words(
 
 @router.post("/jobs/{job_id}/candidates", status_code=201)
 def add_candidate(
-    job_id: str, body: ManualCandidate, store: Store, settings: AppSettings, edit: EditBy, after_save: AfterSave
+    job_id: str,
+    job: ExistingJob,
+    body: ManualCandidate,
+    store: Store,
+    settings: AppSettings,
+    templates: Templates,
+    edit: EditBy,
+    after_save: AfterSave,
 ) -> Candidate:
-    """Add a manual Candidate for a transcript range, snapped to Words, after the AI's Candidates."""
-    return _review(
-        store, settings, job_id, lambda candidates, episode: review.add_manual(candidates, body.start, body.end, episode), edit, after_save
-    )
+    """Add a manual Candidate for a transcript range, snapped to Words, after the AI's Candidates,
+    with the Job's Template applied; when that was deleted, it is plain and the Job is told."""
+    template, notices = templates.for_new_candidates(job.options.template)
+
+    def add(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], Candidate]:
+        candidates, new = review.add_manual(candidates, body.start, body.end, episode)
+        if template is not None:
+            [new] = branded(template, [new], episode)
+            candidates = [new if candidate.id == new.id else candidate for candidate in candidates]
+        return candidates, new
+
+    added = _review(store, settings, job_id, add, edit, after_save)
+    told(store, job_id, notices)
+    return added
+
+
+def told(store: JobStore, job_id: str, notices: list[str]) -> None:
+    """The Job warned of `notices` it hasn't been yet."""
+    warnings = store.get(job_id).warnings
+    if new := [notice for notice in notices if notice not in {warning.message for warning in warnings}]:
+        store.update(job_id, warnings=[*warnings, *(JobWarning(JobStatus.ANALYZING, notice) for notice in new)])
 
 
 def _history(store: JobStore, job: Job, candidate_id: str) -> list[HistoryEntry]:
@@ -1674,9 +1724,21 @@ def delete_text_preset(preset_id: str, text_presets: TextPresets) -> None:
 
 
 @router.get("/templates")
-def list_templates(templates: Templates) -> list[Template]:
-    """The owner's Templates, in the order they were made."""
-    return templates.all()
+def list_templates(templates: Templates) -> list[TemplateInfo]:
+    """The owner's Templates, in the order they were made, the default marked."""
+    default = templates.default()
+    return [TemplateInfo(**vars(template), default=template.id == default) for template in templates.all()]
+
+
+@router.put("/templates/default")
+def use_template_as_default(body: TemplateChoice, templates: Templates) -> TemplateChoice:
+    """Make a Template the default, which new Jobs' Candidates get unless they choose another, or
+    with None, have none. 404 for an unknown one."""
+    try:
+        templates.use_as_default(body.template_id)
+    except TemplateNotFound:
+        raise HTTPException(404, f"No Template {body.template_id}") from None
+    return body
 
 
 @router.post("/templates/capture")
@@ -1723,7 +1785,8 @@ def rename_template(template_id: str, body: TemplateName, templates: Templates) 
 
 @router.delete("/templates/{template_id}", status_code=204)
 def delete_template(template_id: str, templates: Templates) -> None:
-    """Delete one of the Templates. The Candidates it was applied to keep their Template items."""
+    """Delete one of the Templates; when it was the default, there is then none. The Candidates it
+    was applied to keep their Template items, and Jobs that chose it make their new ones plain."""
     try:
         templates.delete(template_id)
     except TemplateNotFound:

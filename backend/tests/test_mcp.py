@@ -69,7 +69,10 @@ KITA_SOAL = (1.6, 2.6)
 # candidate_id, anchors} in the presets tools, and apply_template (91_375); the rest is in the instructions.
 # Raised from 91_800 for templates/03: the Template mark on `segments[]`, `transitions[]`, `word_edits[]`
 # and `cue_edits[]` in edit_candidate's and merge_candidate_items' schemas (92_675).
-TOOLS_BUDGET_BYTES = 93_100
+# Raised from 93_100 for the default Template (templates/08): JobOptions' `template` in both
+# create_job tools, and the presets tools' word on `default` (93_048 with 03); the rest is in the
+# instructions.
+TOOLS_BUDGET_BYTES = 93_500
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

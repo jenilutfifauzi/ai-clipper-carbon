@@ -80,7 +80,7 @@ from app.rendering import source_copies
 from app.retimed import CopySize, Retime
 from app.segment_time import SegmentTime
 from app.styles import LINE_LIMITS, StyleOverrides
-from app.templates import Anchor, AnchorOverride, LayerKind
+from app.templates import Anchor, AnchorOverride, LayerKind, TemplateNotFound
 from app.transcript import Language
 from app.uploads import UPLOADS_DIR, BadUpload, NotEnoughSpace, stage
 
@@ -244,7 +244,11 @@ Edits:
   its `template` the Template's id (get_candidate's template_items names it): applying a Template
   again, the same or another, replaces the Template items, even those changed by hand (the notices
   count them), and keeps the rest; template_id null ("No Template") takes them off. Removing one by
-  hand (remove_candidate_items) is fine; only applying again brings it back.
+  hand (remove_candidate_items) is fine; only applying again brings it back. One Template, or none,
+  is the default (save_preset's use_as_default, by preset_id alone too; list_presets marks it): a
+  new Job gets it unless its options.template is another's id or null ("default" when not given),
+  and each of the Job's new Candidates (Selection's and add_candidate's) arrives with the Job's
+  Template applied. A Job whose Template was deleted makes them plain, with a warning.
 - The caption and hook styles' shadow is a Text Style's; a Style Override of it sets the fields it
   names ({{"shadow": {{"blur": 8}}}}). The hook's box (block or strips) and the caption highlight box
   have padding_x and padding_y, the highlight box radius too, in output pixels at the style's size;
@@ -566,7 +570,8 @@ def build_mcp(app: FastAPI) -> MCPServer:
     async def create_job_from_url(url: str, options: JobOptions = JobOptions()) -> dict:
         """Start a Job from a video's URL (YouTube): it is downloaded, transcribed and analyzed into
         Candidates. `options.brief` steers which moments are picked; min_secs and max_secs bound a
-        Candidate's length. Follow it with wait_for_job."""
+        Candidate's length; options.template: see Templates in the instructions. Follow it with
+        wait_for_job."""
         body = {"url": url, "options": _dump(JobOptions, options)}
         return _job_view(await api("POST", "/jobs", json=body))
 
@@ -575,6 +580,10 @@ def build_mcp(app: FastAPI) -> MCPServer:
         """Start a Job from a video file on this Mac, by its path. The file is left where it is (the
         Job keeps a clone or copy of it). Follow it with wait_for_job."""
         settings, store = app.state.settings, app.state.store
+        try:
+            options = dataclasses.replace(options, template=app.state.templates.for_new_job(options.template))
+        except TemplateNotFound:
+            raise ToolError(f"No Template {options.template}") from None
         file = Path(path).expanduser()
         try:
             staged = await to_thread.run_sync(stage, file, settings.data_dir / UPLOADS_DIR, settings.upload_reserve_bytes)
@@ -909,21 +918,36 @@ def build_mcp(app: FastAPI) -> MCPServer:
             return await api("PUT", "/export-presets/default", json={"preset_id": saved["id"] if saved else preset_id})
         return saved
 
-    async def save_template(given: BaseModel | None, preset_id: str | None) -> dict:
-        """A Template saved from a Candidate, or the Template `preset_id` saved over or renamed."""
+    async def save_template(given: BaseModel | None, preset_id: str | None, use_as_default: bool) -> dict:
+        """A Template saved from a Candidate, or the Template `preset_id` saved over or renamed; then
+        made the default when asked (by `preset_id` alone too)."""
+        if given is None and preset_id is not None and use_as_default:
+            await api("PUT", "/templates/default", json={"template_id": preset_id})
+            return await template_listed(preset_id)
         body = _validated(TemplateGiven, given)
         if preset_id is not None and body.keys() == {"name"}:
-            return _template_view(await api("PATCH", f"/templates/{preset_id}", json=body))
-        if preset_id is None:
-            return _template_view(await api("POST", "/templates", json=body))
-        return _template_view(await api("PUT", f"/templates/{preset_id}", json=body))
+            saved = await api("PATCH", f"/templates/{preset_id}", json=body)
+        elif preset_id is None:
+            saved = await api("POST", "/templates", json=body)
+        else:
+            saved = await api("PUT", f"/templates/{preset_id}", json=body)
+        if use_as_default:
+            await api("PUT", "/templates/default", json={"template_id": saved["id"]})
+        return _template_view(saved)
+
+    async def template_listed(template_id: str) -> dict:
+        """One of the Templates as list_presets gives it."""
+        listed = next((template for template in await api("GET", "/templates") if template["id"] == template_id), None)
+        if listed is None:
+            raise ToolError(f"No Template {template_id}")
+        return _template_view(listed)
 
     @tool(read_only=True)
     async def list_presets(kind: Literal["style", "text", "export", "template"] = "style", include_styles: bool = False) -> dict:
         """The Style Presets, or the Text Presets (`default`: used for new titles): built-in ones,
         then the owner's. With include_styles, their styles (a Style Override replaces their fields).
         Export Presets: with their settings, the `default` and the codecs `available`. Templates:
-        with their layers and Anchors."""
+        with their layers, Anchors and `default`."""
         if kind == "export":
             return await api("GET", "/export-presets")
         if kind == "template":
@@ -949,9 +973,9 @@ def build_mcp(app: FastAPI) -> MCPServer:
         Style Preset's join_transition goes on its Candidates' new joins (see the instructions). A
         Text Preset is {name, style}. use_for_new_titles: new Text Layers copy it (a built-in one's
         preset_id alone). An Export Preset is {name, settings}, never making a Clip stale; use_as_default: renders use it (likewise).
-        A Template is {name, job_id, candidate_id, anchors?} (see the instructions)."""
+        A Template is {name, job_id, candidate_id, anchors?} (see the instructions), use_as_default too."""
         if kind == "template":
-            return await save_template(preset, preset_id)
+            return await save_template(preset, preset_id, use_as_default)
         if kind == "export":
             return await save_export_preset(preset, preset_id, use_as_default)
         if kind == "style":
@@ -1231,6 +1255,7 @@ def _template_view(template: dict) -> dict:
     ]
     view = {key: template[key] for key in ("id", "name", "created_at", "updated_at")}
     view |= {"intro_secs": template["intro"]["secs"], "outro_secs": template["outro"]["secs"], "layers": layers}
+    view |= {"default": template["default"]} if "default" in template else {}
     return view | ({"notices": template["notices"]} if template.get("notices") else {})
 
 

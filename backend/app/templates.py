@@ -39,8 +39,9 @@ from app.candidates import (
     WordEdit,
     timeline_length,
 )
+from app.jobs import DEFAULT_TEMPLATE
 from app.keyframes import rewindow
-from app.review import CandidateChange
+from app.review import CandidateChange, Episode, update
 from app.segment_time import overlay_time, segment_time, transition_overlap
 from app.storage import write_atomic
 from app.styles import Name
@@ -635,11 +636,28 @@ def _count(n: int, one: str) -> str:
     return f"{n} {one}{'' if n == 1 else 's'}"
 
 
+def branded(template: Template, new: list[Candidate], episode: Episode) -> list[Candidate]:
+    """New Candidates (not saved yet) with `template` applied: still at their first Revision and not
+    edited, as Selection or the owner's Add made them."""
+    made = []
+    for candidate in new:
+        _, applied = update([candidate], candidate.id, apply(template, candidate).change, episode)
+        made.append(replace(applied, revision=candidate.revision, edited=candidate.edited))
+    return made
+
+
+def gone(template_id: str) -> str:
+    """What a Job is told when its Template was deleted before its Candidates were made."""
+    return f"Template {template_id} was deleted: new Candidates are made without it."
+
+
 @dataclass(frozen=True)
 class _Saved:
     """What DATA_DIR/templates.json holds."""
 
     templates: list[Template] = field(default_factory=list)
+    # The default Template's id: new Jobs' Candidates get it, unless they choose another or none.
+    default: TemplateId | None = None
 
 
 _SAVED = TypeAdapter(_Saved)
@@ -661,6 +679,36 @@ class TemplateStore:
                 return template
         raise TemplateNotFound(template_id)
 
+    def default(self) -> str | None:
+        """The default Template's id, or None when there is none."""
+        return self._saved().default
+
+    def use_as_default(self, template_id: str | None) -> None:
+        """Make one of the Templates the default, or with None, have none. TemplateNotFound for an
+        unknown one."""
+        with self._lock:
+            saved = self._saved()
+            if template_id is not None:
+                self._index(saved, template_id)
+            self._save(replace(saved, default=template_id))
+
+    def for_new_job(self, choice: str | None) -> str | None:
+        """A new Job's Template as chosen (DEFAULT_TEMPLATE, an id or None) resolved to an id or None.
+        TemplateNotFound for an unknown id."""
+        if choice == DEFAULT_TEMPLATE:
+            return self.default()
+        return None if choice is None else self.get(choice).id
+
+    def for_new_candidates(self, template_id: str | None) -> tuple[Template | None, list[str]]:
+        """The Template a Job's new Candidates get, by its id (or None), and what the Job is told:
+        `gone` when it was deleted since, and then they get none."""
+        if template_id is None:
+            return None, []
+        try:
+            return self.get(template_id), []
+        except TemplateNotFound:
+            return None, [gone(template_id)]
+
     def create(self, name: str, captured: Captured) -> Template:
         now = datetime.now(UTC)
         with self._lock:
@@ -678,12 +726,13 @@ class TemplateStore:
         return self._change(template_id, lambda template: replace(template, name=name))
 
     def delete(self, template_id: str) -> None:
-        """Delete one of the Templates. Candidates keep their Template items, whose mark then names
-        a missing Template."""
+        """Delete one of the Templates, which then is no longer the default. Candidates keep their
+        Template items, whose mark then names a missing Template."""
         with self._lock:
             saved = self._saved()
             i = self._index(saved, template_id)
-            self._save(replace(saved, templates=[*saved.templates[:i], *saved.templates[i + 1 :]]))
+            default = None if saved.default == template_id else saved.default
+            self._save(replace(saved, templates=[*saved.templates[:i], *saved.templates[i + 1 :]], default=default))
 
     def _change(self, template_id: str, change: Callable[[Template], Template]) -> Template:
         with self._lock:

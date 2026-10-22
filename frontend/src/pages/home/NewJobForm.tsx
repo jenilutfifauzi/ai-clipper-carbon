@@ -1,7 +1,7 @@
 import { ArrowRight, ChevronRight } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useNavigate } from "react-router";
-import { api, uploadJob, type JobOptions, type UploadProgress } from "../../api";
+import { api, DEFAULT_TEMPLATE, uploadJob, type JobOptions, type TemplateInfo, type UploadProgress } from "../../api";
 import { Button } from "../../components/Button";
 import { Panel } from "../../components/Panel";
 import { ProgressBar } from "../../components/ProgressBar";
@@ -10,6 +10,8 @@ import { Switch } from "../../components/Switch";
 import { cx, formatBytes } from "../../format";
 import { LANGUAGES } from "../../languages";
 import { FileDrop } from "./FileDrop";
+import { TemplateField } from "./TemplateField";
+import { chosenName, templateOption, type TemplateChoice } from "./templateChoice";
 
 type Origin = "url" | "upload";
 
@@ -35,6 +37,8 @@ export function NewJobForm() {
   const [captions, setCaptions] = useState(true);
   const [language, setLanguage] = useState("id");
   const [brief, setBrief] = useState("");
+  const [templates, setTemplates] = useState<TemplateInfo[]>([]);
+  const [template, setTemplate] = useState<TemplateChoice>(DEFAULT_TEMPLATE);
   const [advanced, setAdvanced] = useState(false);
   const advancedSection = useRef<HTMLDetailsElement>(null);
   const [pending, setPending] = useState(false);
@@ -44,6 +48,18 @@ export function NewJobForm() {
   const [uploaded, setUploaded] = useState<UploadProgress | null>(null);
   const cancelUpload = useRef<(() => void) | null>(null);
   const maxInput = useRef<HTMLInputElement>(null);
+
+  // Without them, there's nothing to choose: the backend still gives the Job the default.
+  useEffect(() => {
+    let current = true;
+    api.listTemplates().then(
+      (listed) => current && setTemplates(listed),
+      () => {},
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
 
   // Leaving the page would cut the upload short.
   const uploading = uploaded !== null;
@@ -68,6 +84,7 @@ export function NewJobForm() {
       max_secs: Number(maxSecs),
       captions,
       language: language.trim(),
+      ...templateOption(template),
     };
     try {
       let job;
@@ -104,11 +121,13 @@ export function NewJobForm() {
     if (advancedSection.current?.contains(event.target as Node)) setAdvanced(true);
   }
 
+  const templateName = chosenName(template, templates);
   const summary = [
     `${minSecs || "?"}–${maxSecs || "?"} s`,
     language.trim() || "?",
     captions ? "Captions on" : "Captions off",
     ...(brief.trim() ? ["Brief"] : []),
+    ...(templateName ? [templateName] : []),
   ].join(" · ");
 
   return (
@@ -267,6 +286,7 @@ export function NewJobForm() {
                   <span className="text-sm text-muted">{captions ? "On" : "Off"}</span>
                 </Switch>
               </div>
+              <TemplateField templates={templates} value={template} onChange={setTemplate} className="col-span-2" />
               {rangeError && (
                 <p id={`${id}-range-error`} className="col-span-full -mt-2 text-sm text-danger">
                   {rangeError}
