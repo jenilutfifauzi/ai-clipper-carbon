@@ -1,4 +1,4 @@
-import { ArrowLeft, Download, Loader2, Maximize, Minimize, PanelLeft, PanelRight, RotateCcw } from "lucide-react";
+import { ArrowLeft, BookmarkPlus, Download, Loader2, Maximize, Minimize, PanelLeft, PanelRight, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
@@ -19,6 +19,7 @@ import {
   type Overlay,
   type Shape,
   type ShapeKind,
+  type TemplateInfo,
   type TextLayer,
   type Transform,
   type Transition,
@@ -188,6 +189,10 @@ import { SpeedPanel } from "./SpeedFields";
 import { TransformPanel } from "./TransformPanel";
 import { TRANSITION_DEFAULT_SECS, TransitionPanel } from "./Transitions";
 import { lockedWhile, useEditHistory } from "./useEditHistory";
+import { useTemplates } from "../../../templates";
+import { SaveTemplateDialog } from "./SaveTemplateDialog";
+import { TemplatesPanel } from "./TemplatesPanel";
+import { appliedNotice, appliedTo, withApplied } from "./templating";
 
 // The Job statuses in which its Candidates can be changed (EDITABLE in backend/app/api.py).
 const EDITABLE = new Set(["review", "rendering"]);
@@ -402,6 +407,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const edited = useEditHistory<AdvancedEdits>(editsOf(initial), save);
   const history = lockedWhile(edited, () => lockedForTake());
   const edits = history.value;
+  // The edits as this render has them, for an answer that comes after later renders (a Template applied).
+  const latestEdits = useRef(edits);
+  latestEdits.current = edits;
+  // The owner's Templates: the Templates tab's cards, and the names the Inspector gives Template items.
+  const templates = useTemplates();
+  // On a desktop: the "Save as Template…" dialog open.
+  const [savingTemplate, setSavingTemplate] = useState(false);
 
   // Kept in step with other editors (ADR 0003): a change saved elsewhere is taken at once; the edits
   // waiting here are merged onto it and saved from it, mine winning where both changed the same item.
@@ -625,6 +637,18 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (!take || !locksEditing(take.state)) return false;
     tellOnce(TAKE_LOCKED);
     return true;
+  }
+  // A Template (or with null, "No Template") applied from the Templates tab or sheet: once the edits
+  // waiting here are saved, the server's dry run for this clip is put in as one draft change, one
+  // step of undo, saved like any edit; its notices in a toast.
+  async function applyTemplate(template: TemplateInfo | null) {
+    if (lockedForTake()) return;
+    await history.flush();
+    await sending.current;
+    const applied = await appliedTo(job.id, initial.id, template?.id ?? null);
+    history.set(withApplied(latestEdits.current, applied.edits));
+    setNotice({ id: Date.now(), text: appliedNotice(template?.name ?? null, applied.notices) });
+    if (!wide) setSheet(null);
   }
   const fetchCompare = (at: number, signal: AbortSignal) => api.compareFrame(job.id, candidate.id, { at, draft }, signal);
   const { compare } = checks;
@@ -1395,6 +1419,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const inspector = (
     <KeyingContext.Provider value={keying}>
       <Inspector
+        templates={templates}
         effectsPreparing={effectsPreparing}
         effectsElsewhere={!wide}
         videoEffectsShown={wide}
@@ -1473,6 +1498,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       transcript={job.transcript}
       near={edits.segments[0]}
       transitions={transitionPanel(true)}
+      templates={<TemplatesPanel phone={!wide} onApply={applyTemplate} />}
       narrate={<NarratePanel flow={narrateFlow} language={job.options.language} atEnd={narrateAtEnd} title={narrated} />}
       filters={
         <LookPanel
@@ -1576,12 +1602,29 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               compact
             />
             <RevisionHistory jobId={job.id} candidateId={initial.id} revision={candidate.revision} here="advanced-edit" onRestore={restore} />
+            {wide && (
+              <Button variant="ghost" size="icon" onClick={() => setSavingTemplate(true)} aria-label="Save as Template…" title="Save as Template…">
+                <BookmarkPlus aria-hidden size={18} />
+              </Button>
+            )}
           </>
         }
         onShortcuts={wide ? () => setShortcuts(true) : undefined}
         onClose={() => void close()}
       />
       <ShortcutsSheet open={shortcuts && wide} onClose={() => setShortcuts(false)} />
+      <SaveTemplateDialog
+        open={savingTemplate && wide}
+        jobId={job.id}
+        candidateId={initial.id}
+        draft={draft}
+        at={() => playback.time}
+        onClose={() => setSavingTemplate(false)}
+        onSaved={(saved, over) => {
+          setSavingTemplate(false);
+          setNotice({ id: Date.now(), text: [`${over ? "Saved over" : "Saved"} the Template “${saved.name}”.`, ...saved.notices].join(" ") });
+        }}
+      />
       <ConfirmDialog
         open={leaving}
         title="Leave without saving?"

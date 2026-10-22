@@ -7,7 +7,7 @@
 - **The Templates tab in the Asset Panel** (desktop) shows cards: the poster, the name, the intro and outro lengths, and a star on the default.
   - Apply to this Candidate: the editor fetches the dry run and puts the result in as one draft change (one step of undo), saved like any edit. Notices show as a toast.
   - "No Template".
-  - Rename and delete. Make default comes with 08; until then the action is absent.
+  - Rename, delete and make default (from 08: the star shows the default; making the default one "No default" clears it).
 - **The poster** is the frame at the playhead from the existing save-frame pipeline, with the draft, made at a card size. It is stored beside the Template store and served by `/templates/{id}/poster`.
 - **"Save as Template…"** in the Advanced Edit's menu, on desktop only, opens a dialog with:
   - a name;
@@ -22,13 +22,13 @@
 
 **Blocked by:** 02, 03.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Vitest:
+- [x] Vitest:
   - Applying from the tab is one undo step, and undo restores the Candidate's previous items.
   - The save dialog shows the guessed Anchors and posts an override.
   - "Save over" keeps the id.
   - The Inspector shows "From Template".
   - The phone sheet has no Save, Rename or Delete.
-- [ ] HTTP: the poster PNG exists after saving and is replaced on save over.
-- [ ] Checked in the running app on a desktop and a phone width.
+- [x] HTTP: the poster PNG exists after saving and is replaced on save over.
+- [x] Checked in the running app on a desktop and a phone width.

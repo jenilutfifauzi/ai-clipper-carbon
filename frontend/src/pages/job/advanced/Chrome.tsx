@@ -15,6 +15,7 @@ import {
   Gauge,
   Keyboard,
   Layers2,
+  LayoutTemplate,
   ListChecks,
   Loader2,
   Redo2,
@@ -56,7 +57,7 @@ import type { EditHistory } from "./useEditHistory";
 // phone's toolbar, frame buttons, Playback sheet and bottom sheet, the timeline's buttons for the
 // picked item, and the shortcuts sheet.
 
-export type AssetTab = "text" | "stickers" | "audio" | "narrate" | "media" | "transitions" | "filters" | "effects";
+export type AssetTab = "text" | "stickers" | "audio" | "narrate" | "media" | "transitions" | "filters" | "effects" | "templates";
 
 export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[] = [
   { value: "text", label: "Text", icon: Type },
@@ -67,13 +68,15 @@ export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[]
   { value: "transitions", label: "Transitions", icon: Shuffle },
   { value: "filters", label: "Filters", icon: SwatchBook },
   { value: "effects", label: "Effects", icon: WandSparkles },
+  { value: "templates", label: "Templates", icon: LayoutTemplate },
 ];
 
-// The phone's: Video Effects are a desktop's to edit (ADR 0014), so it has no Effects tab.
+// The phone's: Video Effects are a desktop's to edit (ADR 0014), so it has no Effects tab. Its Templates sheet
+// applies one, or "No Template", only.
 export const PHONE_ASSET_TABS = ASSET_TABS.filter((tab) => tab.value !== "effects");
 
 // The Asset Panel's tabs. Their names go (kept for a screen reader and in a tooltip) when the panel
-// is too narrow for all eight, as at its default width, rather than cut off the last tabs.
+// is too narrow for all nine, as at its default width, rather than cut off the last tabs.
 export function AssetTabs({ value, onChange }: { value: AssetTab; onChange: (tab: AssetTab) => void }) {
   return (
     <div role="tablist" aria-label="Assets" className="@container flex gap-1 border-b border-border p-2">

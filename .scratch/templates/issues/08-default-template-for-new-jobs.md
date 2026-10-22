@@ -13,7 +13,7 @@
   - If that Template is gone, the Candidates stay plain and the Job records a notice.
 - **The New Job form** has a Template choice: the default (named), another, or none.
 - **`create_job_from_url` and `create_job_from_file`** take it through their options.
-- **The Templates tab** gains "Make default", and the star on the card shows it. *(Left to 06, which makes the tab: `api.useTemplateAsDefault` and `TemplateInfo.default` are ready for it.)*
+- **The Templates tab** gains "Make default", and the star on the card shows it. *(Done with 06, which makes the tab.)*
 
 **Blocked by:** 01.
 

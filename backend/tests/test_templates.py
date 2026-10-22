@@ -40,10 +40,13 @@ from app.templates import (
     boundaries,
     capture,
 )
+from app.api import POSTER_SIZE, POSTERS_DIR
 from app.jobs import CANDIDATES_FILE
 from test_jobs_api import create_job
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, make, manual, mcp, reviewed  # noqa: F401 (fixtures)
+from test_render import probe
 from test_review import candidates, patch
+from test_save_frame import pixels_of
 from test_selection import analyzed, clip
 
 SONG = "a" * 32
@@ -512,6 +515,37 @@ def test_templates_are_saved_listed_renamed_saved_over_and_deleted(client, from_
     assert client.get(URL).json() == []
     assert client.delete(f"{URL}/{template['id']}").status_code == 404
     assert client.patch(f"{URL}/{template['id']}", json={"name": "x"}).status_code == 404
+
+
+def test_the_poster_is_the_drafts_frame_at_the_playhead_replaced_on_save_over_and_deleted_with_it(
+    client, settings, from_episode, llm, wait_for_status
+):
+    job, source = branded(client, wait_for_status, llm)
+
+    template = saved(client, job, source, poster_at=1.0)
+    poster = client.get(f"{URL}/{template['id']}/poster")
+    assert poster.status_code == 200, poster.text
+    assert poster.headers["content-type"] == "image/png"
+    # Kept beside the Template store, by the Template's id, at a card's size.
+    path = settings.data_dir / POSTERS_DIR / f"{template['id']}.png"
+    assert path.read_bytes() == poster.content
+    [stream] = probe(settings, path)["streams"]
+    assert (stream["width"], stream["height"]) == POSTER_SIZE
+
+    # Saved over from a draft with a green card over the frame: the poster is drawn again from it.
+    green = {"id": "card", "start": 0.0, "secs": 5.0, "transform": {"x": 540, "y": 960}, "style": {"width": 1080, "height": 1920, "fill": "#00FF00"}}
+    over = client.put(
+        f"{URL}/{template['id']}",
+        json={"name": "Brand", "job_id": job["id"], "candidate_id": source["id"], "edits": {"shapes": [green]}, "poster_at": 1.0},
+    )
+    assert over.status_code == 200, over.text
+    replaced = client.get(f"{URL}/{template['id']}/poster")
+    assert replaced.status_code == 200 and replaced.content != poster.content
+    assert pixels_of(settings, path)[POSTER_SIZE[1] // 2, POSTER_SIZE[0] // 2][1] > 200
+
+    assert client.delete(f"{URL}/{template['id']}").status_code == 204
+    assert not path.exists()
+    assert client.get(f"{URL}/{template['id']}/poster").status_code == 404
 
 
 def test_a_template_of_an_unknown_candidate_or_anchor_is_refused(client, from_episode, llm, wait_for_status):
