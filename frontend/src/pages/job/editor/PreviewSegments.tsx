@@ -3,7 +3,7 @@ import type { RenderPlan, RetimedCopy, RetimedRange, ScenePlan, SegmentPlan, Tra
 import { BLUR_BRIGHTNESS, BLUR_SIGMA, PanelView } from "./ClipPreview";
 import { follow } from "./follow";
 import { GradeVignette, useFrameFilter } from "./GradeFilters";
-import { FRAME, panelStyle, slotView } from "./picture";
+import { filledStyle, FRAME, panelStyle, slotView } from "./picture";
 import { PicturePanel } from "./PicturePanel";
 import { onOwnVideos, playable, useShown, type Playback } from "./playback";
 import { changing, loudness, segmentSound } from "./loudness";
@@ -63,7 +63,7 @@ export const segmentScene = (plan: RenderPlan, index: number): ScenePlan | undef
  * own; its sound brought in by `into` and taken away by `fade` (the Transitions either side), if any,
  * as their sounds say (`crossedVolumes`). Its video plays at
  * its Speed, its pitch kept or not (`follow`). It is drawn from its
- * `scene` (ADR 0007): the Background, its blurred cover panel or its colour, then the picture. Outside
+ * `scene` (ADR 0007): the Background, its blurred cover panel, its colour or its image, then the picture. Outside
  * its span its video waits at its start, so that its first frame is ready. A keyed picture moves
  * with the playback (PicturePanel), and a keyed or faded sound follows its gain curve (followCurve).
  * A reversed one, or one at a Speed a browser won't play, plays its Retimed copy, and shows its first
@@ -115,7 +115,7 @@ export function MediaSegment({
   return (
     <div ref={box} className="absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
       {/* Its Grade and Video Effects over its whole frame (ADR 0013, 0014): its Background and its picture, its vignette over them. */}
-      <div className="absolute inset-0" style={{ background: scene?.colour ?? "#000", filter }}>
+      <div className="absolute inset-0" style={{ ...filledStyle(scene?.colour ?? "#000", scene?.image), filter }}>
         {background && (
           <div className="absolute overflow-hidden" style={background.box}>
             <video

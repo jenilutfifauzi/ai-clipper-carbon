@@ -1,5 +1,5 @@
 import { FEATHER_DEFAULT, FEATHER_MAX } from "../../../api";
-import type { Adjust, AdjustmentLayer, AudioEffect, AudioEffectKind, AudioEffectSetting, BlendMode, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind, VideoEffect, VideoEffectKind } from "../../../api";
+import type { Adjust, AdjustmentLayer, AudioEffect, Background, AudioEffectKind, AudioEffectSetting, BlendMode, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind, VideoEffect, VideoEffectKind } from "../../../api";
 import { CLEAN_SWITCHES, isCleanSwitch, type CleanSwitchId } from "../../../audioEffects";
 import { adjusted, NEUTRAL_GRADE, relooked } from "../editor/grading";
 import { withJoinTransition } from "../editor/joinTransition";
@@ -1697,6 +1697,30 @@ export function setFeather(scene: { edits: AdvancedEdits; pick: Pick }, feather:
   const segments = scene.edits.segments.map((segment) =>
     picked.includes(segment) && segment.background_removal ? { ...segment, background_removal: { ...segment.background_removal, feather: value } } : segment,
   );
+  return { edits: { ...scene.edits, segments }, pick: scene.pick };
+}
+
+// A cut-out Segment's Background when it has none of its own: the picture blurred (ADR 0015).
+const SEGMENT_BLURRED: Background = { kind: "blur", colour: "#000000" };
+
+/** The picked cut-out Segments of the Source, whose own Background (ADR 0015) the Remove background section sets. */
+export const backedSegments = (scene: { edits: AdvancedEdits; pick: Pick }): ClipSegment[] => cuttableSegments(scene).filter((segment) => segment.background_removal);
+
+/** Whether two Backgrounds are the same (an image missing or null alike). */
+export const sameBackground = (one: Background, other: Background): boolean =>
+  one.kind === other.kind && one.colour === other.colour && (one.image ?? null) === (other.image ?? null);
+
+/** A Segment of the Source's Background in force while it is cut out: its own, else the picture blurred. */
+export const segmentBackground = (segment: ClipSegment): Background => segment.background ?? SEGMENT_BLURRED;
+
+/**
+ * Every picked cut-out Segment of the Source's own Background set to `background` (a blurred one kept
+ * with its colour, so that changing back restores it), as one change; null when none is picked or none changes.
+ */
+export function setSegmentBackground(scene: { edits: AdvancedEdits; pick: Pick }, background: Background): Outcome | null {
+  const changed = backedSegments(scene).filter((segment) => !sameBackground(segmentBackground(segment), background));
+  if (!changed.length) return null;
+  const segments = scene.edits.segments.map((segment) => (changed.includes(segment) ? { ...segment, background } : segment));
   return { edits: { ...scene.edits, segments }, pick: scene.pick };
 }
 

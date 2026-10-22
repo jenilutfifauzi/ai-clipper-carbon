@@ -469,6 +469,8 @@ export interface ScenePlan {
   // A media Segment's or a Manual Scene's: its one picture, over its panels, or over `colour` without any.
   picture: Picture | null;
   colour: string | null;
+  // Or over this Media Library image (its id: a Framing's image Background, ADR 0015), covering the frame.
+  image?: string | null;
   // The Framing that draws its first frame (a Manual Scene's own): what a switch to Manual copies.
   framing: Framing | null;
   // A Manual Scene of a Layout Override's: where (Timeline time) its Keyframes count from, before the
@@ -797,10 +799,13 @@ export interface Crop {
 }
 
 // What shows where a Framing's picture doesn't cover the frame (backend/app/candidates.py): the
-// picture itself blurred, or `colour` (#RRGGBB).
+// picture itself blurred, `colour` (#RRGGBB), or a Media Library image (`image`, its id) covering the
+// frame (ADR 0015). The colour is kept when the kind changes; the image is dropped with its kind
+// (a Background's image counts as used, so it can't be deleted).
 export interface Background {
-  kind: "blur" | "colour";
+  kind: "blur" | "colour" | "image";
   colour: string;
+  image?: string | null;
 }
 
 // How a picture fills the frame on its own (ADR 0007): a media Segment's video cut by its Crop and
@@ -1071,7 +1076,7 @@ export interface SegmentPlan extends Retiming {
   // Its frame's enabled Video Effects (ADR 0014), in order, after its Grade; sizes the 1080x1920 frame's.
   video_effects?: VideoEffect[];
   // A cut-out Source Segment's (ADR 0015): its Background removal, the feather as drawn (times its
-  // picture's scale); the Background in force (the picture blurred); and the pieces of the Source's
+  // picture's scale); the Background in force (its own, else the picture blurred); and the pieces of the Source's
   // Matte it reads, by their starts in seconds (10 s each).
   background_removal?: BackgroundRemoval | null;
   background?: Background | null;
@@ -1243,6 +1248,9 @@ export interface ClipSegment extends Retiming {
   video_effects?: VideoEffect[];
   // Its Background removal (ADR 0015): only its subject kept by its Matte, over its Background. Off when missing.
   background_removal?: BackgroundRemoval | null;
+  // A Segment of the Source's own Background (ADR 0015), shown while it is cut out (in Blur in place of
+  // its fill). The picture blurred when missing; a video's Segment has its Framing's.
+  background?: Background | null;
 }
 
 // Background removal (GLOSSARY; ADR 0015): the subject kept (a person, for now), its edge softened by

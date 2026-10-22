@@ -1,17 +1,18 @@
 import { Download, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { api, FEATHER_MAX, type BackgroundRemoval, type MattePart, type PersonModelInfo } from "../../../api";
+import { api, FEATHER_MAX, type Background, type BackgroundRemoval, type MattePart, type PersonModelInfo } from "../../../api";
 import { Button } from "../../../components/Button";
 import { ProgressBar } from "../../../components/ProgressBar";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { formatBytes } from "../../../format";
 import { Group, Mixed } from "../editor/StyleFields";
-import { cuttableSegments, setBackgroundRemoval, setFeather } from "./actions";
+import { backedSegments, cuttableSegments, sameBackground, segmentBackground, setBackgroundRemoval, setFeather, setSegmentBackground } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { MatteSource, matteOf } from "./matte";
 import type { Pick } from "./pick";
 import { PersonModelSource, type PersonModelAction } from "./personModel";
+import { BackgroundPicker } from "./TransformFields";
 
 /** The switch and feather of the picked Segments of the Source (`backgroundRemovalChanges`). */
 export interface RemovalControls {
@@ -23,12 +24,17 @@ export interface RemovalControls {
   shown: string;
   onSwitch: (on: boolean) => void;
   onFeather: (feather: number, group: string) => void;
+  // The Backgrounds in force of those cut out (ADR 0015: their own, else the picture blurred), and
+  // one set on them all, a change of `field`.
+  backgrounds?: Background[];
+  onBackground?: (background: Background, field: string) => void;
 }
 
 /**
  * The Remove background section's controls for the picked Segments of the Source (ADR 0015): switching
- * Background removal on or off, and setting the feather, on all of them, each one change (a drag of
- * the feather one step of undo). Null without any (an Overlay's, a media Segment's come later).
+ * Background removal on or off, and setting the feather, on all of them, and the Background of those
+ * cut out, each one change (a drag of the feather, or of the colour, one step of undo). Null without
+ * any (an Overlay's, a media Segment's come later).
  */
 export function backgroundRemovalChanges(
   scene: { edits: AdvancedEdits; pick: Pick },
@@ -37,6 +43,7 @@ export function backgroundRemovalChanges(
   const segments = cuttableSegments(scene);
   if (!segments.length) return null;
   const cut = segments.filter((segment) => segment.background_removal);
+  const ids = (picked: { id: string }[]) => picked.map((segment) => segment.id).join(",");
   return {
     removals: segments.map((segment) => segment.background_removal ?? null),
     cut: cut.map((segment) => segment.id),
@@ -47,7 +54,13 @@ export function backgroundRemovalChanges(
     },
     onFeather: (feather, group) => {
       const outcome = setFeather(scene, feather);
-      if (outcome) onEdits(outcome.edits, `${group}:${segments.map((segment) => segment.id).join(",")}`);
+      if (outcome) onEdits(outcome.edits, `${group}:${ids(segments)}`);
+    },
+    backgrounds: backedSegments(scene).map(segmentBackground),
+    onBackground: (background, field) => {
+      const outcome = setSegmentBackground(scene, background);
+      // A colour dragged in its picker is one step; a kind or an image picked, one each.
+      if (outcome) onEdits(outcome.edits, field === "colour" ? `segment-background:colour:${ids(cut)}` : undefined);
     },
   };
 }
@@ -106,9 +119,10 @@ export function RemoveBackground({ removal, matte }: { removal?: RemovalControls
 
 /**
  * The section's fields: with `removal`, the switch (Mixed when only some are on) and, once any is on,
- * the feather (0 to FEATHER_MAX px, shown as the first one's, Mixed when they differ), then their
- * Matte's progress ("Finding the subject… N%"), waiting for the person model, or failed with its
- * message and Retry. Then the person model: Download (its size and licence) while it isn't here; its
+ * the feather (0 to FEATHER_MAX px, shown as the first one's, Mixed when they differ) and what shows
+ * behind the person (BackgroundPicker: blurred, a colour or an image, the first one's, Mixed when
+ * they differ), then their Matte's progress ("Finding the subject… N%"), waiting for the person
+ * model, or failed with its message and Retry. Then the person model: Download (its size and licence) while it isn't here; its
  * progress with Cancel while it downloads; Remove once it is here; a failed download's message with Retry.
  */
 export function RemoveBackgroundFields({
@@ -135,6 +149,7 @@ export function RemoveBackgroundFields({
   const told = [model?.state === "failed" ? model.message : null, message].filter(Boolean);
   const on = removal?.removals.filter((removal): removal is BackgroundRemoval => removal !== null) ?? [];
   const [first] = on;
+  const behind = removal?.backgrounds?.[0];
   return (
     <Group title="Remove background">
       {removal && (
@@ -155,6 +170,14 @@ export function RemoveBackgroundFields({
               format={(value) => `${Math.round(value)} px`}
               marker={on.some((removal) => removal.feather !== first.feather) ? <Mixed /> : undefined}
               onChange={(feather) => removal.onFeather(feather, "background-removal:feather")}
+            />
+          )}
+          {first && behind && removal.onBackground && (
+            <BackgroundPicker
+              legend="Behind the person"
+              background={behind}
+              mixed={removal.backgrounds?.some((background) => !sameBackground(background, behind))}
+              onChange={removal.onBackground}
             />
           )}
           {matte?.state === "making" ? (

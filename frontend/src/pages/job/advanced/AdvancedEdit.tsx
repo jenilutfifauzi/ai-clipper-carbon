@@ -55,6 +55,7 @@ import { useVideoEffects } from "../../../videoEffects";
 import { draftGrades } from "../editor/grading";
 import { failedSegments, pendingSpans, useReplanWhilePending } from "../editor/wordsStatus";
 import { styleControls, usePresets } from "../editor/useStyleDraft";
+import { LibraryImages } from "./TransformFields";
 import { eventCopy, segmentCopy, soundAsk, type RetimedAsk } from "../editor/retimedCopy";
 import {
   addAdjustmentLayer,
@@ -312,6 +313,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [looping, setLooping] = useState(false);
   const library = useMediaLibrary();
   const mediaById = new Map((library.items ?? []).map((item) => [item.id, item]));
+  // The images a Background may show (ADR 0015), offered by the Inspector's Background pickers.
+  const libraryImages = useMemo(() => (library.items ?? []).filter((item) => item.kind === "image"), [library.items]);
   // The Timeline's Filmstrips, fetched and decoded for as long as this editor is open.
   const [mediaCache] = useState(() => new MediaCache());
   useEffect(() => () => mediaCache.clear(), [mediaCache]);
@@ -1394,51 +1397,53 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const bottomTabContext: BottomTabContext = { timeline, keying, fps, mediaById };
   const inspector = (
     <KeyingContext.Provider value={keying}>
-      <Inspector
-        effectsPreparing={effectsPreparing}
-        effectsElsewhere={!wide}
-        videoEffectsShown={wide}
-        matte={here}
-        pick={pick}
-        edits={edits}
-        duration={duration}
-        preview={preview}
-        fonts={fonts}
-        captionStyle={captionStyle}
-        presetsError={presets.error}
-        actions={actions}
-        mediaById={mediaById}
-        sourceLength={sourceLength}
-        playback={playback}
-        transition={transitionPanel(!wide)}
-        onEdits={history.set}
-        onText={updateText}
-        onShape={updateShape}
-        onAdjustment={updateAdjustment}
-        onMusic={updateMusic}
-        onOverlay={updateOverlay}
-        onSegment={updateSegment}
-        onSpeed={setItemSpeed}
-        onReverse={setItemReverse}
-        copyOf={copyOf}
-        onHold={setFreezeHold}
-        cropMode={cropMode}
-        locked={tracks.locked}
-        onCue={applyCue}
-        captionsOf={(segment, item) => (
-          <MediaCaptionFields
-            segment={segment}
-            item={item}
-            job={job.options}
-            status={preview?.words_status[segment.id]}
-            error={preview?.words_errors?.[segment.id]}
-            onChange={updateSegment}
-            onLanguage={(language) => setMediaLanguage(item, language)}
-            onTranscribe={(again) => api.transcribeMediaWords(job.id, item.id, again).then(() => setReplan((n) => n + 1))}
-          />
-        )}
-        detaching={detaching}
-      />
+      <LibraryImages.Provider value={libraryImages}>
+        <Inspector
+          effectsPreparing={effectsPreparing}
+          effectsElsewhere={!wide}
+          videoEffectsShown={wide}
+          matte={here}
+          pick={pick}
+          edits={edits}
+          duration={duration}
+          preview={preview}
+          fonts={fonts}
+          captionStyle={captionStyle}
+          presetsError={presets.error}
+          actions={actions}
+          mediaById={mediaById}
+          sourceLength={sourceLength}
+          playback={playback}
+          transition={transitionPanel(!wide)}
+          onEdits={history.set}
+          onText={updateText}
+          onShape={updateShape}
+          onAdjustment={updateAdjustment}
+          onMusic={updateMusic}
+          onOverlay={updateOverlay}
+          onSegment={updateSegment}
+          onSpeed={setItemSpeed}
+          onReverse={setItemReverse}
+          copyOf={copyOf}
+          onHold={setFreezeHold}
+          cropMode={cropMode}
+          locked={tracks.locked}
+          onCue={applyCue}
+          captionsOf={(segment, item) => (
+            <MediaCaptionFields
+              segment={segment}
+              item={item}
+              job={job.options}
+              status={preview?.words_status[segment.id]}
+              error={preview?.words_errors?.[segment.id]}
+              onChange={updateSegment}
+              onLanguage={(language) => setMediaLanguage(item, language)}
+              onTranscribe={(again) => api.transcribeMediaWords(job.id, item.id, again).then(() => setReplan((n) => n + 1))}
+            />
+          )}
+          detaching={detaching}
+        />
+      </LibraryImages.Provider>
     </KeyingContext.Provider>
   );
   // The picture the Filters cards show at `time` (ADR 0013).

@@ -26,7 +26,7 @@ import { cssFontSize, fontFamily } from "../../../fonts";
 import { useLooks } from "../../../looks";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
-import { allStroke, FRAME, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
+import { allStroke, filledStyle, FRAME, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewEffected } from "./PreviewEffected";
 import { PreviewMusic } from "./PreviewMusic";
 import { PreviewOverlays } from "./PreviewOverlays";
@@ -914,7 +914,7 @@ function Watermark({ plan, event, font }: { plan: RenderPlan; event: WatermarkEv
  * One panel slot: its <video>, always mounted (so that it keeps playing across Scenes), shown in the
  * current Scene's panel for the slot (hidden when the Scene has none), cropped at the path's point;
  * or, in a Manual Scene (`slotView`), its picture placed as PicturePanel places one, or its
- * Background's colour. A `hidden` one (its deck parked) is still drawn, transparent, so that its
+ * Background's colour or image. A `hidden` one (its deck parked) is still drawn, transparent, so that its
  * frame is ready. A keyed Manual picture (ADR 0008) moves as PicturePanel moves one: sampled at the
  * time shown on every frame of the playback's clock, its box and opacity written to it directly.
  * With `cut` (a plan with cut-out Segments, ADR 0015), a picture's video has a canvas beside it that
@@ -928,6 +928,7 @@ export function PanelView({
   panel,
   picture = null,
   colour = null,
+  image = null,
   playback,
   muted,
   hidden = false,
@@ -939,6 +940,8 @@ export function PanelView({
   panel: Panel | null;
   picture?: Picture | null;
   colour?: string | null;
+  // A Manual Scene's image Background (ADR 0015), covering the frame.
+  image?: string | null;
   playback: Playback;
   muted: boolean;
   hidden?: boolean;
@@ -983,16 +986,17 @@ export function PanelView({
   const point = panel?.path[Math.min(pointIndex, panel.path.length - 1)];
   const whole: CSSProperties = { inset: 0, width: "100%", height: "100%" };
   if (!plan || !panel || !point) {
-    // A colour shows where the video doesn't.
-    const box: CSSProperties = colour ? { inset: 0, background: colour } : { inset: 0, visibility: "hidden" };
+    // A colour or an image shows where the video doesn't.
+    const filled = !!colour || !!image;
+    const box: CSSProperties = filled ? { inset: 0, ...filledStyle(colour, image) } : { inset: 0, visibility: "hidden" };
     return (
       <SlotVideo
         videoRef={videoRef}
         src={src}
         muted={muted}
         box={{ ...box, ...parked }}
-        video={colour ? { ...whole, visibility: "hidden" } : whole}
-        fill={!!cut && !!colour}
+        video={filled ? { ...whole, visibility: "hidden" } : whole}
+        fill={!!cut && filled}
       />
     );
   }

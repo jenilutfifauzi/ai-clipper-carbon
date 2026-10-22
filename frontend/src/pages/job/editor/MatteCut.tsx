@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useSyncExternalStore, type CSSPrope
 import type { Background, MattePiece, Panel, RenderPlan } from "../../../api";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA } from "./ClipPreview";
 import { MAX_DRIFT_SECS } from "./follow";
+import { filledStyle } from "./picture";
 import { matteAt, matteFrame, matteSeek, MATTE_PIECE_SECS } from "./matteTime";
 import type { Playback } from "./playback";
 
@@ -399,18 +400,23 @@ export function CutGroup({
   );
 }
 
-/** What a cut-out Segment's Background is drawn as: a crop of the picture, blurred, filling `panel`'s area; or a colour. */
-export type BackdropView = { panel: Panel; colour: string | null } | { panel: null; colour: string };
+/** What a cut-out Segment's Background is drawn as: a crop of the picture, blurred, filling `panel`'s area; or a colour, or a Media Library image covering the frame. */
+export type BackdropView = { panel: Panel; colour: string | null; image?: null } | { panel: null; colour: string; image?: string | null };
 
 /**
  * A cut-out Scene's Background, as the render's `_backdrop_scene` draws it: a Manual Scene's
- * Framing's (its blurred cover panel, or its colour, `manual`); any other's the Segment's
- * `background`, by default the picture blurred over the whole frame (the largest 9:16 crop from its
- * middle), which in Blur replaces the Layout's fill.
+ * Framing's (its blurred cover panel, its colour or its image, `manual`); any other's the Segment's
+ * `background` (a colour, or an image covering the frame), by default the picture blurred over the
+ * whole frame (the largest 9:16 crop from its middle), which in Blur replaces the Layout's fill.
  */
-export function backdropView(plan: RenderPlan, manual: { panel: Panel | null; colour: string | null } | null, background?: Background | null): BackdropView {
-  if (manual) return manual.panel ? { panel: manual.panel, colour: manual.colour } : { panel: null, colour: manual.colour ?? "#000000" };
+export function backdropView(
+  plan: RenderPlan,
+  manual: { panel: Panel | null; colour: string | null; image?: string | null } | null,
+  background?: Background | null,
+): BackdropView {
+  if (manual) return manual.panel ? { panel: manual.panel, colour: manual.colour } : { panel: null, colour: manual.colour ?? "#000000", image: manual.image ?? null };
   if (background?.kind === "colour") return { panel: null, colour: background.colour };
+  if (background?.kind === "image" && background.image) return { panel: null, colour: "#000000", image: background.image };
   return { panel: filledPanel(plan), colour: null };
 }
 
@@ -434,8 +440,9 @@ function filledPanel(plan: RenderPlan): Panel {
 }
 
 /**
- * The Background under a cut-out Segment's picture, shown with the cut (`CutGroup`): its colour, or
- * its crop of the picture drawn from the shown deck's master (`master()`) on each of its frames,
+ * The Background under a cut-out Segment's picture, shown with the cut (`CutGroup`): its colour, its
+ * image covering the frame, or its crop of the picture drawn from the shown deck's master
+ * (`master()`) on each of its frames,
  * shrunk and blurred as Blur's fill is.
  */
 export function CutBackdrop({
@@ -480,7 +487,7 @@ export function CutBackdrop({
       }
     : { inset: 0 };
   return (
-    <div aria-hidden className="invisible absolute inset-0 overflow-hidden group-data-[cut]/cut:visible" style={{ background: view.colour ?? undefined }}>
+    <div aria-hidden className="invisible absolute inset-0 overflow-hidden group-data-[cut]/cut:visible" style={filledStyle(view.colour, view.image)}>
       {panel && (
         <canvas
           ref={canvas}
