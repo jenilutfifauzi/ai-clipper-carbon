@@ -23,6 +23,7 @@ from app.person_model import (
     PERSON_MODEL_URL,
     PersonModel,
     PersonModelBusy,
+    fixed_copy,
 )
 from app.ports import Ports, real_ports
 from model_server import Served, serve
@@ -146,6 +147,26 @@ def test_remove_deletes_the_model_and_the_part_and_is_refused_while_downloading(
     model.remove()
     assert model.state()["state"] == "absent"
     assert not model.path.exists() and not model.part.exists()
+
+
+def test_remove_deletes_the_fixed_shape_copies_beside_the_model_and_nothing_else(served, tmp_path):
+    state, url = served
+    model = PersonModel(tmp_path / "models", source(url))
+    model.download()
+    assert settle(model)["state"] == "ready"
+    copies = [fixed_copy(model.path, (1280, 720)), fixed_copy(model.path, (640, 360))]
+    for copy in copies:
+        copy.write_bytes(b"onnx")
+    # One a rewrite left half made (the app stopped meanwhile).
+    (left := copies[0].with_name(f"{copies[0].stem}.x1y2")).mkdir()
+    (left / "fixed.onnx").write_bytes(b"onnx")
+    kept = [tmp_path / "models" / "kokoro-multi-lang-v1_0", tmp_path / "models" / "other.onnx"]
+    kept[0].mkdir()
+    kept[1].write_bytes(b"onnx")
+    assert copies[0].parent == model.path.parent and copies[0] != copies[1]
+    model.remove()
+    assert not any(path.exists() for path in [model.path, *copies, left])
+    assert all(path.exists() for path in kept)
 
 
 # Through the HTTP API and MCP.

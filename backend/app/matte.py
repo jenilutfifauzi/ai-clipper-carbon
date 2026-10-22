@@ -15,7 +15,8 @@ piece cut short is never taken for one. A piece that couldn't be made leaves its
 
 The model sits behind the matter seam (`Matter`): frames at the Matte's size in, alpha frames out,
 with its recurrent state kept across a run. The real one, `RvmMatter`, runs Robust Video Matting's
-MobileNetV3 through onnxruntime on the CPU (CoreML's default conversion of it is wrong: ADR 0015's
+MobileNetV3 through onnxruntime: CoreML (MLProgram) on a fixed-shape copy of the model for the Matte's
+size, kept beside the model, or the CPU where that can't be had, both making the same Matte (ADR 0015's
 Consequences). Each piece's run starts WARM_UP_SECS before
 the piece (from the item's start for the first), so that the recurrent state has settled, and the
 warm-up's frames are dropped. The frames come from an ffmpeg decoding the item at the Matte's size,
@@ -57,7 +58,7 @@ from typing import ClassVar, Protocol
 import numpy as np
 
 from app.candidates import Subject
-from app.person_model import PersonModel
+from app.person_model import PersonModel, fixed_copy
 
 MATTES_DIR = "mattes"
 # A piece's length, on its item's timeline, and how long before its start each piece's run starts.
@@ -89,35 +90,124 @@ class Matter(Protocol):
 
 
 class RvmMatter:
-    """Robust Video Matting's MobileNetV3 (app/person_model.py's file), through onnxruntime on the CPU.
+    """Robust Video Matting's MobileNetV3 (app/person_model.py's file), through onnxruntime: on Apple
+    Silicon through CoreML in its MLProgram format, on a fixed-shape copy of the model for the Matte's
+    size (`fixed_shape_copy`), made on the first run at that size and kept beside the model; on the CPU,
+    from the model itself, where CoreML, the `onnx` package or the copy can't be had (`coreml` False:
+    the CPU alone).
 
-    Not CoreML (measured in .scratch/background-removal/issues/09, ADR 0015): its default conversion
-    (NeuralNetwork) of this model, dynamic in shape, gives a wrong Matte (blobby, keeping chairs and
-    tables) on any compute unit; its MLProgram one is right but slower than the CPU. Fixing the inputs'
-    shapes and the downsample ratio in the graph made MLProgram about 2.5× faster than the CPU with
-    the same Matte, but needs the `onnx` package to rewrite the model: a follow-up.
-    `version` 2: Mattes made by 1 (CoreML ahead of the CPU) are never read."""
+    Measured in .scratch/background-removal/issues/09 and 13 (ADR 0015): CoreML's default conversion
+    (NeuralNetwork) of the model, dynamic in shape, gives a wrong Matte (blobby, keeping chairs and
+    tables) on any compute unit, and MLProgram on it is slower than the CPU. On the fixed-shape copy,
+    MLProgram is about 2× faster than the CPU with the CPU's Matte (within 1 of 255), so the two make the
+    same pieces and keep one `version`. `version` 2: Mattes made by 1 (CoreML's NeuralNetwork) are never
+    read."""
 
     version: ClassVar[str] = "rvm-mnv3-2"
+    coreml: ClassVar[bool] = True
 
     def __init__(self, model: Path) -> None:
         import onnxruntime
 
-        self.session = onnxruntime.InferenceSession(str(model), providers=["CPUExecutionProvider"])
+        self.model = model
+        self.cpu = onnxruntime.InferenceSession(str(model), providers=["CPUExecutionProvider"])
+        # Each Matte size's session, its first recurrent state and the inputs it takes besides.
+        self._sized: dict[tuple[int, int], tuple[object, dict[str, np.ndarray], dict[str, np.ndarray]]] = {}
+
+    def session(self, size: tuple[int, int]) -> object:
+        """The session frames of `size` (width, height) run through."""
+        return self._at(size)[0]
 
     def run(self) -> Callable[[np.ndarray], np.ndarray]:
-        state = {name: np.zeros((1, 1, 1, 1), np.float32) for name in ("r1i", "r2i", "r3i", "r4i")}
-        outputs = [output.name for output in self.session.get_outputs()]
+        state: dict[str, np.ndarray] = {}
+        given: dict[str, np.ndarray] = {}
+        session = None
+        outputs: list[str] = []
 
         def alpha(frame: np.ndarray) -> np.ndarray:
-            height, width = frame.shape[:2]
+            nonlocal session, outputs
+            if session is None:
+                session, first, extra = self._at((frame.shape[1], frame.shape[0]))
+                state.update(first)
+                given.update(extra)
+                outputs = [output.name for output in session.get_outputs()]
             source = (frame.astype(np.float32) / 255).transpose(2, 0, 1)[None]
-            ratio = np.array([min(1.0, RVM_INNER_SIDE / max(width, height))], np.float32)
-            found = dict(zip(outputs, self.session.run(None, {"src": source, **state, "downsample_ratio": ratio})))
+            found = dict(zip(outputs, session.run(None, {"src": source, **state, **given})))
             state.update({f"r{i}i": found[f"r{i}o"] for i in range(1, 5)})
             return np.clip(np.rint(found["pha"][0, 0] * 255), 0, 255).astype(np.uint8)
 
         return alpha
+
+    def _at(self, size: tuple[int, int]) -> tuple[object, dict[str, np.ndarray], dict[str, np.ndarray]]:
+        """The session for frames of `size`, made once: CoreML on the copy for it, else the CPU."""
+        if size not in self._sized:
+            ratio = np.array([min(1.0, RVM_INNER_SIDE / max(size))], np.float32)
+            cpu = (self.cpu, {f"r{i}i": np.zeros((1, 1, 1, 1), np.float32) for i in range(1, 5)}, {"downsample_ratio": ratio})
+            self._sized[size] = (self._coreml(size, float(ratio[0])) if self.coreml else None) or cpu
+        return self._sized[size]
+
+    def _coreml(self, size: tuple[int, int], ratio: float) -> tuple[object, dict[str, np.ndarray], dict[str, np.ndarray]] | None:
+        """CoreML (MLProgram) on the fixed-shape copy for `size`, tried on one frame; None where it can't be."""
+        import onnxruntime
+
+        if "CoreMLExecutionProvider" not in onnxruntime.get_available_providers():
+            return None
+        width, height = size
+        try:
+            # The states' shapes at this size, as the model gives them back from a first frame.
+            blank = np.zeros((1, 3, height, width), np.float32)
+            first = {f"r{i}i": np.zeros((1, 1, 1, 1), np.float32) for i in range(1, 5)}
+            outputs = [output.name for output in self.cpu.get_outputs()]
+            found = dict(zip(outputs, self.cpu.run(None, {"src": blank, **first, "downsample_ratio": np.array([ratio], np.float32)})))
+            state = {f"r{i}i": np.zeros(found[f"r{i}o"].shape, np.float32) for i in range(1, 5)}
+            copy = fixed_shape_copy(self.model, size, ratio, {name: value.shape for name, value in state.items()})
+            providers = [("CoreMLExecutionProvider", {"ModelFormat": "MLProgram"}), "CPUExecutionProvider"]
+            session = onnxruntime.InferenceSession(str(copy), providers=providers)
+            session.run(None, {"src": blank, **state})
+        except Exception:
+            return None
+        return session, state, {}
+
+
+def fixed_shape_copy(model: Path, size: tuple[int, int], ratio: float, states: dict[str, tuple[int, ...]]) -> Path:
+    """The copy of RVM's `model` for frames of `size` (width, height), written beside it once
+    (app/person_model.py's `fixed_copy`, removed with it): its inputs given fixed shapes (`src` the frame's,
+    the recurrent states `states`), its `downsample_ratio` made the constant `ratio`, and the graph saved
+    after onnxruntime's basic optimisation, which CoreML's MLProgram needs to be fast. Written in a folder
+    of its own and renamed into place, so that a copy cut short is never taken for one. Needs the `onnx`
+    package."""
+    import onnx
+    import onnxruntime
+    from onnx import numpy_helper
+
+    copy = fixed_copy(model, size)
+    if copy.is_file():
+        return copy
+    width, height = size
+    shapes = {"src": (1, 3, height, width), **states}
+    rewritten = onnx.load(str(model))
+    graph = rewritten.graph
+    for value in list(graph.input):
+        if value.name == "downsample_ratio":
+            graph.input.remove(value)
+            graph.initializer.append(numpy_helper.from_array(np.array([ratio], np.float32), "downsample_ratio"))
+            continue
+        for dim, length in zip(value.type.tensor_type.shape.dim, shapes[value.name], strict=True):
+            dim.ClearField("dim_param")
+            dim.dim_value = length
+    for value in graph.output:
+        for dim in value.type.tensor_type.shape.dim:
+            dim.ClearField("dim_param")
+    with tempfile.TemporaryDirectory(prefix=f"{copy.stem}.", dir=copy.parent) as folder:
+        fixed, optimised = Path(folder) / "fixed.onnx", Path(folder) / "optimised.onnx"
+        onnx.save(rewritten, str(fixed))
+        options = onnxruntime.SessionOptions()
+        options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_BASIC
+        options.optimized_model_filepath = str(optimised)
+        onnxruntime.InferenceSession(str(fixed), options, providers=["CPUExecutionProvider"])
+        onnx.save(onnx.shape_inference.infer_shapes(onnx.load(str(optimised))), str(fixed))
+        os.replace(fixed, copy)
+    return copy
 
 
 class PieceState(StrEnum):

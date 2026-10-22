@@ -1,9 +1,9 @@
 """The real person model (.scratch/background-removal/issues/09-measure-the-real-model.md, ADR 0015): RVM
 on a short clip with a person, through `Mattes.make` as the runner drives it. It checks the Matte keeps
-a plausible area, and prints the figures ADR 0015's Consequences record: the Matte's throughput at
-MATTE_SIDE (the CPU, as `RvmMatter` loads it, and CoreML's two formats, with how far their Mattes are
-from the CPU's), and what a render with Background removal costs against a plain one, through the API
-with the real matter.
+a plausible area, and that `RvmMatter` through CoreML (MLProgram, on a fixed-shape copy: ticket 13)
+makes the CPU's Matte, and prints the figures ADR 0015's Consequences record: the Matte's throughput at
+MATTE_SIDE on the CPU and through CoreML, with how far CoreML's Matte is from the CPU's, and what a
+render with Background removal costs against a plain one, through the API with the real matter.
 
 Opt-in, being slow and needing what the repo doesn't hold:
     MATTE_MODEL=1 MATTE_CLIP=<a clip with a person, 10 s or more> .venv/bin/python -m pytest tests/test_matte_model.py -s
@@ -24,7 +24,7 @@ from app.candidates import Subject
 from app.config import load_settings
 from app.main import create_app
 from app.matte import MATTES_DIR, Mattes, RvmMatter
-from app.person_model import PersonModel
+from app.person_model import PERSON_MODEL_FILE, PersonModel, fixed_copy
 from app.ports import Ports
 from test_render import add, render, reviewed
 from test_render_cost import ffmpeg_version, rendered_in
@@ -47,17 +47,10 @@ pytestmark = [
 AREA = (0.05, 0.80)
 
 
-def coreml(options: dict[str, str]) -> type[RvmMatter]:
-    """RVM through CoreML with these provider options, ahead of the CPU, for the comparison."""
+class CpuRvmMatter(RvmMatter):
+    """RVM on the CPU alone, as `RvmMatter` runs where CoreML can't be had: the reference."""
 
-    class CoreMLRvmMatter(RvmMatter):
-        def __init__(self, model: Path) -> None:
-            import onnxruntime
-
-            providers = [("CoreMLExecutionProvider", options), "CPUExecutionProvider"]
-            self.session = onnxruntime.InferenceSession(str(model), providers=providers)
-
-    return CoreMLRvmMatter
+    coreml = False
 
 
 def timed(matter: RvmMatter) -> tuple[RvmMatter, list[float]]:
@@ -103,46 +96,53 @@ def machine() -> str:
     return f"{chip}, {memory:.0f} GB, load {os.getloadavg()[0]:.1f}"
 
 
-def test_the_real_model_keeps_a_plausible_matte_and_prints_its_throughput(tmp_path):
+def test_the_real_model_keeps_a_plausible_matte_through_coreml_as_on_the_cpu_and_prints_both_speeds(tmp_path):
     clip = Path(os.environ["MATTE_CLIP"])
     frame, duration = probed(clip)
     assert duration >= 10, "MATTE_CLIP should be 10 s or more: one whole piece"
     ffmpeg = load_settings().ffmpeg_bin
+    # A model of its own, so that its fixed-shape copy is made afresh, and timed.
+    model = tmp_path / "models" / PERSON_MODEL_FILE
+    model.parent.mkdir()
+    shutil.copyfile(model_path(), model)
     rows = []
     reference = None
-    matters = (
-        ("RvmMatter (CPU)", RvmMatter),
-        ("CoreML, NeuralNetwork (02's)", coreml({})),
-        ("CoreML, MLProgram", coreml({"ModelFormat": "MLProgram"})),
-    )
-    for name, kind in matters:
-        loading = time.monotonic()
-        matter, spent = timed(kind(model_path()))
-        loaded = time.monotonic() - loading
+    for name, kind in (("CPU", CpuRvmMatter), ("RvmMatter (CoreML MLProgram, fixed shape)", RvmMatter)):
         mattes = Mattes(tmp_path / name, clip, frame, duration)
+        size = mattes.size()
+        loading = time.monotonic()
+        matter, spent = timed(kind(model))
+        provider = matter.session(size).get_providers()[0]
+        loaded = time.monotonic() - loading
         began = time.monotonic()
         piece = mattes.make(ffmpeg, matter, Subject.PERSON, 0)
         wall = time.monotonic() - began
-        size = mattes.size()
         matte = gray_frames(piece, size)
         kept = (matte > 127).mean(axis=(1, 2))
         if reference is None:
             # The Matte Background removal reads: one frame per frame, a plausible area that follows
             # the picture (the speakers move and the shots cut).
-            reference = matte
+            reference = (matte, kept)
             assert len(kept) == mattes.frames(0)[0]
             assert AREA[0] < kept.min() and kept.max() < AREA[1], (kept.min(), kept.max())
             assert kept.max() - kept.min() > 0.02, (kept.min(), kept.max())
-        off = float(np.abs(matte.astype(np.int16) - reference).mean())
-        rows.append((name, matter.session.get_providers()[0], size, len(spent), loaded, wall, float(np.median(spent[3:])), kept, off))
+        off = np.abs(matte.astype(np.int16) - reference[0])
+        area = np.abs(kept - reference[1])
+        rows.append((name, provider, size, len(spent), loaded, wall, float(np.median(spent[3:])), kept, float(off.mean()), int(off.max()), float(area.max())))
+    # CoreML's Matte is the CPU's: within 1 of 255 on average, its kept area within 1 % on every frame.
+    assert rows[1][1] == "CoreMLExecutionProvider" and fixed_copy(model, rows[1][2]).is_file()
+    assert rows[1][8] <= 1 and rows[1][10] <= 0.01, rows[1][8:]
 
     print(f"\n{machine()}; {ffmpeg_version()}; a {frame[0]}x{frame[1]} {frame[2]:g} fps clip, piece 0 (10 s)")
-    print("| Matter | First provider | Matte size | Load | Frames | Piece wall time | Frames/s (piece) | Model s/frame (median) | Kept area min/median/max | Mean diff from the CPU's (of 255) |")
-    print("|---|---|---|---|---|---|---|---|---|---|")
-    for name, provider, size, frames, loaded, wall, median, kept, off in rows:
+    print(
+        "| Matter | First provider | Matte size | Load (and copy) | Frames | Piece wall time | Frames/s (piece) | Model s/frame (median) "
+        "| Kept area min/median/max | Diff from the CPU's, mean/max (of 255) | Kept area diff, max |"
+    )
+    print("|---|---|---|---|---|---|---|---|---|---|---|")
+    for name, provider, size, frames, loaded, wall, median, kept, off, most, area in rows:
         print(
             f"| {name} | {provider} | {size[0]}x{size[1]} | {loaded:.1f} s | {frames} | {wall:.1f} s | {frames / wall:.1f} "
-            f"| {median:.3f} s | {kept.min():.2f}/{np.median(kept):.2f}/{kept.max():.2f} | {off:.1f} |"
+            f"| {median:.3f} s | {kept.min():.2f}/{np.median(kept):.2f}/{kept.max():.2f} | {off:.2f}/{most} | {area:.4f} |"
         )
 
 

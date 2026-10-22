@@ -17,8 +17,8 @@ from pydantic import TypeAdapter
 from app.candidates import Background, BackgroundRemoval, Candidate, Framing, Layout, LayoutOverride, Segment, Transform, manual_candidate
 from app.config import CameraTuning, load_settings
 from app.main import create_app
-from app.matte import MATTES_DIR, MatteRunner, Mattes, matte_pieces
-from app.person_model import PersonModel
+from app.matte import MATTES_DIR, MatteRunner, Mattes, RvmMatter, matte_pieces
+from app.person_model import PERSON_MODEL_FILE, PersonModel, fixed_copy
 from app.planner import SceneLayout, SegmentInput, plan_render
 from app.ports import Ports
 from app.renderer import Renderer
@@ -478,3 +478,95 @@ async def test_the_agent_cuts_out_a_segment_follows_its_matte_and_is_refused_a_b
     assert "Segment a's background_removal feather is 41; it is 0 to 40" in message
     message = await fails(mcp, "edit_candidate", **ids, changes={"segments": [{"id": "a", "start": 1.0, "end": 1.6, "background_removal": {"subject": "dog"}}]})
     assert "subject" in message
+
+
+# The real matter's sessions (ticket 13): RVM through CoreML's MLProgram on a fixed-shape copy of the model
+# for each Matte size, the CPU where that can't be had. A stand-in model with RVM's interface keeps it quick.
+
+
+def rvm_like(path: Path) -> Path:
+    """A model with RVM's inputs and outputs, written to `path`: `pha` is the frame's red (through the
+    `downsample_ratio`, there and back), each state `r{i}o` its `r{i}i` plus the red pooled 2^(i-1) times
+    smaller, so that the states' shapes follow the frame's size as RVM's do."""
+    import onnx
+    from onnx import TensorProto, helper
+
+    dynamic = ["batch_size", "channels", "height", "width"]
+    inputs = [helper.make_tensor_value_info("src", TensorProto.FLOAT, ["batch_size", 3, "height", "width"])]
+    inputs += [helper.make_tensor_value_info(f"r{i}i", TensorProto.FLOAT, dynamic) for i in range(1, 5)]
+    inputs += [helper.make_tensor_value_info("downsample_ratio", TensorProto.FLOAT, [1])]
+    outputs = [helper.make_tensor_value_info(name, TensorProto.FLOAT, None) for name in ("fgr", "pha", "r1o", "r2o", "r3o", "r4o")]
+    constants = [helper.make_tensor(name, TensorProto.INT64, [1], [value]) for name, value in (("zero", 0), ("one", 1), ("axis", 1))]
+    nodes = [
+        helper.make_node("Identity", ["src"], ["fgr"]),
+        helper.make_node("Slice", ["src", "zero", "one", "axis"], ["red"]),
+        helper.make_node("Mul", ["red", "downsample_ratio"], ["scaled"]),
+        helper.make_node("Div", ["scaled", "downsample_ratio"], ["pha"]),
+    ]
+    for i in range(1, 5):
+        side = 2 ** (i - 1)
+        nodes.append(helper.make_node("MaxPool", ["pha"], [f"pooled{i}"], kernel_shape=[side, side], strides=[side, side], pads=[0, 0, 0, 0]))
+        nodes.append(helper.make_node("Add", [f"r{i}i", f"pooled{i}"], [f"r{i}o"]))
+    graph = helper.make_graph(nodes, "rvm-like", inputs, outputs, initializer=constants)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 12)], ir_version=8), str(path))
+    return path
+
+
+def frame_of(width: int, height: int) -> np.ndarray:
+    """A frame whose red is a gradient (so that the Matte shows where it was read wrong)."""
+    frame = np.zeros((height, width, 3), np.uint8)
+    frame[..., 0] = (np.arange(width * height).reshape(height, width) * 7) % 256
+    return frame
+
+
+coreml_offered = pytest.mark.skipif(
+    "CoreMLExecutionProvider" not in __import__("onnxruntime").get_available_providers(), reason="CoreML isn't offered here"
+)
+
+
+@coreml_offered
+def test_the_matter_runs_a_fixed_shape_copy_of_the_model_for_each_matte_size_through_coreml(tmp_path):
+    model = rvm_like(tmp_path / "models" / PERSON_MODEL_FILE)
+    matter = RvmMatter(model)
+    for size in ((64, 48), (48, 64)):
+        frame = frame_of(*size)
+        alpha = matter.run()
+        assert np.array_equal(alpha(frame), frame[..., 0]) and np.array_equal(alpha(frame), frame[..., 0])
+        assert fixed_copy(model, size).is_file()
+        assert matter.session(size).get_providers()[0] == "CoreMLExecutionProvider"
+    # The copy is made once: a matter loaded later (the app's next start) reads it.
+    made = fixed_copy(model, (64, 48)).stat().st_mtime_ns
+    assert np.array_equal(RvmMatter(model).run()(frame_of(64, 48)), frame_of(64, 48)[..., 0])
+    assert fixed_copy(model, (64, 48)).stat().st_mtime_ns == made
+    assert sorted(path.name for path in model.parent.iterdir()) == sorted(
+        [model.name, fixed_copy(model, (64, 48)).name, fixed_copy(model, (48, 64)).name]
+    )
+
+
+@pytest.mark.parametrize("unavailable", ["coreml", "onnx", "rewrite", "cpu only"])
+def test_without_coreml_or_the_copy_the_matter_runs_the_model_on_the_cpu_with_the_same_matte(tmp_path, monkeypatch, unavailable):
+    import onnxruntime
+
+    from app import matte
+
+    model = rvm_like(tmp_path / "models" / PERSON_MODEL_FILE)
+    kind = RvmMatter
+    if unavailable == "coreml":
+        monkeypatch.setattr(onnxruntime, "get_available_providers", lambda: ["CPUExecutionProvider"])
+    elif unavailable == "onnx":
+        monkeypatch.setitem(__import__("sys").modules, "onnx", None)
+    elif unavailable == "rewrite":
+        def broken(*args, **kwargs):
+            raise RuntimeError("the rewrite failed")
+
+        monkeypatch.setattr(matte, "fixed_shape_copy", broken)
+    else:
+        kind = type("CpuRvmMatter", (RvmMatter,), {"coreml": False})
+    matter = kind(model)
+    frame = frame_of(64, 48)
+    alpha = matter.run()
+    assert np.array_equal(alpha(frame), frame[..., 0]) and np.array_equal(alpha(frame), frame[..., 0])
+    assert matter.session((64, 48)).get_providers() == ["CPUExecutionProvider"]
+    assert not fixed_copy(model, (64, 48)).exists()
+    assert [path.name for path in model.parent.iterdir()] == [model.name]

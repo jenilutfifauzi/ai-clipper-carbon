@@ -5,9 +5,13 @@ It is RVM's `rvm_mobilenetv3_fp32.onnx` from its upstream v1.0.0 release, its UR
 pinned here (PERSON_MODEL_URL), fetched as every downloaded model is (app/model_download.py): the checked
 `.part` is renamed into place. Its state carries its name and licence for the Inspector and MCP, since
 its weights are GPL-3.0.
+
+Beside it sit its fixed-shape copies (`fixed_copy`), one for each Matte size, which app/matte.py's
+`RvmMatter` writes to run the model through CoreML; removing the model removes them.
 """
 
 import os
+import shutil
 from pathlib import Path
 
 import httpx
@@ -21,6 +25,11 @@ PERSON_MODEL_BYTES = 14_975_696
 PERSON_MODEL_NAME = "Person model"
 PERSON_MODEL_LICENCE = "GPL-3.0"
 PINNED = ModelSource(PERSON_MODEL_URL, PERSON_MODEL_SHA256, PERSON_MODEL_BYTES)
+
+
+def fixed_copy(model: Path, size: tuple[int, int]) -> Path:
+    """Where the fixed-shape copy of `model` for frames of `size` (width, height) is kept: beside it."""
+    return model.with_name(f"{model.stem}.fixed-{size[0]}x{size[1]}.onnx")
 
 
 class PersonModelBusy(ModelBusy):
@@ -50,4 +59,10 @@ class PersonModel(ModelDownload):
         os.replace(self.part, self.path)
 
     def _delete(self) -> None:
+        """The model, its fixed-shape copies and what a rewrite cut short left (their folders)."""
         self.path.unlink(missing_ok=True)
+        for copy in self.path.parent.glob(f"{self.path.stem}.fixed-*"):
+            if copy.is_dir():
+                shutil.rmtree(copy, ignore_errors=True)
+            else:
+                copy.unlink(missing_ok=True)

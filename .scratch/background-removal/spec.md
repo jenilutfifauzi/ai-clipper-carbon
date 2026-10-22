@@ -110,7 +110,7 @@ Recorded in ADR 0015 (`docs/adr/0015-background-removal-reads-a-cached-matte.md`
   - a remembered failure per piece.
 - **Its interface:** given an item and a range, it answers which pieces exist, are missing, in progress or failed. It enqueues the missing ones, gives progress for a range, retries, and sweeps.
 - **The model sits behind a narrow "matter" seam.** It takes frames at model size and gives alpha frames, keeping its recurrent state across a run.
-  - The real implementation runs RVM MobileNetV3 through onnxruntime on the CPU. CoreML's default conversion gives a wrong Matte (ADR 0015's measured figures); CoreML in the MLProgram format on a fixed-shape copy of the model is ticket 13's.
+  - The real implementation runs RVM MobileNetV3 through onnxruntime: CoreML in the MLProgram format on a fixed-shape copy of the model for each Matte size (written beside the model on first use, removed with it), about 2× faster than the CPU with the CPU's Matte, and the CPU where CoreML, the `onnx` package or the copy can't be had. CoreML's default conversion (NeuralNetwork) gives a wrong Matte (ADR 0015's measured figures).
   - Each piece runs from 1 s before its start (warm-up), discarding the warm-up frames.
   - Frames come from ffmpeg decoding at model size. The Matte is written through ffmpeg.
 - **The runner works like the Retimed copies' runner.**
