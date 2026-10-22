@@ -3,7 +3,7 @@ mask of every frame of a video, made by the person model on this Mac, which Back
 
 A Matte is kept in pieces of PIECE_SECS seconds aligned to its item's own timeline (the Source's, for
 now), beside the item, in `jobs/<id>/mattes/`, each named by its subject, its matter's version and its
-start in seconds: `person-rvm-mnv3-1-20.mp4` holds 20..30 s. A piece is a grayscale video (H.264,
+start in seconds: `person-rvm-mnv3-2-20.mp4` holds 20..30 s. A piece is a grayscale video (H.264,
 yuv420p, so that a browser plays it for the preview) no larger than MATTE_SIDE on its long edge, at
 its item's frame rate, one Matte frame per frame of the item; its last is cut where the item ends.
 White keeps the picture, black takes it away. Every Segment, Candidate and trim showing that time
@@ -13,7 +13,8 @@ piece cut short is never taken for one. A piece that couldn't be made leaves its
 
 The model sits behind the matter seam (`Matter`): frames at the Matte's size in, alpha frames out,
 with its recurrent state kept across a run. The real one, `RvmMatter`, runs Robust Video Matting's
-MobileNetV3 through onnxruntime, CoreML ahead of the CPU. Each piece's run starts WARM_UP_SECS before
+MobileNetV3 through onnxruntime on the CPU (CoreML's default conversion of it is wrong: ADR 0015's
+Consequences). Each piece's run starts WARM_UP_SECS before
 the piece (from the item's start for the first), so that the recurrent state has settled, and the
 warm-up's frames are dropped. The frames come from an ffmpeg decoding the item at the Matte's size,
 and the Matte is written by another.
@@ -70,20 +71,21 @@ class Matter(Protocol):
 
 
 class RvmMatter:
-    """Robust Video Matting's MobileNetV3 (app/person_model.py's file), through onnxruntime: CoreML
-    ahead of the CPU where onnxruntime offers it, the CPU alone if CoreML can't load it."""
+    """Robust Video Matting's MobileNetV3 (app/person_model.py's file), through onnxruntime on the CPU.
 
-    version: ClassVar[str] = "rvm-mnv3-1"
+    Not CoreML (measured in .scratch/background-removal/issues/09, ADR 0015): its default conversion
+    (NeuralNetwork) of this model, dynamic in shape, gives a wrong Matte (blobby, keeping chairs and
+    tables) on any compute unit; its MLProgram one is right but slower than the CPU. Fixing the inputs'
+    shapes and the downsample ratio in the graph made MLProgram about 2.5× faster than the CPU with
+    the same Matte, but needs the `onnx` package to rewrite the model: a follow-up.
+    `version` 2: Mattes made by 1 (CoreML ahead of the CPU) are never read."""
+
+    version: ClassVar[str] = "rvm-mnv3-2"
 
     def __init__(self, model: Path) -> None:
         import onnxruntime
 
-        offered = onnxruntime.get_available_providers()
-        providers = [name for name in ("CoreMLExecutionProvider", "CPUExecutionProvider") if name in offered]
-        try:
-            self.session = onnxruntime.InferenceSession(str(model), providers=providers)
-        except Exception:
-            self.session = onnxruntime.InferenceSession(str(model), providers=["CPUExecutionProvider"])
+        self.session = onnxruntime.InferenceSession(str(model), providers=["CPUExecutionProvider"])
 
     def run(self) -> Callable[[np.ndarray], np.ndarray]:
         state = {name: np.zeros((1, 1, 1, 1), np.float32) for name in ("r1i", "r2i", "r3i", "r4i")}

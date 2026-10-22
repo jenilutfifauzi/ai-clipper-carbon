@@ -31,7 +31,7 @@ The `background-removal` feature (roadmap #13, `.scratch/advanced-edit-v2/roadma
   - On an Overlay it may join a Chroma or Luma key, and their alphas multiply.
   - "Cutout" stays the name of the keys' category. The UI calls this "Remove background", in an Inspector section (and the phone's sheet). It has no Effects tab card and no hover try-on.
 - **The Matte is computed ahead, by RVM, at every frame.**
-  - It is made from the Source or the media item at a 1280 px long edge (a smaller one at its own size), through onnxruntime with CoreML ahead of the CPU.
+  - It is made from the Source or the media item at a 1280 px long edge (a smaller one at its own size), through onnxruntime on the CPU. (CoreML was planned ahead of the CPU; 09's measurement found its default conversion wrong: see Consequences.)
   - It is kept as grayscale video pieces of 10 s on the item's own timeline, each run with 1 s of warm-up for RVM's recurrent state. A still image gets one PNG.
   - Every Segment, Overlay and Candidate showing that time reads the same pieces, so trims, splits and other Candidates reuse them.
   - The pieces are swept, as Retimed copies are, when no Candidate nor its Revision History needs them. Removing the model removes every Matte.
@@ -85,4 +85,15 @@ The `background-removal` feature (roadmap #13, `.scratch/advanced-edit-v2/roadma
 - **The backend gains a fourth kind of derived file** (after Filmstrips, Peaks and Retimed copies) and a second downloaded model.
 - **The render must draw Behind Overlays inside the Main Track's picture,** between each Segment's Background and its picture, before the joins and the Candidate's Grade.
 - **The preview gains a canvas path for pictures,** the only one that composites per frame in script. A Segment or Overlay with Background removal holds one or two more hidden videos while it is near.
-- **The cost is paid once per piece of Source time shown.** The spec measures the Matte's throughput (frames per second of RVM at 1280 px on an M1) and a render with Background removal, and records them here.
+- **The cost is paid once per piece of Source time shown.** Measured by `backend/tests/test_matte_model.py` (`MATTE_MODEL=1`, ticket 09) on 2026-10-22: an Apple M1 with 8 GB, ffmpeg 9.0.2, onnxruntime 1.31.0. The clip was 12 s of a 1920×1080 25 fps podcast, with two to four people at a table and cuts between wide and close shots. The machine was loaded by other sessions (load average 7 to 15), so every figure is ±30%.
+  - **Throughput at 1280×720** (piece 0, 250 frames, decode and encode included):
+    - CPU: about 4.5 frames a second (0.19 s a frame in the model).
+    - CoreML ahead of the CPU, onnxruntime's default NeuralNetwork format (ticket 02's choice): about 2.7 frames a second. CoreML took 282 of 303 nodes in 10 partitions. **Its Matte is wrong:** blobby, keeping chairs, the table and the wall between the speakers (a mean of 29 of 255 from the CPU's, with the kept area up from 24% to 35%). It is just as wrong with CoreML on the CPU only, so the conversion is at fault, not precision.
+    - CoreML MLProgram: the CPU's Matte (within 1 of 255), but at 3.4 frames a second.
+    - So `RvmMatter` runs on the CPU alone, and its `version` became `rvm-mnv3-2`, so that Mattes made through CoreML are never read.
+    - A 10 s piece of 25 fps video takes about 55 s, about 5.5× real time.
+  - **A render** of a 6.45 s Clip (1080×1920) of that Source, through the API with the real matter:
+    - Plain: 1.9 s.
+    - With Background removal on its Segment and its Matte ready: 4.6 s, about 0.4 s more per Clip second (the Matte's decode, its feather and the blurred Background).
+    - With the Matte still to make, from the save to the render done: 51 s, about 7.6 s more per Clip second. This is the one 10 s piece the Clip reads.
+  - **A faster Matte, left for later:** CoreML MLProgram ran 0.045 to 0.05 s a frame against the CPU's 0.14 to 0.17 s (in the same runs), with the same Matte (within 1 of 255). That needs the model rewritten first: inputs given fixed shapes, the downsample ratio made a constant, and the graph saved after onnxruntime's basic optimisation. The rewrite needs the `onnx` package, which the backend doesn't have, and a model for each Matte size. Without fixed shapes MLProgram isn't faster. A smaller `downsample_ratio` (0.25 at 1280) is about 2× faster on the CPU but works on a coarser picture inside, so it wasn't taken.
