@@ -26,20 +26,20 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Pure tests:
+- [x] Pure tests:
   - Anchors are guessed per edge.
   - A Start, End or Span override is stored as its edges.
   - Source-sound Music Clips are left out.
   - A Start lower-third and an End call to action land at the same distances on a 20 s and a 75 s Candidate.
   - A Span layer stretches to cover the Main Slot.
   - Applied layers carry the Template's mark.
-- [ ] HTTP:
+- [x] HTTP:
   - Save, list, rename, save over (the id is kept) and delete.
   - Apply to three Candidates changes each by one Revision in one request.
   - `dry_run` saves nothing.
   - A Job not in review gives 409.
   - An unknown Candidate fails the batch.
-- [ ] MCP: `save_preset`, `list_presets` (layers with their Anchors), `delete_preset` and `apply_template`, each with kind "template".
-- [ ] The Candidate's JSON shows the mark. Existing Candidates without marks load unchanged.
+- [x] MCP: `save_preset`, `list_presets` (layers with their Anchors), `delete_preset` and `apply_template`, each with kind "template".
+- [x] The Candidate's JSON shows the mark. Existing Candidates without marks load unchanged.

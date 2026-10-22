@@ -593,6 +593,9 @@ export interface TextLayer {
   animation_out: Animation;
   animation_ms: number;
   keys: Keys;
+  // The Template that put it there (a Template item, GLOSSARY.md; docs/adr/0023); none for one made by
+  // hand. Edits keep it; a paste from the Clipboard drops it.
+  template?: string | null;
 }
 
 // The figure a Shape draws (backend/app/candidates.py's ShapeKind, docs/adr/0011): a filled figure
@@ -632,6 +635,8 @@ export interface Shape {
   animation_out: Animation;
   animation_ms: number;
   keys: Keys;
+  // The Template that put it there (a Template item), as a Text Layer's.
+  template?: string | null;
 }
 
 // What a picture layer draws (a Text Layer, a Shape): its id, its Transform and Keyframes, and its
@@ -701,6 +706,8 @@ export interface MusicClip extends Omit<Retiming, "hold"> {
   // Its sound's Audio Effects (ADR 0017), in order, after its Speed and before its volume, duck and
   // fades. Empty when missing.
   audio_effects?: AudioEffect[];
+  // The Template that put it there (a Template item), as a Text Layer's.
+  template?: string | null;
 }
 
 // How an item plays its range (docs/adr/0009): at its Speed (1 by default), its sound's pitch
@@ -856,6 +863,8 @@ export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   video_effects?: VideoEffect[];
   // How it is laid over what is under it (ADR 0014). Normal when missing.
   blend?: BlendMode;
+  // The Template that put it there (a Template item), as a Text Layer's.
+  template?: string | null;
 }
 
 // How an Overlay is laid over what is under it (GLOSSARY.md, Blend Mode; ADR 0014): covering it by its
@@ -877,6 +886,8 @@ export interface AdjustmentLayer {
   // Its Video Effects (ADR 0014), in order, after its Grade and mixed with it; sizes the 1080x1920
   // frame's. Empty when missing.
   video_effects?: VideoEffect[];
+  // The Template that put it there (a Template item), as a Text Layer's.
+  template?: string | null;
 }
 
 // An Adjustment Layer as the plan draws it: from `start` to `end` seconds into the Clip (cut at its

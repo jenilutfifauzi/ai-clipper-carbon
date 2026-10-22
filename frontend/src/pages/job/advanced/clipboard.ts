@@ -180,9 +180,11 @@ export function paste(scene: PickContext, clipboard: Clipboard, at: number, to: 
     const offset = "offset" in item ? { offset: keptOffset(item, start - from, end - from) } : {};
     // Its Keyframes come as they are, but for the part cut off (keyActions.ts' rekeyed). A Detached
     // sound stays Detached from its Segment only in its own Candidate, while the Segment is there.
-    // An Adjustment Layer cut short keeps its fades within half of it.
+    // An Adjustment Layer cut short keeps its fades within half of it. A copy is made by hand: never
+    // a Template item, whatever it was copied from (GLOSSARY.md).
+    const { template: _mark, ...unmarked } = item;
     const copy = stillDetached(
-      fadesHalved(rekeyed({ ...item, ...offset, id: fresh(item.id), start, secs: round(end - start) } as Timed, start - from, end - from)),
+      fadesHalved(rekeyed({ ...unmarked, ...offset, id: fresh(item.id), start, secs: round(end - start) } as Timed, start - from, end - from)),
       sameJob && to.candidate === clipboard.from.candidate ? next.segments : [],
     );
     Object.assign(next, { [LISTS[kind]]: [...((next[LISTS[kind]] ?? []) as Timed[]), copy] });

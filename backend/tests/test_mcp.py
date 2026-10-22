@@ -64,7 +64,10 @@ KITA_SOAL = (1.6, 2.6)
 # Raised for video-effects/07: `overlays[].blend` (the Blend Mode enum) there (87_169).
 # Raised from 87_500 for Narrations (text-to-speech/09): generate_speech, and list_assets' kind
 # "voices" and `language` (88_152); how to lay one is in the server's instructions.
-TOOLS_BUDGET_BYTES = 88_500
+# Raised from 88_500 for Templates (templates/01): the Template mark (`template`) on every layer in
+# edit_candidate's and merge_candidate_items' schemas, kind "template" and a Template's {name, job_id,
+# candidate_id, anchors} in the presets tools, and apply_template (91_375); the rest is in the instructions.
+TOOLS_BUDGET_BYTES = 91_800
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

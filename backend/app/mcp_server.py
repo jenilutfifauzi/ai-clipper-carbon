@@ -80,6 +80,7 @@ from app.rendering import source_copies
 from app.retimed import CopySize, Retime
 from app.segment_time import SegmentTime
 from app.styles import LINE_LIMITS, StyleOverrides
+from app.templates import Anchor, AnchorOverride
 from app.transcript import Language
 from app.uploads import UPLOADS_DIR, BadUpload, NotEnoughSpace, stage
 
@@ -221,6 +222,20 @@ Edits:
   save_preset and delete_preset with kind "text"; built-in ones can't change. One is used for new
   titles (save_preset's use_for_new_titles): a new Text Layer given without a style, or without some
   of its fields, takes that Preset's.
+- A Template is a Candidate's layers (Text Layers, Shapes, Music Clips of Media Library items,
+  Overlays and Adjustment Layers) saved for reuse: list_presets, save_preset and delete_preset with
+  kind "template". save_preset's preset is {{name, job_id, candidate_id, anchors?}}; with preset_id it
+  saves over that Template, keeping its id, or with {{name}} alone renames it. apply_template copies
+  it onto Candidates, never linked: changing or deleting the Template later leaves them as they are.
+  Each layer keeps its place by its Anchor: each of its edges keeps its distance (offset) from the
+  Main Slot's start or end (main_start, main_end; with no intro or outro, the Clip's), guessed from
+  the nearest. An anchors entry {{kind (its list: text_layers...), id, anchor}} sets one: start (both
+  edges from the start: a lower-third), end (both from the end: a call to action) or span (one from
+  each, stretched with the Clip: a music bed). One past a shorter Clip's end is cut short or left
+  out, and the result says so. What a Template puts on a Candidate is a Template item, its
+  `template` the Template's id: applying a Template again replaces the Template items, even those
+  changed by hand, and keeps the rest. Removing one by hand (remove_candidate_items) is fine; only
+  applying again brings it back.
 - The caption and hook styles' shadow is a Text Style's; a Style Override of it sets the fields it
   names ({{"shadow": {{"blur": 8}}}}). The hook's box (block or strips) and the caption highlight box
   have padding_x and padding_y, the highlight box radius too, in output pixels at the style's size;
@@ -878,13 +893,25 @@ def build_mcp(app: FastAPI) -> MCPServer:
             return await api("PUT", "/export-presets/default", json={"preset_id": saved["id"] if saved else preset_id})
         return saved
 
+    async def save_template(given: BaseModel | None, preset_id: str | None) -> dict:
+        """A Template saved from a Candidate, or the Template `preset_id` saved over or renamed."""
+        body = _validated(TemplateGiven, given)
+        if preset_id is not None and body.keys() == {"name"}:
+            return _template_view(await api("PATCH", f"/templates/{preset_id}", json=body))
+        if preset_id is None:
+            return _template_view(await api("POST", "/templates", json=body))
+        return _template_view(await api("PUT", f"/templates/{preset_id}", json=body))
+
     @tool(read_only=True)
-    async def list_presets(kind: Literal["style", "text", "export"] = "style", include_styles: bool = False) -> dict:
+    async def list_presets(kind: Literal["style", "text", "export", "template"] = "style", include_styles: bool = False) -> dict:
         """The Style Presets, or the Text Presets (`default`: used for new titles): built-in ones,
         then the owner's. With include_styles, their styles (a Style Override replaces their fields).
-        Export Presets: with their settings, the `default` and the codecs `available`."""
+        Export Presets: with their settings, the `default` and the codecs `available`. Templates:
+        with their layers and Anchors."""
         if kind == "export":
             return await api("GET", "/export-presets")
+        if kind == "template":
+            return {"presets": [_template_view(template) for template in await api("GET", "/templates")]}
         if kind == "text":
             presets = await api("GET", "/text-presets")
             keys = ("id", "name", "category", "builtin", "default", *(("sample", "style") if include_styles else ()))
@@ -896,16 +923,19 @@ def build_mcp(app: FastAPI) -> MCPServer:
 
     @tool()
     async def save_preset(
-        preset: PresetBody | NamedPresetGiven | None = None,
+        preset: PresetBody | NamedPresetGiven | TemplateGiven | None = None,
         preset_id: str | None = None,
-        kind: Literal["style", "text", "export"] = "style",
+        kind: Literal["style", "text", "export", "template"] = "style",
         use_for_new_titles: bool = False,
         use_as_default: bool = False,
     ) -> dict:
         """Save a new Preset, or replace the owner's Preset `preset_id` (built-in ones can't be). A
         Style Preset's join_transition goes on its Candidates' new joins (see the instructions). A
         Text Preset is {name, style}. use_for_new_titles: new Text Layers copy it (a built-in one's
-        preset_id alone). An Export Preset is {name, settings}, never making a Clip stale; use_as_default: renders use it (likewise)."""
+        preset_id alone). An Export Preset is {name, settings}, never making a Clip stale; use_as_default: renders use it (likewise).
+        A Template is {name, job_id, candidate_id, anchors?} (see the instructions)."""
+        if kind == "template":
+            return await save_template(preset, preset_id)
         if kind == "export":
             return await save_export_preset(preset, preset_id, use_as_default)
         if kind == "style":
@@ -926,11 +956,21 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return saved
 
     @tool(destructive=True)
-    async def delete_preset(preset_id: str, kind: Literal["style", "text", "export"] = "style") -> dict:
+    async def delete_preset(preset_id: str, kind: Literal["style", "text", "export", "template"] = "style") -> dict:
         """Delete one of the owner's Presets. Candidates using a Style Preset render in Default; Text
-        Layers keep their look; Clips of an Export Preset render again with the default."""
-        await api("DELETE", f"/{ {'text': 'text-presets', 'export': 'export-presets'}.get(kind, 'presets')}/{preset_id}")
+        Layers keep their look; Clips of an Export Preset render again with the default; Candidates
+        keep a Template's items."""
+        routes = {"text": "text-presets", "export": "export-presets", "template": "templates"}
+        await api("DELETE", f"/{routes.get(kind, 'presets')}/{preset_id}")
         return {"deleted": preset_id}
+
+    @tool()
+    async def apply_template(job_id: str, candidate_ids: list[str], template_id: str, dry_run: bool = False) -> dict:
+        """Apply a Template to Candidates of a Job, all of them or none: each changed one gets a new
+        revision. Per Candidate: its `revision`, the `edits` made (lists replaced whole, as
+        edit_candidate's) and `notices` (layers cut short or left out). With dry_run, nothing is saved."""
+        body = {"template_id": template_id, "candidate_ids": candidate_ids, "dry_run": dry_run}
+        return await api("POST", f"/jobs/{job_id}/templates/apply", json=body)
 
     @tool(read_only=True)
     async def list_assets(
@@ -1068,6 +1108,17 @@ class NamedPresetGiven(BaseModel):
     settings: dict[str, Any] | None = None
 
 
+class TemplateGiven(BaseModel):
+    """A Template: its name, the Candidate it is saved from, and the Anchors chosen for its layers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    job_id: str | None = None
+    candidate_id: str | None = None
+    anchors: list[AnchorOverride] | None = None
+
+
 class StaleCandidate(ToolError):
     """An edit made from a Revision the Candidate has moved past; `candidate` is it as it is now."""
 
@@ -1143,6 +1194,25 @@ def _times(item: dict, *keys: str) -> dict:
 
 def _compact(view: dict) -> dict:
     return {key: value for key, value in view.items() if value is not None and value != []}
+
+
+def _template_view(template: dict) -> dict:
+    """A Template as the tools list it: each layer by its list, id, times as saved and Anchor, with
+    the edges it is made of; a Text Layer's text too."""
+    layers = [
+        {
+            "kind": kind, "id": layer["item"]["id"], **({"text": layer["item"]["text"]} if "text" in layer["item"] else {}),
+            "start": layer["item"]["start"], "secs": layer["item"]["secs"],
+            "anchor": _ANCHOR.validate_python(layer["anchor"]).kind.value, "edges": [layer["anchor"]["start"], layer["anchor"]["end"]],
+        }
+        for kind, listed in template["layers"].items()
+        for layer in listed
+    ]
+    view = {key: template[key] for key in ("id", "name", "created_at", "updated_at")} | {"layers": layers}
+    return view | ({"notices": template["notices"]} if template.get("notices") else {})
+
+
+_ANCHOR = TypeAdapter(Anchor)
 
 
 def _job_view(job: dict) -> dict:

@@ -94,6 +94,8 @@ from app.rendering import NothingToRender, has_media_words, media_language, rank
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
+from app.templates import AnchorOverride, InvalidTemplate, Template, TemplateLayers, TemplateNotFound, TemplateStore, capture
+from app.templates import apply as apply_template_to
 from app.review import MAX_CLIP_SECS, CandidateChange, CandidateNotFound, Episode, InvalidEdit, StaleRevision
 from app.revisions import Edit, HistoryEntry
 from app.starred_effects import Starred, StarredStore
@@ -189,6 +191,10 @@ def _media(request: Request) -> MediaStore:
     return request.app.state.media
 
 
+def _templates(request: Request) -> TemplateStore:
+    return request.app.state.templates
+
+
 def _narrations(request: Request) -> NarrationRunner:
     return request.app.state.narrations
 
@@ -245,6 +251,7 @@ StarredEffects = Annotated[StarredStore, Depends(_starred)]
 Presets = Annotated[PresetStore, Depends(_presets)]
 TextPresets = Annotated[TextPresetStore, Depends(_text_presets)]
 ExportPresets = Annotated[ExportPresetStore, Depends(_export_presets)]
+Templates = Annotated[TemplateStore, Depends(_templates)]
 Logos = Annotated[LogoStore, Depends(_logos)]
 Media = Annotated[MediaStore, Depends(_media)]
 MediaWordsDep = Annotated[MediaWordsStore, Depends(_media_words)]
@@ -472,6 +479,73 @@ class ExportPresetChoice(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     preset_id: str
+
+
+class TemplateCapture(BaseModel):
+    """What a Template is saved from: a Candidate of a Job, as `edits` (the editor's draft, not saved)
+    would make it, its layers anchored as guessed but where `anchors` chooses."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str
+    candidate_id: str
+    edits: CandidateUpdate | None = None
+    anchors: Annotated[list[AnchorOverride], Field(max_length=TEXT_LAYERS_MAX + SHAPES_MAX + MUSIC_MAX + OVERLAYS_MAX + ADJUSTMENT_LAYERS_MAX)] = []
+
+
+class TemplateBody(TemplateCapture):
+    """A Template as the owner saves it: a name, and what it is saved from."""
+
+    name: Name
+
+
+class TemplateName(BaseModel):
+    """A Template's new name."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Name
+
+
+@dataclass(frozen=True)
+class CapturedTemplate:
+    """A Template's layers as they would be saved, and what the owner is told."""
+
+    layers: TemplateLayers
+    notices: list[str]
+
+
+@dataclass(frozen=True)
+class SavedTemplate(Template):
+    """A Template as saved, and what the owner is told."""
+
+    notices: list[str] = field(default_factory=list)
+
+
+class TemplateApply(BaseModel):
+    """A Template applied to some Candidates of a Job, all of them or none; with `dry_run`, nothing is saved."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    template_id: str
+    candidate_ids: Annotated[list[str], Field(min_length=1, max_length=500)]
+    dry_run: bool = False
+
+
+@dataclass(frozen=True)
+class AppliedTemplate:
+    """What applying a Template made of one Candidate: its Revision (the one it is at, on a dry run),
+    its edits as a review edit sends them, and what the owner is told."""
+
+    candidate_id: str
+    revision: int
+    edits: dict[str, Any]
+    notices: list[str]
+
+
+@dataclass(frozen=True)
+class TemplateApplied:
+    candidates: list[AppliedTemplate]
 
 
 class ExportEstimate(BaseModel):
@@ -1305,25 +1379,32 @@ def _entry(store: JobStore, job: Job, candidate_id: str, revision: int) -> Histo
     return entry
 
 
-def _review(
+def _review[R](
     store: JobStore,
     settings: Settings,
     job_id: str,
-    change: Callable[[list[Candidate], Episode], tuple[list[Candidate], Candidate]],
+    change: Callable[[list[Candidate], Episode], tuple[list[Candidate], R]],
     edit: Edit,
     after_save: Callable[[str, float], None],
-) -> Candidate:
+    dry_run: bool = False,
+) -> R:
     """Save the Candidates `change` makes, then `after_save` (every save of a Candidate sweeps the
-    Job's unused Effected copies; one made since the save started survives)."""
+    Job's unused Effected copies; one made since the save started survives). With `dry_run`, what
+    else `change` returns, refused as the save would be, and nothing saved."""
     started = time.time()
 
-    def changed(job: Job, candidates: list[Candidate]) -> tuple[list[Candidate], Candidate]:
+    def changed(job: Job, candidates: list[Candidate]) -> tuple[list[Candidate], R]:
         transcript = store.load_transcript(job.id)
         assert job.source is not None and transcript is not None  # a Job in review has both
         episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, settings.selection)
         return change(candidates, episode)
 
     try:
+        if dry_run:
+            job = store.get(job_id)
+            if job.status not in EDITABLE:
+                raise JobConflict(f"Job {job_id} is {job.status}")
+            return changed(job, store.load_candidates(job_id) or [])[1]
         saved = store.change_candidates(job_id, changed, expect=EDITABLE, edit=edit)
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
@@ -1597,6 +1678,113 @@ def delete_text_preset(preset_id: str, text_presets: TextPresets) -> None:
         raise HTTPException(404, f"No Text Preset {preset_id}") from None
     except BuiltinTextPreset:
         raise HTTPException(409, f"Text Preset {preset_id} is built in and can't be deleted") from None
+
+
+@router.get("/templates")
+def list_templates(templates: Templates) -> list[Template]:
+    """The owner's Templates, in the order they were made."""
+    return templates.all()
+
+
+@router.post("/templates/capture")
+def capture_template(
+    body: TemplateCapture, store: Store, settings: AppSettings, presets: Presets, library: Media
+) -> CapturedTemplate:
+    """The layers a Template saved from `body` would hold, with their Anchors, and what the owner is
+    told; nothing is saved. 404 for an unknown Job or Candidate; 422 for a draft that isn't a valid
+    edit or an Anchor of a layer it hasn't."""
+    return _captured(body, store, settings, presets, library)
+
+
+@router.post("/templates", status_code=201)
+def create_template(
+    body: TemplateBody, store: Store, settings: AppSettings, presets: Presets, library: Media, templates: Templates
+) -> SavedTemplate:
+    """Save a Candidate (as its draft edits would make it) as a new Template, as `capture_template`
+    would capture it."""
+    captured = _captured(body, store, settings, presets, library)
+    return SavedTemplate(**vars(templates.create(body.name, captured.layers)), notices=captured.notices)
+
+
+@router.put("/templates/{template_id}")
+def save_over_template(
+    template_id: str, body: TemplateBody, store: Store, settings: AppSettings, presets: Presets, library: Media, templates: Templates
+) -> SavedTemplate:
+    """Save a Candidate over one of the Templates, keeping its id. The Candidates it was applied to
+    keep their copies."""
+    captured = _captured(body, store, settings, presets, library)
+    try:
+        template = templates.save_over(template_id, body.name, captured.layers)
+    except TemplateNotFound:
+        raise HTTPException(404, f"No Template {template_id}") from None
+    return SavedTemplate(**vars(template), notices=captured.notices)
+
+
+@router.patch("/templates/{template_id}")
+def rename_template(template_id: str, body: TemplateName, templates: Templates) -> Template:
+    try:
+        return templates.rename(template_id, body.name)
+    except TemplateNotFound:
+        raise HTTPException(404, f"No Template {template_id}") from None
+
+
+@router.delete("/templates/{template_id}", status_code=204)
+def delete_template(template_id: str, templates: Templates) -> None:
+    """Delete one of the Templates. The Candidates it was applied to keep their Template items."""
+    try:
+        templates.delete(template_id)
+    except TemplateNotFound:
+        raise HTTPException(404, f"No Template {template_id}") from None
+
+
+@router.post("/jobs/{job_id}/templates/apply")
+def apply_template(
+    job_id: str,
+    body: TemplateApply,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    templates: Templates,
+    edit: EditBy,
+    after_save: AfterSave,
+) -> TemplateApplied:
+    """Apply a Template to the Candidates `candidate_ids`, in one change of the Job: each changed one
+    gets its next Revision and a state in its Revision History, or, with `dry_run`, nothing is saved.
+    404 for an unknown Template, or for an unknown Candidate (then none is changed); 409 unless the
+    Job is in review or rendering."""
+    try:
+        template = templates.get(body.template_id)
+    except TemplateNotFound:
+        raise HTTPException(404, f"No Template {body.template_id}") from None
+
+    def change(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], list[AppliedTemplate]]:
+        results = []
+        for candidate_id in dict.fromkeys(body.candidate_ids):
+            current = next((candidate for candidate in candidates if candidate.id == candidate_id), None)
+            if current is None:
+                raise CandidateNotFound(candidate_id)
+            applied = apply_template_to(template, current)
+            candidates, saved = review.update(candidates, candidate_id, applied.change, episode, presets.join_transition)
+            revision = current.revision if body.dry_run else saved.revision
+            results.append(AppliedTemplate(candidate_id, revision, _edits_of(applied.change), applied.notices))
+        return candidates, results
+
+    return TemplateApplied(_review(store, settings, job_id, change, edit, after_save, dry_run=body.dry_run))
+
+
+def _edits_of(change: CandidateChange) -> dict[str, Any]:
+    """A change as a review edit (CandidateUpdate) sends it: the fields it sets."""
+    given = {name: value for name, value in vars(change).items() if name in CandidateUpdate.model_fields and value is not None}
+    return CandidateUpdate.model_validate(given).model_dump(mode="json", exclude_unset=True)
+
+
+def _captured(body: TemplateCapture, store: JobStore, settings: Settings, presets: PresetStore, library: MediaStore) -> CapturedTemplate:
+    _, _, candidate = _drafted(body.job_id, body.candidate_id, body.edits, store, settings, presets, library)
+    try:
+        captured = capture(candidate, body.anchors)
+    except InvalidTemplate as exc:
+        raise HTTPException(422, str(exc)) from None
+    return CapturedTemplate(captured.layers, captured.notices)
 
 
 @router.get("/export-presets")

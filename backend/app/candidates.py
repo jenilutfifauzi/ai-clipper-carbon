@@ -36,6 +36,8 @@ ItemId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,32}$")]
 TimelineStart = Annotated[FiniteFloat, Field(ge=0, le=3600)]
 TimelineSecs = Annotated[FiniteFloat, Field(ge=0.1, le=3600)]
 FileOffset = Annotated[FiniteFloat, Field(ge=0, le=3600)]
+# A Template's id (app/templates.py), by which a Template item names the Template that put it there.
+TemplateId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9-]{1,40}$")]
 
 
 @dataclass(frozen=True)
@@ -253,6 +255,9 @@ class TextLayer:
     animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
     # Keys is defined with Keyframes, below.
     keys: "Keys" = field(default_factory=dict)
+    # The Template that put it there, which makes it a Template item (GLOSSARY.md; docs/adr/0023);
+    # None for one made by hand. Edits keep it; the planner ignores it.
+    template: TemplateId | None = None
 
     def __post_init__(self) -> None:
         _check_unstretched(f"Text Layer {self.id}", self.transform, "set its style's size")
@@ -361,6 +366,8 @@ class Shape:
     animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
     # Keys is defined with Keyframes, below.
     keys: "Keys" = field(default_factory=dict)
+    # The Template that put it there (a Template item), as a Text Layer's.
+    template: TemplateId | None = None
 
     def __post_init__(self) -> None:
         _check_unstretched(f"Shape {self.id}", self.transform, "set its style's width and height")
@@ -605,6 +612,8 @@ class MusicClip:
     # volume (× its duck), fades and delay; each setting filled in once checked. Empty in one saved
     # before them.
     audio_effects: Annotated[list[AudioEffect], Field(max_length=AUDIO_EFFECTS_MAX)] = field(default_factory=list)
+    # The Template that put it there (a Template item), as a Text Layer's.
+    template: TemplateId | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.start, str):
@@ -726,6 +735,8 @@ class Overlay:
     # How it is laid over what is under it, after its opacity (docs/adr/0014). Normal in one saved
     # before Blend Modes.
     blend: BlendMode = BlendMode.NORMAL
+    # The Template that put it there (a Template item), as a Text Layer's.
+    template: TemplateId | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))
@@ -752,6 +763,8 @@ class AdjustmentLayer:
     # Its Video Effects (docs/adr/0014), in order, after its Grade over the 1080x1920 frame (scale 1),
     # mixed back with it by its strength and fades. Empty in one saved before them.
     video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
+    # The Template that put it there (a Template item), as a Text Layer's.
+    template: TemplateId | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "video_effects", checked_video_effects(self.video_effects, f"Adjustment Layer {self.id}"))

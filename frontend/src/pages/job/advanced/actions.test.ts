@@ -571,6 +571,17 @@ describe("copy and paste", () => {
     });
   });
 
+  test("a pasted copy of a Template item is made by hand: it loses the Template's mark", () => {
+    const before = edits({ segments: [segment("s1", 100, 120)], text_layers: [layer("a", 2, 2, { template: "brand" })], music: [music("m", 3, 4, { template: "brand" })] });
+    const held = copy(scene(before, picked(text("a"), { kind: "music", id: "m" })), here)!;
+
+    const pasted = paste(scene(before, null), held, 10, here).edits;
+
+    expect(pasted.text_layers.map((item) => [item.id, item.template])).toEqual([["a", "brand"], ["n1", undefined]]);
+    expect(pasted.music.map((item) => [item.id, item.template])).toEqual([["m", "brand"], ["n2", undefined]]);
+    expect("template" in pasted.text_layers[1]).toBe(false);
+  });
+
   test("Segments are inserted at the join nearest the playhead, and the layers placed from there", () => {
     // s1 plays 0–5 s, s2 5–15 s, s3 15–20 s.
     const before = edits({
