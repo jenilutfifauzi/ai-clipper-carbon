@@ -160,12 +160,68 @@ def test_applied_layers_carry_the_templates_mark_and_hand_made_ones_are_kept():
 
 
 def test_applying_again_replaces_the_template_items_rather_than_doubling_them():
-    template = template_of(capture(candidate(20, text_layers=[lower_third()])).layers)
+    template = template_of(capture(candidate(20, text_layers=[lower_third()], music=[bed()])).layers)
+    mine = TextLayer("mine", "Mine", start=10.0, secs=2.0)
+    once = apply(template, candidate(30, text_layers=[mine])).change
+
+    twice = apply(template, candidate(30, text_layers=once.text_layers, music=once.music), {"brand": template})
+
+    assert [(layer.id, layer.template) for layer in twice.change.text_layers] == [("mine", None), ("name", "brand")]
+    assert [(clip.id, clip.template) for clip in twice.change.music] == [("bed", "brand")]
+    # Nothing was changed by hand since: nothing to tell.
+    assert twice.notices == []
+
+
+def test_applying_another_template_replaces_the_first_ones_items():
+    first = template_of(capture(candidate(20, text_layers=[lower_third()], music=[bed()])).layers)
+    other = Template("other", "Other", NOW, NOW, capture(candidate(20, text_layers=[call_to_action()])).layers)
+    mine = TextLayer("mine", "Mine", start=10.0, secs=2.0)
+    once = apply(first, candidate(30, text_layers=[mine])).change
+
+    applied = apply(other, candidate(30, text_layers=once.text_layers, music=once.music), {"brand": first, "other": other})
+
+    assert [(layer.id, layer.template) for layer in applied.change.text_layers] == [("mine", None), ("cta", "other")]
+    assert applied.change.music == []
+    assert applied.notices == []
+
+
+def test_a_template_item_changed_by_hand_is_counted_and_replaced():
+    template = template_of(capture(candidate(20, text_layers=[lower_third(), call_to_action()])).layers)
+    name, cta = apply(template, candidate(30)).change.text_layers
+    moved = replace(name, start=name.start + 1.5)
+
+    applied = apply(template, candidate(30, text_layers=[moved, cta]), {"brand": template})
+
+    assert [(layer.id, layer.start, layer.template) for layer in applied.change.text_layers] == [
+        ("name", 2.0, "brand"), ("cta", 24.0, "brand"),
+    ]
+    assert applied.notices == ["1 Template item changed by hand replaced."]
+
+
+def test_the_items_of_a_deleted_template_all_count_as_replaced():
+    template = template_of(capture(candidate(20, text_layers=[lower_third(), call_to_action()])).layers)
     once = apply(template, candidate(30)).change
 
-    twice = apply(template, candidate(30, text_layers=once.text_layers)).change
+    applied = apply(template, candidate(30, text_layers=once.text_layers))
 
-    assert [(layer.id, layer.template) for layer in twice.text_layers] == [("name", "brand")]
+    assert [layer.id for layer in applied.change.text_layers] == ["name", "cta"]
+    assert applied.notices == ["2 Template items of a deleted Template replaced."]
+
+
+def test_no_template_removes_the_template_items_and_nothing_else():
+    template = template_of(capture(candidate(20, text_layers=[lower_third()], music=[bed()])).layers)
+    mine = TextLayer("mine", "Mine", start=10.0, secs=2.0)
+    plate = Shape("plate", start=0.0, secs=30.0, style=ShapeStyle(fill="#000000"))
+    branded = candidate(30, text_layers=[mine], shapes=[plate])
+    once = apply(template, branded).change
+    name = next(layer for layer in once.text_layers if layer.template)
+
+    applied = apply(None, candidate(30, text_layers=[*once.text_layers[:1], replace(name, text="Changed")], shapes=[plate], music=once.music), {"brand": template})
+
+    assert applied.change.text_layers == [mine]
+    assert applied.change.shapes == [plate]
+    assert applied.change.music == []
+    assert applied.notices == ["1 Template item changed by hand removed."]
 
 
 def test_a_layer_past_a_short_clips_end_is_trimmed_there_or_left_out():
@@ -318,6 +374,37 @@ def test_a_dry_run_saves_nothing(client, from_episode, llm, wait_for_status):
     assert candidates_of(client, job, target) == target
 
 
+def test_reapplying_counts_items_changed_by_hand_and_no_template_takes_them_off(client, from_episode, llm, wait_for_status):
+    job, source = branded(client, wait_for_status, llm)
+    template = saved(client, job, source)
+    target = added(client, job, 700.0, 712.0)
+    applied(client, job, template, [target])
+    now = candidates_of(client, job, target)
+    moved = [{**layer, "start": layer["start"] + 0.5} if layer["id"] == "name" else layer for layer in now["text_layers"]]
+    mine = {"id": "mine", "text": "Mine", "start": 1.0, "secs": 1.0}
+    patch(client, job, now, text_layers=[*moved, mine])
+
+    [again] = applied(client, job, template, [target])["candidates"]
+
+    assert again["notices"] == ["1 Template item changed by hand replaced."]
+    assert [(layer["id"], layer["template"]) for layer in again["edits"]["text_layers"]] == [
+        ("mine", None), ("name", template["id"]), ("cta", template["id"]),
+    ]
+
+    response = client.post(f"/api/jobs/{job['id']}/templates/apply", json={"template_id": None, "candidate_ids": [target["id"]]})
+    assert response.status_code == 200, response.text
+    assert response.json()["candidates"][0]["notices"] == []
+    plain = candidates_of(client, job, target)
+    assert [layer["id"] for layer in plain["text_layers"]] == ["mine"]
+    assert plain["shapes"] == []
+
+    # Its Template deleted, a Template item counts as replaced.
+    applied(client, job, template, [target])
+    assert client.delete(f"{URL}/{template['id']}").status_code == 204
+    response = client.post(f"/api/jobs/{job['id']}/templates/apply", json={"template_id": None, "candidate_ids": [target["id"]]})
+    assert response.json()["candidates"][0]["notices"] == ["3 Template items of a deleted Template removed."]
+
+
 def test_an_unknown_candidate_fails_the_whole_batch(client, from_episode, llm, wait_for_status):
     job, source = branded(client, wait_for_status, llm)
     template = saved(client, job, source)
@@ -414,6 +501,24 @@ async def test_templates_are_saved_listed_with_their_anchors_applied_and_deleted
     marked = (await call(mcp, "get_candidate", job_id=job["id"], candidate_id=target["id"]))["text_layers"]
     assert [(layer["id"], layer["template"]) for layer in marked] == [("name", template["id"]), ("cta", template["id"])]
 
+    shown = await call(mcp, "get_candidate", job_id=job["id"], candidate_id=target["id"])
+    assert shown["template_items"] == [
+        {"kind": "text_layers", "id": "name", "template_id": template["id"], "template": "Brand 3"},
+        {"kind": "text_layers", "id": "cta", "template_id": template["id"], "template": "Brand 3"},
+    ]
+    # The dry run of another application lists the marks it would leave, and what it tells.
+    [entry] = (await call(mcp, "apply_template", job_id=job["id"], candidate_ids=[target["id"]], template_id=template["id"], dry_run=True))["candidates"]
+    assert [item["template"] for item in entry["template_items"]] == ["Brand 3", "Brand 3"]
+    assert entry["notices"] == []
+
     assert await call(mcp, "delete_preset", kind="template", preset_id=template["id"]) == {"deleted": template["id"]}
+    shown = await call(mcp, "get_candidate", job_id=job["id"], candidate_id=target["id"])
+    assert [item["template"] for item in shown["template_items"]] == ["deleted", "deleted"]
+    # No Template takes them off.
+    [entry] = (await call(mcp, "apply_template", job_id=job["id"], candidate_ids=[target["id"]], template_id=None, dry_run=True))["candidates"]
+    assert (entry["template_items"], entry["notices"]) == ([], ["2 Template items of a deleted Template removed."])
+    await call(mcp, "apply_template", job_id=job["id"], candidate_ids=[target["id"]], template_id=None)
+    shown = await call(mcp, "get_candidate", job_id=job["id"], candidate_id=target["id"])
+    assert shown["text_layers"] == [] and "template_items" not in shown
     assert (await call(mcp, "list_presets", kind="template"))["presets"] == []
     assert "No Template" in await fails(mcp, "apply_template", job_id=job["id"], candidate_ids=[target["id"]], template_id=template["id"])

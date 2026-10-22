@@ -523,11 +523,12 @@ class SavedTemplate(Template):
 
 
 class TemplateApply(BaseModel):
-    """A Template applied to some Candidates of a Job, all of them or none; with `dry_run`, nothing is saved."""
+    """A Template applied to some Candidates of a Job, all of them or none; None is "No Template",
+    taking their Template items off. With `dry_run`, nothing is saved."""
 
     model_config = ConfigDict(extra="forbid")
 
-    template_id: str
+    template_id: str | None
     candidate_ids: Annotated[list[str], Field(min_length=1, max_length=500)]
     dry_run: bool = False
 
@@ -1748,14 +1749,15 @@ def apply_template(
     edit: EditBy,
     after_save: AfterSave,
 ) -> TemplateApplied:
-    """Apply a Template to the Candidates `candidate_ids`, in one change of the Job: each changed one
-    gets its next Revision and a state in its Revision History, or, with `dry_run`, nothing is saved.
-    404 for an unknown Template, or for an unknown Candidate (then none is changed); 409 unless the
+    """Apply a Template (or with None, "No Template") to the Candidates `candidate_ids`, in one change
+    of the Job: each changed one gets its next Revision and a state in its Revision History, or, with
+    `dry_run`, nothing is saved. The notices count the Template items replaced that were changed by
+    hand, or whose Template is gone. 404 for an unknown Template, or for an unknown Candidate (then none is changed); 409 unless the
     Job is in review or rendering."""
-    try:
-        template = templates.get(body.template_id)
-    except TemplateNotFound:
-        raise HTTPException(404, f"No Template {body.template_id}") from None
+    named = {template.id: template for template in templates.all()}
+    if body.template_id is not None and body.template_id not in named:
+        raise HTTPException(404, f"No Template {body.template_id}")
+    template = None if body.template_id is None else named[body.template_id]
 
     def change(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], list[AppliedTemplate]]:
         results = []
@@ -1763,7 +1765,7 @@ def apply_template(
             current = next((candidate for candidate in candidates if candidate.id == candidate_id), None)
             if current is None:
                 raise CandidateNotFound(candidate_id)
-            applied = apply_template_to(template, current)
+            applied = apply_template_to(template, current, named)
             candidates, saved = review.update(candidates, candidate_id, applied.change, episode, presets.join_transition)
             revision = current.revision if body.dry_run else saved.revision
             results.append(AppliedTemplate(candidate_id, revision, _edits_of(applied.change), applied.notices))

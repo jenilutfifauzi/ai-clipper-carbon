@@ -11,12 +11,12 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Pure tests:
+- [x] Pure tests:
   - Reapplying the same Template leaves one set of its layers.
   - Applying another Template replaces the first one's items.
   - A moved lower-third is counted as changed by hand and replaced.
   - Hand-made layers are kept.
   - "No Template" removes the Template items and nothing else.
-- [ ] HTTP and MCP: `apply_template` with null, and the dry run listing marks and notices.
+- [x] HTTP and MCP: `apply_template` with null, and the dry run listing marks and notices.
