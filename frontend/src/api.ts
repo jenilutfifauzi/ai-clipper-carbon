@@ -1172,6 +1172,18 @@ export interface PreviewPlan {
   // The Matte pieces its cut-out Segments read (ADR 0015), in order: the preview draws the cut from
   // them, and the picture whole where a piece isn't served yet. None in a plan made by hand.
   mattes?: MattePiece[];
+  // The reversed copies of the Matte its reversed cut-out Segments read (ADR 0015, 0009).
+  matte_copies?: MatteCopy[];
+}
+
+// A reversed copy of the Source's Matte (backend/app/matte.py's `Reversed`): what a reversed cut-out
+// Segment playing its range from `start` to `end` reads, where it is served once it is made, and
+// seconds into it where it shows the range (`at`, as a Retimed copy's).
+export interface MatteCopy {
+  start: number;
+  end: number;
+  url: string;
+  at: number;
 }
 
 // A piece of the Source's Matte (backend/app/matte.py), by its `start` in seconds (10 s long), and

@@ -369,6 +369,7 @@ def _reverse_in_pieces(
     progress: Callable[[float], None],
     threads: int,
     nice: bool,
+    encode: list[str] | None = None,
 ) -> None:
     """Write the copy of `video` that `retime` says to `target`: its range cut into pieces of about
     `piece` seconds, each reversed (when `retime.reverse`) and played at its Speed, then joined last to
@@ -376,7 +377,8 @@ def _reverse_in_pieces(
     brought back to `fps` frames a second, as a render's is (every 8th frame at 8×, each frame 8
     times at 0.125×), and each piece's sound, made by the render's filters, is cut or padded to the
     piece's length (`atempo` drops a little of a sound's end), so that the joins keep in step. A
-    song's copy (no `fps`) is its sound alone."""
+    song's copy (no `fps`) is its sound alone. Its picture is encoded as its `size`'s, or as `encode`
+    says (a Matte's reversed copy, app/matte.py)."""
     span = retime.end - retime.start
     count = max(1, math.ceil(span / piece - 1e-9))
     length = span / count
@@ -404,7 +406,7 @@ def _reverse_in_pieces(
         pieces = []
         for i in range(count):
             out = work / f"{i}.mov"
-            shown = ["-map", "0:v:0", "-vf", ",".join(picture), *_ENCODE[size]] if fps else []
+            shown = ["-map", "0:v:0", "-vf", ",".join(picture), *(encode or _ENCODE[size])] if fps else []
             command = [
                 *run, *base, "-ss", f"{retime.start + i * length:.6f}", "-t", f"{length:.6f}", "-i", str(video),
                 *shown, "-map", "0:a:0?", *(["-af", ",".join(sound)] if sound else []),

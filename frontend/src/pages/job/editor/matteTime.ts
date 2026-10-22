@@ -8,6 +8,7 @@
  * its start's, `round(piece × fps)`. A time into a cut-out Segment shows the Source time the per-Segment
  * mapping gives (segmentTime.ts: Speed, Reverse, hold), so its Matte frame follows it.
  */
+import type { MatteCopy, RetimedRange } from "../../../api";
 import { sourceAt, type SegmentRange } from "./segmentTime";
 
 // A piece's length, on the Source's timeline (the backend's PIECE_SECS).
@@ -43,3 +44,40 @@ export const segmentMatte = (segment: SegmentRange, offset: number, fps: number)
 
 /** Where a piece's video is sought to show its `frame`: the middle of the frame, so that rounding never shows the one before. */
 export const matteSeek = (frame: number, fps: number) => (frame + 0.5) / fps;
+
+/**
+ * How a Matte follows a picture's video (its master): `at` gives the time on the Matte its media time
+ * shows (the Source's, read in the pieces; or with `copy`, seconds into a reversed Matte copy, read
+ * from its start), and `rate` how many times faster than its master the Matte plays.
+ */
+export interface MatteClock {
+  at: (time: number) => number;
+  rate: number;
+  copy: string | null;
+}
+
+/** A deck's: its master plays the Source itself. */
+export const SOURCE_CLOCK: MatteClock = { at: (time) => time, rate: 1, copy: null };
+
+/**
+ * The clock of a cut-out Segment that plays `segment` (its range on the Source) from its preview copy
+ * of `range` (retimedCopy.ts's `segmentCopy`), its master `at` seconds into the copy at its start;
+ * `matte`, the reversed Matte copy its plan lists. A copy retimed at a Speed holds `speed` seconds of
+ * the Source a second. Forwards (a Speed a browser won't play), the Source time is mapped and read in
+ * the pieces; in Reverse, the Matte's reversed copy is read alike (null until it is listed). Until
+ * its copy is made (`at` null) its master holds the Source's own frame: the deck's clock.
+ */
+export function copyClock(segment: SegmentRange, range: RetimedRange, at: number | null, matte: MatteCopy | null): MatteClock | null {
+  if (at == null) return SOURCE_CLOCK;
+  const speed = range.speed ?? 1;
+  if (!segment.reverse) return { at: (time) => segment.start + (time - at) * speed, rate: speed, copy: null };
+  if (!matte) return null;
+  return { at: (time) => matte.at + (time - at) * speed, rate: speed, copy: matte.url };
+}
+
+/** The reversed Matte copy `copies` (the plan's) lists for a Segment playing `segment` backwards. */
+export const matteCopyOf = (copies: MatteCopy[] | undefined, segment: SegmentRange): MatteCopy | null =>
+  copies?.find((copy) => Math.abs(copy.start - segment.start) < 1e-6 && Math.abs(copy.end - segment.end) < 1e-6) ?? null;
+
+/** The frame of a reversed Matte copy shown `time` seconds into it, as `matteFrame` finds a piece's (its one piece starting at 0). */
+export const copyFrame = (time: number, fps: number): MatteFrame | null => (time < 0 ? null : { piece: 0, frame: Math.floor(time * fps + 0.5) });

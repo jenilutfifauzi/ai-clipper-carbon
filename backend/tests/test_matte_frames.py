@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.matte import Mattes, matte_frame
+from app.matte import Mattes, matte_frame, matte_pieces
 from app.segment_time import SegmentTime
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -27,3 +27,12 @@ def test_the_frame_is_one_its_piece_holds(case):
     mattes = Mattes(Path("unused"), Path("unused.mp4"), (1920, 1080, case["fps"]), 60.0)
     count, _ = mattes.frames(case["piece"])
     assert 0 <= case["frame"] < count
+
+
+@pytest.mark.parametrize("case", CASES, ids=lambda case: case["name"])
+def test_the_segment_reads_the_pieces_the_shared_case_says_its_frame_among_them(case):
+    """Chosen by frame, as the frame is: a held frame rounded into the next piece reads that piece."""
+    given = case["segment"]
+    end = given["start"] if given.get("hold") is not None else given["end"]
+    assert matte_pieces(given["start"], end, 60.0, case["fps"]) == case["pieces"]
+    assert case["piece"] in case["pieces"]

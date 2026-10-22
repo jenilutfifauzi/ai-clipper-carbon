@@ -3,7 +3,7 @@ import type { Background, MattePiece, Panel, RenderPlan } from "../../../api";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA } from "./ClipPreview";
 import { MAX_DRIFT_SECS } from "./follow";
 import { filledStyle } from "./picture";
-import { matteAt, matteFrame, matteSeek, MATTE_PIECE_SECS } from "./matteTime";
+import { copyFrame, matteAt, matteFrame, matteSeek, MATTE_PIECE_SECS, SOURCE_CLOCK, type MatteClock, type MatteFrame } from "./matteTime";
 import type { Playback } from "./playback";
 
 /*
@@ -30,6 +30,8 @@ const RETRY_MS = 2000;
 const PLAYING_FRAMES = 3;
 // The Background's canvas, shrunk this many times (it is blurred).
 const BACKDROP_SHRINK = 8;
+// The rates a browser plays a video at.
+const RATES = { min: 0.0625, max: 16 };
 
 const hasFrameCallback = typeof HTMLVideoElement !== "undefined" && "requestVideoFrameCallback" in HTMLVideoElement.prototype;
 
@@ -79,12 +81,17 @@ interface ShownMatte {
  * needs (the piece holding it, and the next one when it is near), following the master: paused at
  * the same Source frame while it is paused, playing at its rate while it plays, moved back when it
  * drifts. Nothing is held where the plan has no pieces, nor far from them. `good` is whether its
- * pictures were last cut (not shown whole).
+ * pictures were last cut (not shown whole). A master playing a Retimed copy (a Segment's own, ADR
+ * 0009) is followed through its `clock` (matteTime.ts's `copyClock`): its time mapped to the Source's,
+ * at its rate times the copy's Speed, or to a reversed Matte copy's, played as one piece.
  */
 export class DeckMatte {
   fps = 30;
   good = false;
+  // The plan's pieces, and those read now: they, or the clock's reversed copy (as the piece at 0).
+  private planned = new Map<number, string>();
   private pieces = new Map<number, string>();
+  private clock: MatteClock | null = SOURCE_CLOCK;
   private master: HTMLVideoElement | null = null;
   private stopMaster: () => void = () => {};
   private videos = new Map<number, HTMLVideoElement>();
@@ -102,9 +109,29 @@ export class DeckMatte {
 
   /** The plan's pieces (none: nothing is cut) and the Source's frame rate. */
   setPieces(pieces: MattePiece[] | undefined, fps: number) {
-    this.pieces = new Map((pieces ?? []).map(({ start, url }) => [start, url]));
+    this.planned = new Map((pieces ?? []).map(({ start, url }) => [start, url]));
     this.fps = fps > 0 ? fps : 30;
+    this.read();
+  }
+
+  /** How its master's time maps to the Matte's (null: there is nothing to cut it by yet). */
+  setClock(clock: MatteClock | null) {
+    this.clock = clock;
+    this.read();
+  }
+
+  private read() {
+    const copy = this.clock?.copy;
+    this.pieces = !this.clock ? new Map() : copy ? new Map([[0, copy]]) : this.planned;
     this.follow();
+  }
+
+  // The Matte frame its master's time `time` shows, in the pieces read now.
+  private locate(time: number): MatteFrame | null {
+    if (!this.clock) return null;
+    const at = this.clock.at(time);
+    if (!this.clock.copy) return matteAt(at, this.fps, this.pieces.keys());
+    return this.pieces.size ? copyFrame(at, this.fps) : null;
   }
 
   get cutting(): boolean {
@@ -195,7 +222,7 @@ export class DeckMatte {
    * kept meanwhile), or null where there is none to show (the picture shown whole).
    */
   frameFor(source: number, playing: boolean): ShownMatte | "waiting" | null {
-    const at = matteAt(source, this.fps, this.pieces.keys());
+    const at = this.locate(source);
     if (!at) return null;
     const video = this.videos.get(at.piece);
     if (!video || this.broken.has(at.piece) || !this.loaded.has(video)) return null;
@@ -217,14 +244,16 @@ export class DeckMatte {
   private follow() {
     const master = this.master;
     if (!master || !this.pieces.size) return this.mount([]);
-    const source = frameStart(master.currentTime, this.fps);
-    const at = matteAt(source, this.fps, this.pieces.keys());
-    const next = matteFrame(source, this.fps).piece + MATTE_PIECE_SECS;
-    const ahead = this.pieces.has(next) && next - source < LOOKAHEAD_SECS;
-    this.mount([...(at ? [at.piece] : []), ...(ahead ? [next] : [])]);
+    const time = frameStart(master.currentTime, this.fps);
+    const at = this.locate(time);
+    // The next piece, in the Source's pieces (a reversed copy is one).
+    const source = this.clock && !this.clock.copy ? this.clock.at(time) : null;
+    const next = source === null ? null : matteFrame(source, this.fps).piece + MATTE_PIECE_SECS;
+    const ahead = next !== null && source !== null && this.pieces.has(next) && (next - source) / (this.clock?.rate ?? 1) < LOOKAHEAD_SECS;
+    this.mount([...(at ? [at.piece] : []), ...(ahead && next !== null ? [next] : [])]);
     if (at) this.keep(this.videos.get(at.piece), matteSeek(at.frame, this.fps), master);
     // The next waits on its first frame.
-    const waiting = ahead ? this.videos.get(next) : undefined;
+    const waiting = ahead && next !== null ? this.videos.get(next) : undefined;
     if (waiting && waiting.readyState >= 1) {
       if (!waiting.paused) waiting.pause();
       const first = matteSeek(0, this.fps);
@@ -235,7 +264,8 @@ export class DeckMatte {
   // A piece's video at `target` seconds into it, in step with `master`.
   private keep(video: HTMLVideoElement | undefined, target: number, master: HTMLVideoElement) {
     if (!video || video.readyState < 1) return;
-    if (video.playbackRate !== master.playbackRate) video.playbackRate = master.playbackRate;
+    const rate = Math.min(RATES.max, Math.max(RATES.min, master.playbackRate * (this.clock?.rate ?? 1)));
+    if (video.playbackRate !== rate) video.playbackRate = rate;
     if (master.paused) {
       if (!video.paused) video.pause();
       if (Math.abs(video.currentTime - target) > 0.25 / this.fps) video.currentTime = target;
@@ -460,8 +490,8 @@ export function CutBackdrop({
   playback: Playback;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const shown = useRef({ view, master });
-  shown.current = { view, master };
+  const shown = useRef({ view, master, plan });
+  shown.current = { view, master, plan };
   const panel = view.panel;
   useEffect(() => {
     const element = canvas.current;
@@ -471,7 +501,9 @@ export function CutBackdrop({
       const context = element.getContext("2d");
       if (!video || video.readyState < 2 || !context) return;
       const point = panel.path[0];
-      context.drawImage(video, point.x, point.y, panel.crop_width, panel.crop_height, 0, 0, element.width, element.height);
+      // In the video's own pixels: a Retimed copy may be smaller than the Source.
+      const k = video.videoWidth / shown.current.plan.source_width || 1;
+      context.drawImage(video, point.x * k, point.y * k, panel.crop_width * k, panel.crop_height * k, 0, 0, element.width, element.height);
     };
     const stops = masters.flatMap(({ current: video }) => (video ? [eachFrame(video, () => video === shown.current.master() && draw())] : []));
     stops.push(playback.subscribe(draw));

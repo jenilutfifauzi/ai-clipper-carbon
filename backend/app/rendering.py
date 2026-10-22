@@ -50,7 +50,7 @@ from app.jobs import Job, JobConflict, JobStatus, JobStore, JobWarning
 from app.layer_pictures import PICTURES_DIR, make_pictures
 from app.logos import LOGOS_DIR, LogoStore
 from app.media import MEDIA_DIR, MediaItem, MediaKind, MediaNotFound, MediaStore
-from app.matte import MATTES_DIR, MatteRunner, Mattes, ModelAbsent, matte_pieces
+from app.matte import MATTES_DIR, MatteRunner, Mattes, ModelAbsent, Part, Reversed, matte_pieces
 from app.media_words import MediaWordsFailed, MediaWordsStatus, MediaWordsStore
 from app.planner import Join, MediaInfo, SegmentInput, RenderPlan, edit_shown, plan_render, reframes
 from app.renderer import Renderer, RenderStopped, picture_layouts
@@ -168,35 +168,47 @@ def source_mattes(job_dir: Path, source: Source) -> Mattes:
     return Mattes(job_dir / MATTES_DIR, job_dir / source.video, (metadata.width, metadata.height, metadata.fps), metadata.duration)
 
 
+def matte_parts(mattes: Mattes, start: float, end: float, reverse: bool, hold: float | None) -> list[Part]:
+    """What of the Source's Matte a cut-out Segment of the Source playing `start` to `end` (backwards
+    when `reverse`, or its first frame held when `hold`) reads: the pieces holding its frames
+    (`matte_pieces`), then, when reversed, the reversed copy of its range made from them."""
+    held = hold is not None
+    pieces: list[Part] = list(matte_pieces(start, start if held else end, mattes.duration, mattes.frame[2]))
+    return pieces + [Reversed(start, end)] if reverse and not held else pieces
+
+
 def matte_wanted(candidate: Candidate, mattes: Mattes) -> dict[str, list[tuple]]:
-    """The Matte pieces each of the Candidate's cut-out Source Segments reads (`matte_pieces`), by its
-    id: the pieces `MatteRunner` asks for, makes and reports on."""
+    """The Matte pieces (and reversed copies) each of the Candidate's cut-out Source Segments reads
+    (`matte_parts`), by its id: what `MatteRunner` asks for, makes and reports on."""
     wanted = {}
     for segment in candidate.source_segments():
         if (removal := segment.background_removal) is not None:
-            end = segment.start if segment.hold is not None else segment.end
-            wanted[segment.id] = [(mattes, removal.subject, piece) for piece in matte_pieces(segment.start, end, mattes.duration)]
+            parts = matte_parts(mattes, segment.start, segment.end, segment.reverse, segment.hold)
+            wanted[segment.id] = [(mattes, removal.subject, part) for part in parts]
     return wanted
 
 
 def matted(
     plan: RenderPlan, mattes: Mattes, runner: MatteRunner | None, progress: Callable[[float], None] = lambda done: None
 ) -> tuple[RenderPlan, dict[str, Path]]:
-    """The plan with each cut-out Segment reading its Matte's pieces (`matte_files`), made now where
-    they aren't there (`MatteRunner.make`, `progress` from 0 to 1 over them all), and their files. A
+    """The plan with each cut-out Segment reading its Matte's pieces (`matte_files`), and a reversed
+    one its reversed copy (`matte_copy`, from where it shows its range), made now where they aren't
+    there (`MatteRunner.make`, `progress` from 0 to 1 over them all), and their files. A
     RuntimeError naming the Segment and the cause when one can't be had: the person model isn't
     downloaded, or a piece failed (now, or before a Retry)."""
     cut = [segment for segment in plan.segments if segment.background_removal is not None and segment.media is None]
     if not cut:
         return plan, {}
-    total = sum(len(segment.matte) for segment in cut)
+    parts = {id(segment): matte_parts(mattes, segment.source_start, segment.source_end, segment.reverse, segment.hold) for segment in cut}
+    total = sum(len(found) for found in parts.values())
     done, files, segments = 0, {}, []
     for segment in plan.segments:
         if segment not in cut:
             segments.append(segment)
             continue
         assert segment.background_removal is not None
-        wanted = [(mattes, segment.background_removal.subject, piece) for piece in segment.matte]
+        subject = segment.background_removal.subject
+        wanted = [(mattes, subject, part) for part in parts[id(segment)]]
         try:
             if runner is None:
                 raise ModelAbsent("the person model isn't offered here")
@@ -205,7 +217,12 @@ def matted(
             raise RuntimeError(f"Segment {segment.id}'s background couldn't be removed: {exc}") from exc
         done += len(wanted)
         files |= {str(path): path for path in paths}
-        segments.append(replace(segment, matte_files=[str(path) for path in paths]))
+        pieces = [str(path) for path, (_, _, part) in zip(paths, wanted) if not isinstance(part, Reversed)]
+        copy = {}
+        if reversed_part := next((part for _, _, part in wanted if isinstance(part, Reversed)), None):
+            path, at = mattes.reversed_copy(subject, runner.version, reversed_part)
+            copy = {"matte_copy": str(path), "matte_copy_at": at}
+        segments.append(replace(segment, matte_files=pieces, **copy))
     return replace(plan, segments=segments), files
 
 

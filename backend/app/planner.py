@@ -652,11 +652,15 @@ class SegmentPlan:
     # then graded and drawn through its Video Effects, laid over its `background` (the Background in
     # force: the picture blurred unless it has one of its own), before the joins. `matte` is the
     # pieces of the Source's Matte it reads (app/matte.py), by their starts in seconds; `matte_files`
-    # the renderer's: their files, in the render's `files`.
+    # the renderer's: their files, in the render's `files`. A reversed one's Matte is read from its
+    # reversed copy (`matte_copy`, the renderer's: its file, played forwards from `matte_copy_at`
+    # seconds, as its picture is from its Retimed copy).
     background_removal: BackgroundRemoval | None = None
     background: Background | None = None
     matte: list[int] = field(default_factory=list)
     matte_files: list[str] = field(default_factory=list)
+    matte_copy: str | None = None
+    matte_copy_at: float = 0.0
 
     @property
     def time(self) -> SegmentTime:
@@ -1161,7 +1165,7 @@ def plan_render(
                 moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate) for scene in moved]
             plans.extend(moved)
             fade_in, fade_out = fades_within(given.fade_in, given.fade_out, length)
-            cut = _cut_out(given, framing if layout is Layout.MANUAL else None, source.duration)
+            cut = _cut_out(given, framing if layout is Layout.MANUAL else None, source.duration, source.fps)
             segments.append(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
@@ -1221,11 +1225,11 @@ def plan_render(
     )
 
 
-def _cut_out(given: SegmentInput, framing: Framing | None, duration: float) -> dict:
+def _cut_out(given: SegmentInput, framing: Framing | None, duration: float, fps: float) -> dict:
     """A Source Segment's Background removal as its SegmentPlan carries it (docs/adr/0015): its
     feather times its picture's scale (`overlay_scale`: a Manual Candidate's Framing's; 1 in Track,
     Split and Blur, whose pictures fill their panels), the Background in force (its own, else the
-    picture blurred) and the pieces of the Source's Matte (`duration` long) its range reads. Nothing without one, and
+    picture blurred) and the pieces of the Source's Matte (`duration` long, at `fps`) its range reads. Nothing without one, and
     for now nothing for a media Segment's."""
     removal = given.background_removal
     if removal is None or given.media is not None:
@@ -1235,7 +1239,7 @@ def _cut_out(given: SegmentInput, framing: Framing | None, duration: float) -> d
     return {
         "background_removal": replace(removal, feather=round(removal.feather * scale, 3)),
         "background": given.background or Background(),
-        "matte": matte_pieces(given.start, end, duration),
+        "matte": matte_pieces(given.start, end, duration, fps),
     }
 
 

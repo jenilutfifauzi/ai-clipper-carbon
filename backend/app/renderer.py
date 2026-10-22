@@ -73,7 +73,8 @@ drawn in its Scenes' panels and heard at the Clip's own volume.
 
 A cut-out Segment of the Source (Background removal, docs/adr/0015) reads its Matte's pieces
 (app/matte.py) as one more input, joined by the concat demuxer and trimmed to the time its picture
-reads, after every other input (`_matte_inputs`). Its picture is drawn in its Scenes as any
+reads, after every other input (`_matte_inputs`); a reversed one's from its reversed Matte copy, read
+as its picture's Retimed copy is. Its picture is drawn in its Scenes as any
 Segment's; its Matte is drawn through the same Scenes (the same crops, scales, flips and placing, at
 the Source's size, Blur's fill left out), feathered by a blur and joined to the picture as its alpha;
 that is graded and drawn through its Video Effects, so they touch only what is kept, and laid over
@@ -684,8 +685,8 @@ def _encoders(ffmpeg: Path) -> frozenset[str]:
 
 def _check(plan: RenderPlan) -> None:
     """Refuse a Render Plan with nothing to draw, or a cut-out Segment it can't cut out (docs/adr/0015):
-    one without its Matte's pieces, or one it can't draw them for yet (played in Reverse, or a keyed
-    Manual Scene's)."""
+    one without its Matte's pieces (or, reversed, its reversed copy), or one it can't draw them for
+    yet (a keyed Manual Scene's, whose picture a frame process draws)."""
     if not plan.scenes or not all(scene.panels or scene.picture for scene in plan.scenes):
         raise ValueError("A Render Plan needs at least one scene, each with at least one panel or a picture")
     first = 0
@@ -696,8 +697,8 @@ def _check(plan: RenderPlan) -> None:
             continue
         if not segment.matte_files:
             raise RuntimeError(f"Segment {segment.id}'s Matte wasn't made, so its background can't be removed")
-        if segment.reverse or segment.read_from is not None:
-            raise RuntimeError(f"Segment {segment.id} plays in Reverse, which Background removal can't draw yet")
+        if (segment.reverse or segment.read_from is not None) and segment.matte_copy is None:
+            raise RuntimeError(f"Segment {segment.id}'s reversed Matte wasn't made, so its background can't be removed")
         if any(scene.picture is not None and scene.picture.motion for scene in scenes):
             raise RuntimeError(f"Segment {segment.id} has a keyed Manual Scene, which Background removal can't draw yet")
 
@@ -955,8 +956,11 @@ def _segmented(
         given = f"[{i}:v]{timing}"
         if (matte := (matted or {}).get(i)) is not None:
             offset, span = _matte_read(plan, segment)
-            # Its frames from the same time of the Source as the picture's, at the same times.
+            # Its frames from the same time of the Source as the picture's, at the same times: a
+            # reversed copy's read as its picture's copy is (`_matte_inputs`).
             read = f"[{matte}:v]trim=start={max(0.0, offset - 1e-4):.6f}:duration={span:.3f},setpts=PTS-{offset:.6f}/TB,"
+            if segment.matte_copy is not None:
+                read = f"[{matte}:v]"
             chains += _cut_out(plan, tuning, segment, scenes, given, f"{read}{timing}", f"g{i}", keyed, images or {}, _lay(plan, behind.get(("segment", i))))
             continue
         # Its Grade, then its Video Effects (docs/adr/0014), over its whole frame, before the joins,
@@ -1076,13 +1080,19 @@ def _matte_inputs(plan: RenderPlan, mattes: dict[int, Path], first: int) -> tupl
     """The input options that read each cut-out Segment's Matte, numbered from `first`, and each one's
     input number by the Segment's place: its pieces' listing (`mattes`, joined by the concat demuxer),
     from their start up to the end of what its picture reads (`_matte_read`; the concat demuxer's own
-    seek doesn't keep the pieces' times, so the frames before are trimmed off in the graph)."""
+    seek doesn't keep the pieces' times, so the frames before are trimmed off in the graph); a
+    reversed one's, its reversed copy (`matte_copy`) read from where it shows the range for as long,
+    as its picture's Retimed copy is."""
     inputs: list[str] = []
     numbers: dict[int, int] = {}
     for i, listing in mattes.items():
-        offset, span = _matte_read(plan, plan.segments[i])
+        segment = plan.segments[i]
+        offset, span = _matte_read(plan, segment)
         numbers[i] = first + len(numbers)
-        inputs += ["-f", "concat", "-safe", "0", "-t", f"{offset + span + 1:.3f}", "-i", str(listing)]
+        if segment.matte_copy is not None:
+            inputs += ["-ss", f"{segment.matte_copy_at:.3f}", "-t", f"{span:.3f}", "-i", segment.matte_copy]
+        else:
+            inputs += ["-f", "concat", "-safe", "0", "-t", f"{offset + span + 1:.3f}", "-i", str(listing)]
     return inputs, numbers
 
 

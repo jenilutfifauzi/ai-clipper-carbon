@@ -316,7 +316,7 @@ export function ClipPreview({
                   {decks.flatMap((refs, deck) => refs.slice(1).map((ref, slot) => deckPanel(ref, deck, slot + 1)))}
                 </DecksGraded>
               </CutGroup>
-              <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} />
+              <PreviewSegments plan={drawn} playback={playback} src={src} jobId={jobId} mattes={pieces} matteCopies={preview?.matte_copies} />
             </div>
             <PreviewTransitions plan={drawn} playback={playback} src={src} jobId={jobId} incoming={incoming} mattes={pieces} />
           </DecksGraded>

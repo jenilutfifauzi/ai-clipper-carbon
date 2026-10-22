@@ -45,7 +45,7 @@ The `background-removal` feature (roadmap #13, `.scratch/advanced-edit-v2/roadma
   - MCP gets tools to download the model and follow a Matte's progress. The field itself is reached through `edit_candidate` and `merge_candidate_items`, as every item field is.
 - **Speed, Reverse and Freeze frame follow the Source's time.**
   - At a Speed, the Matte's frames are picked by the same Source time, through the same `setpts` in the render.
-  - A reversed item's Matte gets a reversed Retimed copy (0009).
+  - A reversed item's Matte gets a reversed Retimed copy (0009), made from its pieces after them, by the Matte runner or a render, and found wherever a copy of a wider range serves. It is of one size, the Matte's own, which the preview and the render both read (amended by ticket 07: the Matte is already no larger than a preview copy). It is reversed in the same pieces as its picture's copy, and joined with the item's sound, so that its frames start where the picture's do.
   - A Freeze frame holds one frame of the Matte.
 - **What shows where the picture is taken away:**
   - **A Segment shows its Background, in any Layout.**

@@ -88,11 +88,15 @@ def test_a_feather_out_of_range_is_refused_naming_its_segment():
 
 
 def test_the_pieces_of_a_range_are_the_ten_second_ones_holding_it():
-    assert matte_pieces(0, 8, 8) == [0]
-    assert matte_pieces(9.5, 10.5, 40) == [0, 10]
-    assert matte_pieces(10, 20, 40) == [10]
-    assert matte_pieces(35, 45, 38) == [30]
-    assert matte_pieces(25, 25, 40) == [20]
+    assert matte_pieces(0, 8, 8, 25) == [0]
+    assert matte_pieces(9.5, 10.5, 40, 25) == [0, 10]
+    assert matte_pieces(10, 20, 40, 25) == [10]
+    assert matte_pieces(35, 45, 38, 25) == [30]
+    assert matte_pieces(25, 25, 40, 25) == [20]
+    # By frame: a frame held within half a frame before a piece is that piece's first, and a range
+    # ending just past a piece's first frame reads it.
+    assert matte_pieces(19.99, 19.99, 40, 25) == [20]
+    assert matte_pieces(15, 20.01, 40, 25) == [10, 20]
 
 
 # Seam A: the API, the runner and the real ffmpeg, with the fake matter

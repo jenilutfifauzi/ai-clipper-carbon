@@ -25,9 +25,16 @@ the editor to poll; a save that switches Background removal on or changes a rang
 render makes the pieces it still lacks itself, in the Worker (`MatteRunner.make`), one at a time with
 the runner.
 
-The pieces no Candidate of the Job nor any state in their Revision History reads are removed when the
-Job is opened (`MatteRunner.sweep`, as Retimed copies are), never one being made; those of another
-matter version are read by none. Removing the person model removes every Matte.
+A reversed Segment (docs/adr/0009) reads its Matte from a reversed copy of its range (`Reversed`),
+made from the pieces as its picture's Retimed copy is from the Source (app/retimed.py's
+`_reverse_in_pieces`, in the same pieces, so that it holds the same frames), after them, by the runner
+or a render. One size serves both the preview and the render: the Matte's own. The copies are kept in a
+folder of their subject and version (`person-rvm-mnv3-2/reversed-full-1500-4250.mp4`), named as
+Retimed copies are, and any copy of a wider range serves (`Copy.at`).
+
+The pieces and copies no Candidate of the Job nor any state in their Revision History reads are
+removed when the Job is opened (`MatteRunner.sweep`, as Retimed copies are), never one being made;
+those of another matter version are read by none. Removing the person model removes every Matte.
 """
 
 import math
@@ -116,12 +123,30 @@ class PieceState(StrEnum):
     FAILED = "failed"
 
 
-def matte_pieces(start: float, end: float, duration: float) -> list[int]:
-    """The starts of the pieces of a Matte of an item `duration` seconds long that hold its time from
-    `start` to `end` (a held frame's: from its frame, a moment)."""
-    end = min(max(end, start + 1e-3), duration)
-    first = int(start // PIECE_SECS) * PIECE_SECS
-    return [piece for piece in range(first, math.ceil(round(end, 6)), PIECE_SECS) if piece < duration]
+@dataclass(frozen=True)
+class Reversed:
+    """A reversed copy of a Matte's range from `start` to `end` seconds of its item (a reversed
+    Segment's, docs/adr/0009), as the runner asks for, makes and reports on it beside the pieces."""
+
+    start: float
+    end: float
+
+
+# What the runner makes: a piece, by its start, or a reversed copy.
+Part = int | Reversed
+
+
+def matte_pieces(start: float, end: float, duration: float, fps: float) -> list[int]:
+    """The starts of the pieces of a Matte of an item `duration` seconds long at `fps` frames a second
+    that hold its frames from `start` to `end` (a held frame's: from its frame, a moment), chosen by
+    frame as `matte_frame` chooses one: from the frame the preview shows at `start` (`round(start ×
+    fps)`) to the last the render reads (the last before `end`; a held frame's, the first at or after
+    `start`), so that a time rounded into the next piece reads it."""
+    fps = fps if fps > 0 else 30
+    final = max(1, round(duration * fps)) - 1
+    first = min(math.floor(start * fps + 0.5), final)
+    last = min(max(first, math.ceil(start * fps - 1e-6), math.ceil(min(end, duration) * fps - 1e-6) - 1), final)
+    return list(range(matte_frame(first / fps, fps)[0], matte_frame(last / fps, fps)[0] + 1, PIECE_SECS))
 
 
 def matte_frame(source: float, fps: float) -> tuple[int, int]:
@@ -157,8 +182,32 @@ class Mattes:
         scale = min(1.0, MATTE_SIDE / max(width, height))
         return max(2, 2 * round(width * scale / 2)), max(2, 2 * round(height * scale / 2))
 
-    def path(self, subject: Subject, version: str, piece: int) -> Path:
+    def path(self, subject: Subject, version: str, piece: Part) -> Path:
+        """A piece's file; a reversed copy's, the one serving it (`reversed_copy`)."""
+        if isinstance(piece, Reversed):
+            return self.reversed_copy(subject, version, piece)[0]
         return self.folder / f"{subject}-{version}-{piece}.mp4"
+
+    def copies(self, subject: Subject, version: str) -> Path:
+        """The folder of the Matte's reversed copies (app/retimed.py's names) by the matter `version`."""
+        return self.folder / f"{subject}-{version}"
+
+    def reversed_copy(self, subject: Subject, version: str, part: Reversed) -> tuple[Path, float]:
+        """The reversed copy serving `part`: the smallest there is of a range holding it, else the one
+        it is made as; and seconds into it where it shows `part`'s range (from its range's end less
+        `part`'s end, `Copy.at`)."""
+        # Here: app.retimed imports the planner, which imports this module.
+        from app.retimed import Copies, Copy, CopySize, Retime
+
+        folder = self.copies(subject, version)
+        retime = Retime(part.start, part.end)
+        copy = Copies(folder, {}, None).find(CopySize.FULL, retime)
+        if copy is None:
+            name = retime.name(CopySize.FULL)
+            named = Retime.named(name)
+            assert named is not None
+            copy = Copy(folder / name, CopySize.FULL, named[1])
+        return copy.path, copy.at(part.start, part.end)
 
     def failure(self, subject: Subject, version: str, piece: int) -> str | None:
         """Why the piece couldn't be made, until a Retry; None when it hasn't failed."""
@@ -168,7 +217,7 @@ class Mattes:
         except OSError:
             return None
 
-    def retry(self, subject: Subject, version: str, pieces: Iterable[int]) -> None:
+    def retry(self, subject: Subject, version: str, pieces: Iterable[Part]) -> None:
         """Forget the pieces' failures, so that they are made again."""
         for piece in pieces:
             self.path(subject, version, piece).with_suffix(".failed").unlink(missing_ok=True)
@@ -181,15 +230,23 @@ class Mattes:
         return max(1, round(end * fps) - round(start * fps)), round(start * fps) - round(warm * fps)
 
     def make(
-        self, ffmpeg: Path, matter: Matter, subject: Subject, piece: int, progress: Callable[[float], None] = lambda done: None, nice: bool = False
+        self, ffmpeg: Path, matter: Matter, subject: Subject, piece: Part, progress: Callable[[float], None] = lambda done: None, nice: bool = False
     ) -> Path:
         """The piece from `piece`, made now by `matter` if it isn't there, its `progress` reported from 0
-        to 1. A failure is remembered beside it (`failure`) and raised as a RuntimeError."""
+        to 1; or a reversed copy, made from its pieces (PiecesMissing until they are all there). A
+        failure is remembered beside it (`failure`) and raised as a RuntimeError."""
         target = self.path(subject, matter.version, piece)
         if target.is_file():
             return target
+        if isinstance(piece, Reversed):
+            pieces = matte_pieces(piece.start, piece.end, self.duration, self.frame[2])
+            if missing := [p for p in pieces if not self.path(subject, matter.version, p).is_file()]:
+                raise PiecesMissing(f"the Matte's pieces from {', '.join(f'{p} s' for p in missing)} aren't made yet")
         try:
-            self._made(ffmpeg, matter, piece, target, progress, nice)
+            if isinstance(piece, Reversed):
+                self._reversed(ffmpeg, subject, matter.version, piece, target, progress, nice)
+            else:
+                self._made(ffmpeg, matter, piece, target, progress, nice)
         except Exception as exc:
             message = str(exc) or type(exc).__name__
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -256,6 +313,55 @@ class Mattes:
         progress(1.0)
 
 
+    def _reversed(
+        self, ffmpeg: Path, subject: Subject, version: str, part: Reversed, target: Path, progress: Callable[[float], None], nice: bool
+    ) -> None:
+        """Write the reversed copy of `part` to `target`: its pieces joined (losslessly, a frame after
+        another at the item's rate, so that a time in them is the item's less their first frame's), with
+        the item's own sound of that time if it has any, then reversed as the item's own Retimed copy of
+        the range is (`_reverse_in_pieces`, in pieces as long), so that its frames are the same ones in
+        the same places. The sound matters: a range starting within a frame starts the picture of a
+        copy with sound up to a frame after its start, and the Matte's must start alike."""
+        from app.retimed import CopySize, Retime, _reverse_in_pieces, piece_secs
+
+        width, height = self.size()
+        fps = self.frame[2]
+        pieces = matte_pieces(part.start, part.end, self.duration, fps)
+        shift = round(pieces[0] * fps) / fps
+        run = ["nice", "-n", "10"] if nice else []
+        base = [str(ffmpeg), "-hide_banner", "-nostdin", "-v", "error", "-y"]
+        rate = Fraction(fps).limit_denominator(1001)
+        with tempfile.TemporaryDirectory() as work, tempfile.TemporaryFile() as errors:
+            joined = Path(work) / "joined.mkv"
+            count = sum(self.frames(piece)[0] for piece in pieces)
+            encode = [
+                *run, *base, "-f", "rawvideo", "-pixel_format", "yuv420p", "-video_size", f"{width}x{height}", "-framerate", str(rate),
+                "-i", "pipe:0", "-ss", f"{shift:.6f}", "-i", str(self.video), "-map", "0:v:0", "-map", "1:a:0?",
+                "-t", f"{count / fps:.6f}", "-c:v", "ffv1", "-c:a", "pcm_s16le", str(joined),
+            ]
+            encoder = subprocess.Popen(encode, stdin=subprocess.PIPE, stderr=errors)
+            assert encoder.stdin is not None
+            try:
+                for piece in pieces:
+                    decode = [*run, *base, "-i", str(self.path(subject, version, piece)), "-f", "rawvideo", "-pix_fmt", "yuv420p", "pipe:1"]
+                    subprocess.run(decode, stdout=encoder.stdin, stderr=errors, check=True)
+                encoder.stdin.close()
+                encoder.wait()
+            finally:
+                if encoder.poll() is None:
+                    encoder.kill()
+                    encoder.wait()
+            if encoder.returncode:
+                errors.seek(0)
+                raise RuntimeError(f"ffmpeg couldn't join the Matte's pieces: {_last_line(errors.read())}")
+            retime = Retime(max(0.0, part.start - shift), part.end - shift)
+            _reverse_in_pieces(ffmpeg, joined, retime, CopySize.FULL, target, fps, piece_secs(*self.frame), progress, 0, nice, encode=_ENCODE)
+
+
+class PiecesMissing(RuntimeError):
+    """A reversed copy of a Matte was asked for before its pieces were made (or while one has failed)."""
+
+
 @dataclass(frozen=True)
 class MatteStatus:
     """How the Matte of a range is coming along: `state` "ready" (every piece there), "making" (some
@@ -288,7 +394,7 @@ class MatteRunner:
         self._loaded: Matter | None = None
         self._changed = threading.Condition()
         # Requests waiting, latest last: each its pieces, in order.
-        self._requests: list[list[tuple[Mattes, Subject, int]]] = []
+        self._requests: list[list[tuple[Mattes, Subject, Part]]] = []
         # The piece the runner is making, and how far it has got.
         self._making: tuple[Path, float] | None = None
         self._thread: threading.Thread | None = None
@@ -305,7 +411,7 @@ class MatteRunner:
         """Whether the person model is downloaded, so that pieces can be made."""
         return self.model is not None and self.model.installed
 
-    def state(self, mattes: Mattes, subject: Subject, piece: int) -> tuple[PieceState, float, str | None]:
+    def state(self, mattes: Mattes, subject: Subject, piece: Part) -> tuple[PieceState, float, str | None]:
         """The piece's state, with its progress from 0 to 1 and a failed one's message."""
         if mattes.path(subject, self.version, piece).is_file():
             return PieceState.READY, 1.0, None
@@ -319,7 +425,7 @@ class MatteRunner:
                 return PieceState.QUEUED, 0.0, None
         return PieceState.MISSING, 0.0, None
 
-    def status(self, wanted: Iterable[tuple[Mattes, Subject, int]]) -> MatteStatus:
+    def status(self, wanted: Iterable[tuple[Mattes, Subject, Part]]) -> MatteStatus:
         """How the pieces `wanted` are coming along together."""
         states = [self.state(*piece) for piece in wanted]
         if not states:
@@ -333,7 +439,7 @@ class MatteRunner:
             return MatteStatus("making", progress)
         return MatteStatus("missing" if self.ready() else "waiting", progress)
 
-    def ask(self, wanted: Iterable[tuple[Mattes, Subject, int]]) -> None:
+    def ask(self, wanted: Iterable[tuple[Mattes, Subject, Part]]) -> None:
         """Queue the pieces `wanted` that are missing (not there, not failed, not being made) as the
         latest request, ahead of those asked for before (which lose them). Nothing waits for the person
         model: it is asked again once there is one."""
@@ -351,14 +457,14 @@ class MatteRunner:
                 self._thread.start()
             self._changed.notify_all()
 
-    def retry(self, wanted: Iterable[tuple[Mattes, Subject, int]]) -> None:
+    def retry(self, wanted: Iterable[tuple[Mattes, Subject, Part]]) -> None:
         """Forget the failures of the pieces `wanted`, and ask for them again."""
         wanted = list(wanted)
         for mattes, subject, piece in wanted:
             mattes.retry(subject, self.version, [piece])
         self.ask(wanted)
 
-    def make(self, wanted: Iterable[tuple[Mattes, Subject, int]], progress: Callable[[float], None] = lambda done: None) -> list[Path]:
+    def make(self, wanted: Iterable[tuple[Mattes, Subject, Part]], progress: Callable[[float], None] = lambda done: None) -> list[Path]:
         """The pieces `wanted`, in order, made now in this thread where they aren't there (a render's,
         in the Worker), one at a time with the runner, `progress` reported from 0 to 1 over those made.
         ModelAbsent without the person model; a RuntimeError with the message of a piece that fails,
@@ -390,15 +496,22 @@ class MatteRunner:
             self._one.release()
 
     def sweep(self, folder: Path, used: Iterable[Path]) -> list[Path]:
-        """Remove the pieces in `folder` (a Matte's: its item's MATTES_DIR) that aren't `used` (their
-        paths, at this matter's version: another's are never read), with unused pieces' failures and
-        the parts pieces cut short left there, but nothing a piece being made is writing now. The
-        paths removed."""
+        """Remove the pieces and reversed copies in `folder` (a Matte's: its item's MATTES_DIR) that
+        aren't `used` (their paths, at this matter's version: another's are never read, their copies'
+        folders removed whole), with unused ones' failures and the parts pieces and copies cut short
+        left there, but nothing a piece or copy being made is writing now. The paths removed."""
         used = set(used)
         removed = []
         with self._changed:
             for path in sorted(folder.iterdir()) if folder.is_dir() else ():
                 name = path.name
+                if path.is_dir() and not name.startswith("."):
+                    if name.endswith(f"-{self.version}"):
+                        removed += self._sweep_copies(path, used)
+                    else:
+                        shutil.rmtree(path, ignore_errors=True)
+                        removed.append(path)
+                    continue
                 if name.startswith(".") and name.endswith(".part.mp4"):
                     # `.{piece's stem}.{uuid}.part.mp4`
                     piece = path.with_name(name[1:-len(".part.mp4")].rsplit(".", 1)[0] + ".mp4")
@@ -410,6 +523,19 @@ class MatteRunner:
                     continue
                 path.unlink(missing_ok=True)
                 removed.append(path)
+        return removed
+
+    def _sweep_copies(self, folder: Path, used: set[Path]) -> list[Path]:
+        """Remove the reversed copies in `folder` (one subject's, at this version) that aren't `used`,
+        with their failures, as Retimed copies are swept (`retimed.sweep`: never one being made)."""
+        from app import retimed
+
+        kept = [named for path in used if path.parent == folder and (named := retimed.Retime.named(path.name)) is not None]
+        removed = retimed.sweep(folder, kept)
+        for failed in sorted(folder.glob("*.failed")):
+            if failed.with_suffix(".mp4") not in used and failed.with_suffix(".mp4") not in self._writing:
+                failed.unlink(missing_ok=True)
+                removed.append(failed)
         return removed
 
     @contextmanager

@@ -15,7 +15,7 @@ from app.candidates import Candidate, WordEdit
 from app.config import BLAZE_FACE_MODEL, Settings
 from app.jobs import Job
 from app.layer_pictures import PICTURES_DIR, make_pictures
-from app.matte import MATTES_DIR
+from app.matte import MATTES_DIR, Mattes, Reversed
 from app.logos import LogoStore
 from app.media import MediaStore
 from app.media_words import MediaWordsStatus, MediaWordsStore
@@ -92,6 +92,19 @@ class MattePiece:
 
 
 @dataclass(frozen=True)
+class MatteCopy:
+    """The reversed copy of the Source's Matte a reversed cut-out Segment playing its range from
+    `start` to `end` reads (app/matte.py's `Reversed`), where the preview reads it (served once it is
+    made: the one serving it, of a wider range if there is one), and seconds into it where it shows
+    the range (`at`, as a Retimed copy's)."""
+
+    start: float
+    end: float
+    url: str
+    at: float
+
+
+@dataclass(frozen=True)
 class PreviewPlan:
     plan: RenderPlan
     # Those whose middle is in the Clip.
@@ -106,6 +119,8 @@ class PreviewPlan:
     # The Matte pieces its cut-out Segments read (docs/adr/0015), in order: the preview draws the cut
     # from them, and each Segment's picture whole where its piece isn't served yet.
     mattes: list[MattePiece] = field(default_factory=list)
+    # The reversed copies of the Matte its reversed cut-out Segments read, each once.
+    matte_copies: list[MatteCopy] = field(default_factory=list)
 
 
 def captions_pending(preview: PreviewPlan) -> bool:
@@ -212,7 +227,24 @@ def preview_plan(
         at += played.length
     analysed = all(analysis is not None for analysis, wanted in zip(analyses, needed) if wanted is not Analysis.NONE)
     mattes = preview_mattes(plan, job.id, matte_version) if matte_version else []
-    return PreviewPlan(plan, shown, words_source, status, errors, analysed=analysed, mattes=mattes)
+    copies = preview_matte_copies(plan, job.id, job_dir / MATTES_DIR, matte_version) if matte_version else []
+    return PreviewPlan(plan, shown, words_source, status, errors, analysed=analysed, mattes=mattes, matte_copies=copies)
+
+
+def preview_matte_copies(plan: RenderPlan, job_id: str, folder: Path, version: str) -> list[MatteCopy]:
+    """The reversed copies of the Matte in `folder` (the Job's MATTES_DIR) that `plan`'s reversed
+    cut-out Segments of the Source read, made by the matter `version`, each once, and where the Job's
+    media serves them."""
+    mattes = Mattes(folder, folder, (0, 0, 0.0), 0.0)
+    copies = {}
+    for segment in plan.segments:
+        if segment.background_removal is None or segment.media is not None or not segment.reverse or segment.hold is not None:
+            continue
+        part = Reversed(segment.source_start, segment.source_end)
+        path, at = mattes.reversed_copy(segment.background_removal.subject, version, part)
+        url = f"/media/{job_id}/{MATTES_DIR}/{path.relative_to(folder).as_posix()}"
+        copies[(part.start, part.end)] = MatteCopy(part.start, part.end, url, at)
+    return list(copies.values())
 
 
 def preview_mattes(plan: RenderPlan, job_id: str, version: str) -> list[MattePiece]:
