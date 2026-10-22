@@ -136,6 +136,7 @@ export function OverlayFields({
   onDuplicate,
   onDelete,
   onCropMode,
+  removeBackground,
   color,
   pictureEffects,
   effects,
@@ -155,6 +156,8 @@ export function OverlayFields({
   onDelete: () => void;
   // Crop mode on the stage, when it can be opened there.
   onCropMode?: () => void;
+  // Its Remove background section (RemoveBackgroundFields), before its Color section: the Matte comes before the Grade.
+  removeBackground?: ReactNode;
   // Its Color section (ColorFields: its Grade's dials).
   color?: ReactNode;
   // Its picture's Video Effects section (VideoEffectsFields), after its Color section.
@@ -201,6 +204,7 @@ export function OverlayFields({
         blend={<BlendModeField value={overlay.blend ?? "normal"} onChange={(blend) => onChange(reblended(overlay, blend), `overlay:${overlay.id}:blend`)} />}
       />
       <DecorationFields overlay={overlay} onChange={onChange} />
+      {removeBackground}
       {color}
       {pictureEffects}
       <MotionFields item={overlay} kind="overlay" onChange={onChange} />

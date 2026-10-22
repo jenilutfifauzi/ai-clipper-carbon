@@ -329,6 +329,13 @@ export interface KokoroInfo {
   message: string | null;
 }
 
+// The person model on this Mac (backend/app/person_model.py), which makes Background removal's Matte:
+// as KokoroInfo, with its `name` and `licence` for the Inspector ("Person model (15 MB, GPL-3.0)").
+export interface PersonModelInfo extends KokoroInfo {
+  name: string;
+  licence: string;
+}
+
 export interface VoicesList {
   engines: VoiceEngine[];
   // The engine a Job in the language asked for starts with; null when none is ready.
@@ -1851,6 +1858,14 @@ export const api = {
   cancelKokoroDownload: () => request<void>("/voices/kokoro/download", { method: "DELETE" }),
   // Removes Kokoro's model from this Mac. Rejects with a 409 while a Narration or sample is being made.
   removeKokoro: () => request<void>("/voices/kokoro", { method: "DELETE" }),
+  // The person model's state, polled while it downloads.
+  personModel: () => request<PersonModelInfo>("/models/person"),
+  // Starts downloading the person model in the background (nothing when it is here or downloading).
+  downloadPersonModel: () => request<PersonModelInfo>("/models/person/download", { method: "POST" }),
+  // Cancels the download, what it fetched kept for the next.
+  cancelPersonModelDownload: () => request<void>("/models/person/download", { method: "DELETE" }),
+  // Removes the person model from this Mac. Rejects with a 409 while it is being downloaded.
+  removePersonModel: () => request<void>("/models/person", { method: "DELETE" }),
   // A Narration started: its id, whose events tell its outcome (narrationEventsUrl). Rejects with a 409
   // while another is being made, a 422 for a script, engine or Voice that can't be narrated.
   startNarration: (body: NarrationRequest) =>

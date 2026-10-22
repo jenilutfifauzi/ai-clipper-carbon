@@ -16,6 +16,7 @@ import { audioEffectChanges, AudioEffectsFields } from "./AudioEffectsFields";
 import { videoEffectChanges, VideoEffectsFields } from "./VideoEffectsFields";
 import { AdjustmentLayerFields } from "./AdjustmentLayers";
 import { colorChanges, ColorFields } from "./ColorFields";
+import { RemoveBackground } from "./RemoveBackgroundFields";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
@@ -193,6 +194,8 @@ export function Inspector({
         }}
       />
     );
+    // Several Segments and Overlays: their Remove background section.
+    const cut = items.every((item) => item.kind === "segment" || item.kind === "overlay");
     // Several Segments, Overlays and Adjustment Layers: their Grades edited together.
     const graded = items.every((item) => item.kind === "segment" || item.kind === "overlay" || item.kind === "adjustment");
     // Those with sound: their Audio Effects edited together.
@@ -202,6 +205,7 @@ export function Inspector({
       <div className="flex flex-col gap-4">
         {summary}
         {blendField}
+        {cut && <RemoveBackground />}
         {graded && colorOf()}
         {graded && pictureEffectsOf()}
         {effects}
@@ -247,6 +251,7 @@ export function Inspector({
         playback={playback}
         span={segmentSpan(edits.segments, segment.id, track)}
         captions={segment.media && mediaById.get(segment.media) ? captionsOf?.(segment, mediaById.get(segment.media)!) : undefined}
+        removeBackground={<RemoveBackground />}
         color={colorOf()}
         pictureEffects={pictureEffectsOf()}
         effects={effectsOf()}
@@ -352,6 +357,7 @@ export function Inspector({
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
         onCropMode={cropMode?.("overlay", overlay.id)}
+        removeBackground={<RemoveBackground />}
         color={colorOf()}
         pictureEffects={pictureEffectsOf()}
         effects={effectsOf()}

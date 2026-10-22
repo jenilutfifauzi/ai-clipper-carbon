@@ -93,6 +93,9 @@ WAIT_MAX_SECS = 600
 # How long `get_media_words` waits by default for a video's Media Words, and how often it looks.
 MEDIA_WORDS_WAIT_SECS = 120
 MEDIA_WORDS_POLL_SECS = 0.25
+# How long `download_person_model` waits by default for the download, and how often it looks.
+MODEL_WAIT_SECS = 120
+MODEL_POLL_SECS = 0.25
 # How often merge_candidate_items and remove_candidate_items make their change again when another
 # edit saves first.
 STALE_RETRIES = 5
@@ -1014,6 +1017,18 @@ def build_mcp(app: FastAPI) -> MCPServer:
                 if event.event == "cancelled":
                     raise ToolError("The Narration was cancelled")
         raise ToolError("The Narration ended without an item")
+
+    @tool()
+    async def download_person_model(ctx: Context, timeout_secs: int = Field(MODEL_WAIT_SECS, ge=1, le=WAIT_MAX_SECS)) -> dict:
+        """Download the person model Background removal needs (RVM, 15 MB, GPL-3.0), resuming a cut one.
+        Gives its state: ready, failed (message), or downloading (done of total bytes) on timeout: call again."""
+        state = await api("POST", "/models/person/download")
+        deadline = asyncio.get_running_loop().time() + timeout_secs
+        while state["state"] == "downloading" and asyncio.get_running_loop().time() < deadline:
+            await ctx.report_progress(state["done"], state["total"], "Downloading the person model")
+            await asyncio.sleep(MODEL_POLL_SECS)
+            state = await api("GET", "/models/person")
+        return state
 
     @tool(destructive=True)
     async def delete_asset(kind: Literal["logo", "media", "font", "look"], asset_id: str) -> dict:

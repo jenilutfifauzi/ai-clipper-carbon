@@ -65,6 +65,7 @@ from app.fonts import MAX_UPLOAD_BYTES as MAX_FONT_BYTES, BadFont, BundledFace, 
 from app.effected import EFFECTED_DIR, NoCopy, copies_used as effected_used, effected_copy, sweep as sweep_effected
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.kokoro import KokoroBusy, KokoroModel
+from app.person_model import PersonModel, PersonModelBusy
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app import audio_effects, video_effects
@@ -201,6 +202,14 @@ def _kokoro(request: Request) -> KokoroModel:
     return model
 
 
+def _person_model(request: Request) -> PersonModel:
+    """The person model, or a 404 when this app doesn't offer it."""
+    model = request.app.state.person_model
+    if model is None:
+        raise HTTPException(404, "The person model isn't offered here")
+    return model
+
+
 def _media_words(request: Request) -> MediaWordsStore:
     return request.app.state.media_words
 
@@ -250,6 +259,7 @@ Media = Annotated[MediaStore, Depends(_media)]
 MediaWordsDep = Annotated[MediaWordsStore, Depends(_media_words)]
 Narrations = Annotated[NarrationRunner, Depends(_narrations)]
 Kokoro = Annotated[KokoroModel, Depends(_kokoro)]
+PersonModelDep = Annotated[PersonModel, Depends(_person_model)]
 FaceRegistry = Annotated[Faces, Depends(_faces)]
 ImportedLookStore = Annotated[ImportedLooks, Depends(_imported_looks)]
 EditBy = Annotated[Edit, Depends(_edit)]
@@ -2001,6 +2011,52 @@ def remove_kokoro(kokoro: Kokoro, narrations: Narrations) -> None:
             kokoro.remove()
             narrations.forget_samples("kokoro")
     except (NarrationBusy, KokoroBusy) as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+class PersonModelInfo(BaseModel):
+    """The person model on this Mac (app/person_model.py), as KokoroInfo, with its `name` and `licence`
+    for the Inspector ("Person model (15 MB, GPL-3.0)")."""
+
+    state: Literal["absent", "downloading", "ready", "failed"]
+    done: int
+    total: int
+    message: str | None
+    name: str
+    licence: str
+
+
+@router.get("/models/person")
+def person_model_state(model: PersonModelDep) -> PersonModelInfo:
+    """The person model's state: polled while it downloads."""
+    return PersonModelInfo(**model.state())
+
+
+@router.post("/models/person/download", status_code=202)
+def download_person_model(model: PersonModelDep) -> PersonModelInfo:
+    """Start downloading the person model (about 15 MB), in the background, taken up from what an
+    earlier download left; nothing when it is installed or being downloaded. 409 while a cancelled
+    download is still stopping."""
+    try:
+        model.download()
+    except PersonModelBusy as exc:
+        raise HTTPException(409, str(exc)) from None
+    return PersonModelInfo(**model.state())
+
+
+@router.delete("/models/person/download", status_code=204)
+def cancel_person_model_download(model: PersonModelDep) -> None:
+    """Cancel the download: it is told absent at once and stops at its next chunk, what it fetched kept
+    for the next download (which is refused, 409, until it has stopped)."""
+    model.cancel()
+
+
+@router.delete("/models/person", status_code=204)
+def remove_person_model(model: PersonModelDep) -> None:
+    """Remove the person model from this Mac. 409 while it is being downloaded."""
+    try:
+        model.remove()
+    except PersonModelBusy as exc:
         raise HTTPException(409, str(exc)) from None
 
 

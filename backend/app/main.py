@@ -64,6 +64,8 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     # One for the app: a Narration is made one at a time, whichever tab or agent asks. Kokoro, on this
     # Mac, after the cloud engines; its model downloaded one at a time, apart from the runner.
     app.state.kokoro = ports.kokoro
+    # The person model, for Background removal's Matte: downloaded from the Inspector or by the agent.
+    app.state.person_model = ports.person_model
     engines = [*ports.voices, *([KokoroSpeech(ports.kokoro)] if ports.kokoro else [])]
     app.state.narrations = NarrationRunner(
         media, engines, settings.ffmpeg_bin, settings.data_dir / NARRATIONS_DIR, samples_dir=settings.data_dir / VOICE_SAMPLES_DIR

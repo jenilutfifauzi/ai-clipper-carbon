@@ -127,6 +127,7 @@ export function SegmentFields({
   onReattach,
   scene,
   captions,
+  removeBackground,
   color,
   pictureEffects,
   effects,
@@ -166,6 +167,8 @@ export function SegmentFields({
   scene?: ReactNode;
   // A video's Segment's captions: its Captions switch, its video's language and its Words status.
   captions?: ReactNode;
+  // Its Remove background section (RemoveBackgroundFields), before its Color section: the Matte comes before the Grade.
+  removeBackground?: ReactNode;
   // Its Grade's Color section (ColorFields), last but its Video Effects.
   color?: ReactNode;
   // Its frame's Video Effects section (VideoEffectsFields), after its Color section.
@@ -296,6 +299,7 @@ export function SegmentFields({
           {scene}
         </>
       )}
+      {removeBackground}
       {color}
       {pictureEffects}
     </div>
