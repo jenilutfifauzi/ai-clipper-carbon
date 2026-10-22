@@ -1,3 +1,4 @@
+import { FEATHER_DEFAULT, FEATHER_MAX } from "../../../api";
 import type { Adjust, AdjustmentLayer, AudioEffect, AudioEffectKind, AudioEffectSetting, BlendMode, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind, VideoEffect, VideoEffectKind } from "../../../api";
 import { CLEAN_SWITCHES, isCleanSwitch, type CleanSwitchId } from "../../../audioEffects";
 import { adjusted, NEUTRAL_GRADE, relooked } from "../editor/grading";
@@ -1664,6 +1665,39 @@ export function setVideoEffectColour(scene: { edits: AdvancedEdits; pick: Pick }
 /** Remove all effects: every picked stack emptied, whether they are the same or Mixed. Null when none is picked or all are empty. */
 export function removeAllVideoEffects(scene: { edits: AdvancedEdits; pick: Pick }): Outcome | null {
   return repictured(scene, (stack) => (stack.length ? [] : stack));
+}
+
+/**
+ * The picked Segments that Background removal cuts out (ADR 0015): those of the Source. A media Segment's
+ * and an Overlay's come with their Matte beside their item (background-removal/06).
+ */
+export const cuttableSegments = ({ edits, pick }: { edits: AdvancedEdits; pick: Pick }): ClipSegment[] =>
+  edits.segments.filter((segment) => !segment.media && isPicked(pick, "segment", segment.id));
+
+/**
+ * Every picked Segment of the Source's Background removal switched on (a person, feathered by
+ * FEATHER_DEFAULT) or off (the field left out), as one change; null when none is picked or none changes.
+ */
+export function setBackgroundRemoval(scene: { edits: AdvancedEdits; pick: Pick }, on: boolean): Outcome | null {
+  const picked = cuttableSegments(scene);
+  if (picked.every((segment) => !!segment.background_removal === on)) return null;
+  const segments = scene.edits.segments.map((segment) => {
+    if (!picked.includes(segment) || !!segment.background_removal === on) return segment;
+    const { background_removal: _was, ...rest } = segment;
+    return on ? { ...rest, background_removal: { subject: "person" as const, feather: FEATHER_DEFAULT } } : rest;
+  });
+  return { edits: { ...scene.edits, segments }, pick: scene.pick };
+}
+
+/** Every picked cut-out Segment's feather set (0 to FEATHER_MAX, whole pixels), as one change; null when none changes. */
+export function setFeather(scene: { edits: AdvancedEdits; pick: Pick }, feather: number): Outcome | null {
+  const value = Math.min(FEATHER_MAX, Math.max(0, Math.round(feather)));
+  const picked = cuttableSegments(scene).filter((segment) => segment.background_removal && segment.background_removal.feather !== value);
+  if (!picked.length) return null;
+  const segments = scene.edits.segments.map((segment) =>
+    picked.includes(segment) && segment.background_removal ? { ...segment, background_removal: { ...segment.background_removal, feather: value } } : segment,
+  );
+  return { edits: { ...scene.edits, segments }, pick: scene.pick };
 }
 
 // The picked Overlays, which a Blend Mode is set on (ADR 0014).

@@ -31,7 +31,7 @@ The `background-removal` feature (roadmap #13, `.scratch/advanced-edit-v2/roadma
   - On an Overlay it may join a Chroma or Luma key, and their alphas multiply.
   - "Cutout" stays the name of the keys' category. The UI calls this "Remove background", in an Inspector section (and the phone's sheet). It has no Effects tab card and no hover try-on.
 - **The Matte is computed ahead, by RVM, at every frame.**
-  - It is made from the Source or the media item at a 1280 px long edge, through onnxruntime with CoreML ahead of the CPU.
+  - It is made from the Source or the media item at a 1280 px long edge (a smaller one at its own size), through onnxruntime with CoreML ahead of the CPU.
   - It is kept as grayscale video pieces of 10 s on the item's own timeline, each run with 1 s of warm-up for RVM's recurrent state. A still image gets one PNG.
   - Every Segment, Overlay and Candidate showing that time reads the same pieces, so trims, splits and other Candidates reuse them.
   - The pieces are swept, as Retimed copies are, when no Candidate nor its Revision History needs them. Removing the model removes every Matte.

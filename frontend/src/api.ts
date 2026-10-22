@@ -336,6 +336,19 @@ export interface PersonModelInfo extends KokoroInfo {
   licence: string;
 }
 
+// How a Matte is coming along (backend/app/matte.py): made, being made, waiting for the person model,
+// failed (its `error`, until a Retry) or not asked for; `progress` 0 to 1 over its pieces.
+export interface MattePart {
+  state: "ready" | "making" | "waiting" | "failed" | "missing";
+  progress: number;
+  error: string | null;
+}
+
+// The Matte of a saved Candidate's cut-out Segments together, and each one's by its id.
+export interface CandidateMatte extends MattePart {
+  segments: Record<string, MattePart>;
+}
+
 export interface VoicesList {
   engines: VoiceEngine[];
   // The engine a Job in the language asked for starts with; null when none is ready.
@@ -1057,6 +1070,12 @@ export interface SegmentPlan extends Retiming {
   audio_effects?: AudioEffect[];
   // Its frame's enabled Video Effects (ADR 0014), in order, after its Grade; sizes the 1080x1920 frame's.
   video_effects?: VideoEffect[];
+  // A cut-out Source Segment's (ADR 0015): its Background removal, the feather as drawn (times its
+  // picture's scale); the Background in force (the picture blurred); and the pieces of the Source's
+  // Matte it reads, by their starts in seconds (10 s each).
+  background_removal?: BackgroundRemoval | null;
+  background?: Background | null;
+  matte?: number[];
 }
 
 export interface RenderPlan {
@@ -1210,7 +1229,19 @@ export interface ClipSegment extends Retiming {
   // Its whole frame's Video Effects (ADR 0014), in order, after its Grade and before the joins; sizes
   // the 1080x1920 frame's. Empty when missing.
   video_effects?: VideoEffect[];
+  // Its Background removal (ADR 0015): only its subject kept by its Matte, over its Background. Off when missing.
+  background_removal?: BackgroundRemoval | null;
 }
+
+// Background removal (GLOSSARY; ADR 0015): the subject kept (a person, for now), its edge softened by
+// `feather` output pixels at the picture's fitted size, 0 to FEATHER_MAX.
+export interface BackgroundRemoval {
+  subject: "person";
+  feather: number;
+}
+
+export const FEATHER_MAX = 40;
+export const FEATHER_DEFAULT = 4;
 
 // An Audio Effect applied to an item's sound (GLOSSARY: Audio Effect; ADR 0017): a catalogue
 // effect's `id`, its settings by key (the server fills in each one left out with its default), and
@@ -1866,6 +1897,10 @@ export const api = {
   cancelPersonModelDownload: () => request<void>("/models/person/download", { method: "DELETE" }),
   // Removes the person model from this Mac. Rejects with a 409 while it is being downloaded.
   removePersonModel: () => request<void>("/models/person", { method: "DELETE" }),
+  // How the saved Candidate's Matte is coming along, its missing pieces asked for; with `retry`, its
+  // failed pieces made again. Polled by the Remove background section.
+  candidateMatte: (jobId: string, candidateId: string, retry = false) =>
+    request<CandidateMatte>(`/jobs/${jobId}/candidates/${candidateId}/matte`, { method: "POST", body: JSON.stringify({ retry }) }),
   // A Narration started: its id, whose events tell its outcome (narrationEventsUrl). Rejects with a 409
   // while another is being made, a 422 for a script, engine or Voice that can't be narrated.
   startNarration: (body: NarrationRequest) =>

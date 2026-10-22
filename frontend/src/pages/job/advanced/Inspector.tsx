@@ -16,7 +16,7 @@ import { audioEffectChanges, AudioEffectsFields } from "./AudioEffectsFields";
 import { videoEffectChanges, VideoEffectsFields } from "./VideoEffectsFields";
 import { AdjustmentLayerFields } from "./AdjustmentLayers";
 import { colorChanges, ColorFields } from "./ColorFields";
-import { RemoveBackground } from "./RemoveBackgroundFields";
+import { backgroundRemovalChanges, RemoveBackground } from "./RemoveBackgroundFields";
 import type { AdvancedEdits } from "./edits";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
@@ -67,6 +67,7 @@ export function Inspector({
   effectsPreparing,
   effectsElsewhere = false,
   videoEffectsShown = true,
+  matte,
 }: {
   pick: Pick;
   edits: AdvancedEdits;
@@ -114,6 +115,8 @@ export function Inspector({
   effectsElsewhere?: boolean;
   // Whether the Video Effects section is shown: on a desktop only (a phone plays them, not edits them).
   videoEffectsShown?: boolean;
+  // The Job and Candidate whose Matte the Remove background section follows (ADR 0015).
+  matte?: { job: string; candidate: string };
 }) {
   const splittable = usePlayback(playback, (time) => actions?.canSplit(time) ?? false);
   const only = onlyItem(pick);
@@ -136,6 +139,10 @@ export function Inspector({
     const index = edits.segments.findIndex((segment) => segment.id === detached_from);
     return detached_from && index !== -1 && detaching ? { index, onReattach: () => detaching.reattach(detached_from) } : undefined;
   };
+
+  // The picked Segments' and Overlays' Remove background section: the Source Segments' switch and
+  // feather (each one change) and their Matte's progress, and the person model.
+  const removeBackgroundOf = () => <RemoveBackground removal={backgroundRemovalChanges({ edits, pick }, onEdits)} matte={matte} />;
 
   // The picked Segments', Overlays' and Adjustment Layers' Color section: a dial set on all of them, or all reset, each one change.
   const colorOf = () => <ColorFields {...colorChanges({ edits, pick }, onEdits)} />;
@@ -205,7 +212,7 @@ export function Inspector({
       <div className="flex flex-col gap-4">
         {summary}
         {blendField}
-        {cut && <RemoveBackground />}
+        {cut && removeBackgroundOf()}
         {graded && colorOf()}
         {graded && pictureEffectsOf()}
         {effects}
@@ -251,7 +258,7 @@ export function Inspector({
         playback={playback}
         span={segmentSpan(edits.segments, segment.id, track)}
         captions={segment.media && mediaById.get(segment.media) ? captionsOf?.(segment, mediaById.get(segment.media)!) : undefined}
-        removeBackground={<RemoveBackground />}
+        removeBackground={removeBackgroundOf()}
         color={colorOf()}
         pictureEffects={pictureEffectsOf()}
         effects={effectsOf()}
@@ -357,7 +364,7 @@ export function Inspector({
         onDuplicate={actions.duplicate}
         onDelete={actions.remove}
         onCropMode={cropMode?.("overlay", overlay.id)}
-        removeBackground={<RemoveBackground />}
+        removeBackground={removeBackgroundOf()}
         color={colorOf()}
         pictureEffects={pictureEffectsOf()}
         effects={effectsOf()}
