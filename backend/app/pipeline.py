@@ -7,7 +7,7 @@ import hashlib
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 
@@ -17,6 +17,7 @@ from app.config import LlmChoice, Settings
 from app.fewshot import FEWSHOT_DIR, few_shot_examples
 from app.jobs import TRANSCRIPT_FILE, Job, JobConflict, JobStatus, JobStore, JobWarning, QuotaWait
 from app.llm import DetailResponse, Llm, LlmRequest, Overloaded, PacedLlm, QuotaExceeded, ScoreResponse
+from app.media import MEDIA_DIR, MediaStore
 from app.ports import Ports
 from app.preview import make_preview, unplayable
 from app.prompts import PROMPT_VERSION
@@ -36,13 +37,18 @@ DOWNLOAD_HINT = "If YouTube changed something, updating the downloader may fix i
 
 
 class Pipeline:
-    def __init__(self, store: JobStore, ports: Ports, settings: Settings, templates: TemplateStore | None = None) -> None:
+    def __init__(
+        self, store: JobStore, ports: Ports, settings: Settings, templates: TemplateStore | None = None,
+        lengths: Callable[[], Mapping[str, float]] | None = None,
+    ) -> None:
         """`templates`: the owner's Templates, of which each Job's new Candidates get its own (those
-        in the data directory by default)."""
+        in the data directory by default); `lengths`: the Media Library's songs' and videos' lengths,
+        which a Template's stop at (the data directory's by default)."""
         self.store = store
         self.ports = ports
         self.settings = settings
         self.templates = templates or TemplateStore(settings.data_dir / TEMPLATES_FILE)
+        self.lengths = lengths or MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin).lengths
         self.llm = PacedLlm(ports.llm, settings.quota.request_interval_secs)
         # The Video Source of uploaded Jobs. It only reads the stored file, so tests use it as it is.
         self.uploads = UploadVideoSource(settings)
@@ -315,7 +321,8 @@ class Pipeline:
         fresh = selection.candidates
         template, notices = self.templates.for_new_candidates(job.options.template)
         if template is not None:
-            fresh = branded(template, fresh, Episode(transcript, job.source.metadata.duration, job.options.max_secs, self.settings.selection))
+            episode = Episode(transcript, job.source.metadata.duration, job.options.max_secs, self.settings.selection)
+            fresh = branded(template, fresh, episode, self.lengths())
         if notices:
             told = [JobWarning(JobStatus.ANALYZING, notice) for notice in notices]
             job = self.store.update(job.id, warnings=[*self.store.get(job.id).warnings, *told])

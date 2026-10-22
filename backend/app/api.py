@@ -1383,6 +1383,7 @@ def add_candidate(
     store: Store,
     settings: AppSettings,
     templates: Templates,
+    library: Media,
     edit: EditBy,
     after_save: AfterSave,
 ) -> Candidate:
@@ -1393,7 +1394,7 @@ def add_candidate(
     def add(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], Candidate]:
         candidates, new = review.add_manual(candidates, body.start, body.end, episode)
         if template is not None:
-            [new] = branded(template, [new], episode)
+            [new] = branded(template, [new], episode, library.lengths())
             candidates = [new if candidate.id == new.id else candidate for candidate in candidates]
         return candidates, new
 
@@ -1801,18 +1802,20 @@ def apply_template(
     settings: AppSettings,
     presets: Presets,
     templates: Templates,
+    library: Media,
     edit: EditBy,
     after_save: AfterSave,
 ) -> TemplateApplied:
     """Apply a Template (or with None, "No Template") to the Candidates `candidate_ids`, in one change
     of the Job: each changed one gets its next Revision and a state in its Revision History, or, with
     `dry_run`, nothing is saved. The notices count the Template items replaced that were changed by
-    hand, or whose Template is gone. 404 for an unknown Template, or for an unknown Candidate (then none is changed); 409 unless the
+    hand, or whose Template is gone, and its songs and videos stopped at their ends. 404 for an unknown Template, or for an unknown Candidate (then none is changed); 409 unless the
     Job is in review or rendering."""
     named = {template.id: template for template in templates.all()}
     if body.template_id is not None and body.template_id not in named:
         raise HTTPException(404, f"No Template {body.template_id}")
     template = None if body.template_id is None else named[body.template_id]
+    lengths = library.lengths()
 
     def change(candidates: list[Candidate], episode: Episode) -> tuple[list[Candidate], list[AppliedTemplate]]:
         results = []
@@ -1820,7 +1823,7 @@ def apply_template(
             current = next((candidate for candidate in candidates if candidate.id == candidate_id), None)
             if current is None:
                 raise CandidateNotFound(candidate_id)
-            applied = apply_template_to(template, current, named)
+            applied = apply_template_to(template, current, named, lengths)
             candidates, saved = review.update(candidates, candidate_id, applied.change, episode, presets.join_transition)
             revision = current.revision if body.dry_run else saved.revision
             results.append(AppliedTemplate(candidate_id, revision, _edits_of(applied.change), applied.notices))

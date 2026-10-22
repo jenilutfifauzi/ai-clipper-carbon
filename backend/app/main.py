@@ -42,7 +42,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     media_words = MediaWordsStore(settings.data_dir / MEDIA_DIR, settings.whisper_model)
     renders = Renders(store, settings, ports.transcriber, media_words)
     templates = TemplateStore(settings.data_dir / TEMPLATES_FILE)
-    worker = Worker(store, Pipeline(store, ports, settings, templates), renders)
+    worker = Worker(store, Pipeline(store, ports, settings, templates, media.lengths), renders)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

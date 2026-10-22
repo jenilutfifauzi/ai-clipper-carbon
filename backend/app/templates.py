@@ -27,6 +27,7 @@ from pydantic import Field, FiniteFloat, StringConstraints, TypeAdapter, compute
 
 from app.audio_effects import AUDIO_EFFECTS_MAX, AudioEffect
 from app.candidates import (
+    KEY_GAP_SECS,
     KICKER_MAX_CHARS,
     TEXT_LAYER_MAX_CHARS,
     AdjustmentLayer,
@@ -60,6 +61,11 @@ TEMPLATES_FILE = "templates.json"
 # The editor's least item length (ITEM_MIN_SECS in frontend/src/pages/job/advanced/edits.ts): a layer
 # cut shorter to fit a Clip is left out, as the Clipboard leaves one out.
 ITEM_MIN_SECS = 0.1
+# The editor keeps times to the hundredth (`round` in edits.ts), a Clip's length to the ms: a layer it
+# put under the whole Clip may end this much past it, which isn't cut.
+_EDGE_REACH = 0.005
+# How far past its song's or video's end a Music Clip's or Overlay's read may go (as app/api.py allows).
+_READ_REACH = 0.05
 # The hook's shortest and longest time (hook_secs in app/api.py).
 HOOK_SECS = (0.5, 30.0)
 
@@ -415,7 +421,9 @@ def anchored(start: float, end: float, bounds: Boundaries, kind: AnchorKind | No
     return Anchor(_edge(start, bounds, _nearest(start, bounds, guessed)), _edge(end, bounds, _nearest(end, bounds, guessed)))
 
 
-def apply(template: Template | None, candidate: Candidate, named: Mapping[str, Template] | None = None) -> Applied:
+def apply(
+    template: Template | None, candidate: Candidate, named: Mapping[str, Template] | None = None, lengths: Mapping[str, float] | None = None
+) -> Applied:
     """The Candidate once `template` is applied, or with None ("No Template") its Template items taken
     off alone. Its Template items (of any Template) are taken off: layers, intro and outro Segments,
     their Transitions and their videos' Word Edits and Cue Edits. The Template's intro goes before the
@@ -425,8 +433,12 @@ def apply(template: Template | None, candidate: Candidate, named: Mapping[str, T
     of that key; all marked. Its hand-made layers and hook move by as much as the Main Slot's start
     moved, as a ripple at Timeline 0 would (one wholly on the old intro is left out); then the hook is
     put at the Template's distance from the Main Slot's start, as long as the Template's. Each of the
-    Template's layers is placed by its Anchor on the new boundaries and marked. A layer reaching past
-    the Clip is cut short at its edge, or left out when shorter than ITEM_MIN_SECS there; its Text
+    Template's layers is placed by its Anchor on the new boundaries and marked: a Span whose edges
+    cross there is left out; one stretched or shortened keeps the Keyframes of its first half at their
+    distance from its start and those of its second half from its end. A Music Clip or video Overlay
+    stops where its song or video ends, by `lengths` (the Media Library's songs' and videos' lengths,
+    by id; one not there isn't stopped), never looping. A layer reaching past the Clip is cut short at
+    its edge, or left out when shorter than ITEM_MIN_SECS there. Each of these is told. Its Text
     Layers' Template Fields are filled from the Candidate (an empty one with a notice). The Template's
     style, Layout, Grade and Clip volume replace the Candidate's, its Kicker too when it has one (the
     hook text is the Candidate's), and every Segment of the Source takes its Main Slot treatment,
@@ -434,7 +446,8 @@ def apply(template: Template | None, candidate: Candidate, named: Mapping[str, T
     the Templates the Candidate's marks may name, by id: an item taken off that differs from a fresh
     application of its Template was changed by hand, and is counted; so is every item of a Template
     not there (deleted)."""
-    notices = _replaced(candidate, named or {}, "removed" if template is None else "replaced")
+    lengths = lengths or {}
+    notices = _replaced(candidate, named or {}, "removed" if template is None else "replaced", lengths)
     wrap = _wrapped(template, candidate)
     look: dict[str, Any] = {}
     shift = round(wrap.bounds.main_start - _main_start(candidate), 6)
@@ -444,7 +457,10 @@ def apply(template: Template | None, candidate: Candidate, named: Mapping[str, T
     hook = _moved(candidate.hook_start, candidate.hook_secs, shift)
     if template is not None:
         hook = (wrap.bounds.main_start + template.hook_offset, template.hook_secs)
-        placed = _placed(template, wrap.bounds, kept, _field_values(template, candidate))
+        placed = _placed(template, wrap.bounds, kept, _field_values(template, candidate), lengths)
+        if placed.crossed:
+            notices.append(f"{_count(placed.crossed, 'Span')} left out: {'its' if placed.crossed == 1 else 'their'} edges cross on this clip.")
+        notices.extend(_stopped(kind, n) for kind, n in placed.stopped.items())
         told = [placed.trimmed and f"{_count(placed.trimmed, 'layer')} cut short to fit", placed.left_out and f"{placed.left_out} left out, falling outside the clip"]
         if placed.trimmed or placed.left_out:
             notices.append(f"{'; '.join(part for part in told if part)}.")
@@ -569,25 +585,37 @@ def _moved(start: float, secs: float, shift: float) -> tuple[float, float]:
 
 class _Placed(NamedTuple):
     """A Template's layers placed on a Candidate beside the layers it keeps, and how many were cut
-    short or left out."""
+    short, left out, Spans left out for their crossed edges and, by kind, stopped at their song's or
+    video's end."""
 
     layers: dict[LayerKind, list[Any]]
     trimmed: int
     left_out: int
     # The Template Fields left empty, by name, in the order of _FIELD_NAMES.
     empty: list[str]
+    crossed: int
+    stopped: dict[LayerKind, int]
 
 
-def _placed(template: Template, bounds: Boundaries, kept: Mapping[LayerKind, list[Any]], values: Mapping[str, str]) -> _Placed:
+def _placed(
+    template: Template, bounds: Boundaries, kept: Mapping[LayerKind, list[Any]], values: Mapping[str, str], lengths: Mapping[str, float]
+) -> _Placed:
     """`template`'s layers placed by their Anchors on `bounds` and marked beside the `kept` ones, its
-    Text Layers' Template Fields filled with `values`."""
+    Text Layers' Template Fields filled with `values`, its songs and videos stopped by `lengths`."""
     layers = {kind: list(listed) for kind, listed in kept.items()}
-    trimmed = left_out = 0
+    trimmed = left_out = crossed = 0
+    stopped: dict[LayerKind, int] = {}
     empty: set[str] = set()
     for kind, layer in template.layers.items():
         start = bounds.at(layer.anchor.start.boundary) + layer.anchor.start.offset
         end = bounds.at(layer.anchor.end.boundary) + layer.anchor.end.offset
-        fitted = _fitted(layer.item, start, end, bounds.clip_end)
+        if end - start < ITEM_MIN_SECS - 1e-9:
+            crossed += 1
+            continue
+        item, ends = _ended(_stretched(layer.item, end - start), lengths)
+        if ends:
+            stopped[kind] = stopped.get(kind, 0) + 1
+        fitted = _fitted(item, start, start + item.secs, bounds.clip_end)
         if fitted is None:
             left_out += 1
             continue
@@ -597,7 +625,51 @@ def _placed(template: Template, bounds: Boundaries, kept: Mapping[LayerKind, lis
             item = replace(item, text=_filled(item.text, values, empty))
         item_id = _free_id(item.id, {other.id for other in layers[kind]})
         layers[kind].append(replace(item, id=item_id, template=template.id))
-    return _Placed(layers, trimmed, left_out, [name for name in _FIELD_NAMES if name in empty])
+    return _Placed(layers, trimmed, left_out, [name for name in _FIELD_NAMES if name in empty], crossed, stopped)
+
+
+def _stopped(kind: LayerKind, n: int) -> str:
+    """What the owner is told of `n` Music Clips or Overlays stopped where their song or video ends."""
+    item, media = ("Music Clip", "song") if kind is LayerKind.MUSIC else ("Overlay", "video")
+    end = f"its {media}'s end" if n == 1 else f"their {media}s' ends"
+    return f"{_count(n, item)} stopped at {end}{': a song never loops' if kind is LayerKind.MUSIC else ''}."
+
+
+def _stretched[T: Layer](item: T, secs: float) -> T:
+    """`item` made `secs` long, as a Span is by its edges: its Keyframes in its first half keep their
+    distance from its start, those in its second half from its end. Shortened, one that would pass its
+    new middle from its half is left out, and one closer than a frame to the one before it."""
+    if abs(secs - item.secs) <= 1e-6:
+        return item
+    keys = getattr(item, "keys", None)
+    if not keys:
+        return replace(item, secs=round(secs, 6))
+    reach = 1e-6
+
+    def moved(listed: Sequence[Any]) -> list[Any]:
+        kept: list[Any] = []
+        for key in listed:
+            first = key.at <= item.secs / 2 + reach
+            at = key.at if first else key.at + secs - item.secs
+            passes = at > secs / 2 + reach if first else at < secs / 2 - reach
+            if not passes and not (kept and at - kept[-1].at < KEY_GAP_SECS - reach):
+                kept.append(replace(key, at=round(at, 6)))
+        return kept
+
+    return replace(item, secs=round(secs, 6), keys={prop: kept for prop, listed in keys.items() if (kept := moved(listed))})
+
+
+def _ended[T: Layer](item: T, lengths: Mapping[str, float]) -> tuple[T, bool]:
+    """`item`, a Music Clip or a video Overlay, stopped where its song or video ends at its Speed, by
+    `lengths` (never looped), its Keyframes cut there; and whether it was. Any other as it is."""
+    if not isinstance(item, MusicClip | Overlay) or item.media is None or item.media not in lengths:
+        return item, False
+    length = lengths[item.media]
+    if overlay_time(item.offset, item.secs, item.speed, item.reverse).end <= length + _READ_REACH:
+        return item, False
+    secs = max(0.0, math.floor((length - item.offset) / item.speed * 1e6) / 1e6)
+    keys = {prop: rewindow(listed, 0.0, secs) for prop, listed in item.keys.items()}
+    return replace(item, secs=secs, keys={prop: listed for prop, listed in keys.items() if listed}), True
 
 
 # The Template Fields (GLOSSARY.md, Template Field), by the name typed in braces, and what is told
@@ -631,11 +703,11 @@ def _treated(segment: Segment, treatment: Treatment) -> Segment:
     return replace(segment, grade=treatment.grade, video_effects=treatment.video_effects, audio_effects=audio_effects)
 
 
-def _replaced(candidate: Candidate, named: Mapping[str, Template], done: str) -> list[str]:
+def _replaced(candidate: Candidate, named: Mapping[str, Template], done: str, lengths: Mapping[str, float]) -> list[str]:
     """What the owner is told of the Candidate's Template items being taken off (`done`): those
-    changed by hand since their Template put them there, as told by a fresh application of it (their
-    ids and the Segment a Transition follows aside, which depend on the hand-made items beside them),
-    and those of a deleted Template."""
+    changed by hand since their Template put them there, as told by a fresh application of it with
+    the same `lengths` (their ids and the Segment a Transition follows aside, which depend on the
+    hand-made items beside them), and those of a deleted Template."""
     changed = gone = 0
     marks = _marked(candidate.segments, candidate.transitions, candidate.word_edits, candidate.cue_edits, dict(_layers_by_kind(candidate)))
     for template_id in dict.fromkeys(item.template for _, item in marks):
@@ -645,7 +717,7 @@ def _replaced(candidate: Candidate, named: Mapping[str, Template], done: str) ->
             continue
         template = named[template_id]
         wrap = _wrapped(template, candidate)
-        layers = _placed(template, wrap.bounds, {kind: [] for kind in LayerKind}, _field_values(template, candidate)).layers
+        layers = _placed(template, wrap.bounds, {kind: [] for kind in LayerKind}, _field_values(template, candidate), lengths).layers
         fresh: dict[str, list[Any]] = {}
         for kind, item in _marked(wrap.segments, wrap.transitions, wrap.word_edits, wrap.cue_edits, layers):
             fresh.setdefault(kind, []).append(item)
@@ -703,10 +775,10 @@ def _edge(at: float, bounds: Boundaries, boundary: Boundary) -> Edge:
 
 def _fitted[T: Layer](item: T, start: float, end: float, length: float) -> tuple[T, bool] | None:
     """`item` placed from `start` to `end`, cut at the Clip's edges (0 and `length`), and whether it
-    was; None when what is left is shorter than ITEM_MIN_SECS. Its Keyframes and a song's or video's
-    read follow the cut, as the Clipboard's paste does; an Adjustment Layer's fades stay within half
-    of it."""
-    shown_start, shown_end = max(start, 0.0), min(end, length)
+    was; None when what is left is shorter than ITEM_MIN_SECS. One ending less than _EDGE_REACH past
+    the Clip isn't cut. Its Keyframes and a song's or video's read follow the cut, as the Clipboard's
+    paste does; an Adjustment Layer's fades stay within half of it."""
+    shown_start, shown_end = max(start, 0.0), (end if end <= length + _EDGE_REACH else length)
     secs = round(shown_end - shown_start, 6)
     if secs < ITEM_MIN_SECS - 1e-9:
         return None
@@ -736,12 +808,13 @@ def _count(n: int, one: str) -> str:
     return f"{n} {one}{'' if n == 1 else 's'}"
 
 
-def branded(template: Template, new: list[Candidate], episode: Episode) -> list[Candidate]:
-    """New Candidates (not saved yet) with `template` applied: still at their first Revision and not
-    edited, as Selection or the owner's Add made them."""
+def branded(template: Template, new: list[Candidate], episode: Episode, lengths: Mapping[str, float] | None = None) -> list[Candidate]:
+    """New Candidates (not saved yet) with `template` applied (its songs and videos stopped by
+    `lengths`, as `apply`): still at their first Revision and not edited, as Selection or the owner's
+    Add made them."""
     made = []
     for candidate in new:
-        _, applied = update([candidate], candidate.id, apply(template, candidate).change, episode)
+        _, applied = update([candidate], candidate.id, apply(template, candidate, lengths=lengths).change, episode)
         made.append(replace(applied, revision=candidate.revision, edited=candidate.edited))
     return made
 

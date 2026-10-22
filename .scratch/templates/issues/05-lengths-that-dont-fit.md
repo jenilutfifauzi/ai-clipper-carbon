@@ -11,10 +11,12 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Pure tests:
+- [x] Pure tests:
   - A Span lower-third with an opacity fade in its last 0.5 s keeps that fade at its end on a 20 s and a 75 s Candidate.
   - A 30 s song as a Span on a 75 s Candidate stops at 30 s, with a notice.
   - An End layer on a 5 s Candidate is trimmed or dropped, with notices.
   - A crossed Span is dropped.
+- [x] Seam A: a 30 s song as a Span applied through the API to a 75 s Candidate stops at 30 s, with a notice (the Media Library's lengths reach `apply`, `branded` and the pipeline).
+- [x] Regression: applying a Template to the Candidate it was saved from keeps its layers' times (a bed 65.93 s long under a 65.926 s Clip was cut 4 ms short).

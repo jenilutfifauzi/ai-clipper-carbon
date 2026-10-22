@@ -288,6 +288,114 @@ def test_a_layer_past_a_short_clips_end_is_trimmed_there_or_left_out():
     assert applied.notices == ["1 layer cut short to fit; 1 left out, falling outside the clip."]
 
 
+# Lengths that don't fit (.scratch/templates/issues/05-lengths-that-dont-fit.md)
+
+
+@pytest.mark.parametrize("secs", [20, 75])
+def test_a_span_lower_thirds_fades_keep_their_distances_from_its_nearer_edge(secs):
+    # From 2 s in to 2 s before the end of a 40 s Clip, faded in over its first 0.5 s and out over its last.
+    fades = {"opacity": [Keyframe(0.0, 0.0), Keyframe(0.5, 1.0), Keyframe(35.5, 1.0), Keyframe(36.0, 0.0)]}
+    source = candidate(40, text_layers=[lower_third(secs=36.0, keys=fades)])
+    template = saved_from(source, [AnchorOverride(LayerKind.TEXT_LAYERS, "name", AnchorKind.SPAN)])
+
+    applied = apply(template, candidate(secs))
+
+    [name] = applied.change.text_layers
+    assert (name.start, name.secs) == (2.0, secs - 4.0)
+    assert [(key.at, key.value) for key in name.keys["opacity"]] == [(0.0, 0.0), (0.5, 1.0), (secs - 4.5, 1.0), (secs - 4.0, 0.0)]
+    assert applied.notices == []
+
+
+def test_a_span_music_beds_volume_keyframes_keep_their_distances_from_its_nearer_edge():
+    ducked = {"volume": [Keyframe(1.0, 1.0), Keyframe(17.0, 1.0), Keyframe(20.0, 0.0)]}
+    template = saved_from(candidate(20, music=[bed(keys=ducked)]))
+
+    [song] = apply(template, candidate(75), lengths={SONG: 300.0}).change.music
+
+    assert song.secs == 75.0
+    assert [(key.at, key.value) for key in song.keys["volume"]] == [(1.0, 1.0), (72.0, 1.0), (75.0, 0.0)]
+
+
+def test_a_shortened_span_leaves_out_the_keyframes_passing_its_new_middle():
+    keys = {"opacity": [Keyframe(0.0, 0.0), Keyframe(3.0, 1.0), Keyframe(13.0, 1.0), Keyframe(16.0, 0.0)]}
+    template = saved_from(candidate(20, text_layers=[lower_third(secs=16.0, keys=keys)]), [AnchorOverride(LayerKind.TEXT_LAYERS, "name", AnchorKind.SPAN)])
+
+    # 1 s long: its middle at 0.5 s, each half's Keyframe nearer its edge kept.
+    [name] = apply(template, candidate(5)).change.text_layers
+
+    assert [(key.at, key.value) for key in name.keys["opacity"]] == [(0.0, 0.0), (1.0, 0.0)]
+
+
+@pytest.mark.parametrize(("speed", "offset", "stops"), [(1.0, 0.0, 30.0), (2.0, 0.0, 15.0), (1.0, 5.0, 25.0)])
+def test_a_30_s_song_as_a_span_on_a_75_s_candidate_stops_where_it_ends(speed, offset, stops):
+    ducked = {"volume": [Keyframe(0.0, 1.0), Keyframe(20.0, 0.5)]}
+    template = saved_from(candidate(20, music=[bed(speed=speed, offset=offset, keys=ducked, fade_out=2.0)]))
+
+    applied = apply(template, candidate(75), lengths={SONG: 30.0})
+
+    [song] = applied.change.music
+    assert (song.start, song.secs, song.offset, song.fade_out) == (0.0, stops, offset, 2.0)
+    # Never looped; its volume Keyframes cut where it stops.
+    assert song.keys["volume"][-1].at == stops
+    assert applied.notices == ["1 Music Clip stopped at its song's end: a song never loops."]
+
+
+def test_a_song_not_in_the_lengths_given_is_left_as_long_as_its_anchor_makes_it():
+    template = saved_from(candidate(20, music=[bed()]))
+
+    applied = apply(template, candidate(75))
+
+    assert [song.secs for song in applied.change.music] == [75.0]
+    assert applied.notices == []
+
+
+def test_reapplying_a_clamped_song_counts_nothing_changed_by_hand():
+    template = saved_from(candidate(20, music=[bed()]))
+    once = apply(template, candidate(75), lengths={SONG: 30.0}).change
+
+    again = apply(template, candidate(75, music=once.music), {"brand": template}, lengths={SONG: 30.0})
+
+    assert again.notices == ["1 Music Clip stopped at its song's end: a song never loops."]
+
+
+def test_end_layers_on_a_5_s_candidate_are_trimmed_or_left_out():
+    credits = TextLayer("credits", "Credits", start=12.0, secs=2.95)
+    template = saved_from(candidate(20, text_layers=[call_to_action(), credits]))
+    assert {layer.anchor.kind for _, layer in template.layers.items()} == {AnchorKind.END}
+
+    applied = apply(template, candidate(5))
+
+    # The call to action, 6 s to 2 s before the end, is cut at the Clip's start; the credits, ending
+    # 5.05 s before it, fall wholly outside.
+    [cta] = applied.change.text_layers
+    assert (cta.id, cta.start, cta.secs) == ("cta", 0.0, 3.0)
+    assert applied.notices == ["1 layer cut short to fit; 1 left out, falling outside the clip."]
+
+
+def test_a_span_whose_edges_cross_on_a_short_candidate_is_left_out():
+    template = saved_from(candidate(20, text_layers=[lower_third(secs=16.0)]), [AnchorOverride(LayerKind.TEXT_LAYERS, "name", AnchorKind.SPAN)])
+
+    applied = apply(template, candidate(3))
+
+    # From 2 s in to 2 s before the end: on 3 s, its end comes before its start.
+    assert applied.change.text_layers == []
+    assert applied.notices == ["1 Span left out: its edges cross on this clip."]
+
+
+def test_applying_a_template_to_the_candidate_it_was_saved_from_keeps_its_layers_times():
+    # The editor keeps times to the hundredth, a Clip's length to the ms: a bed under the whole of a
+    # 65.926 s Clip is 65.93 s long, 4 ms past its end.
+    source = replace(manual_candidate("c1", 2680.002, 2745.928), music=[bed(secs=65.93, offset=11.63, fade_out=4.2)])
+    assert source.duration == 65.926
+    template = saved_from(source)
+
+    applied = apply(template, source, lengths={SONG: 77.56})
+
+    [song] = [clip for clip in applied.change.music if clip.template]
+    assert (song.start, song.secs, song.offset, song.fade_out) == (0.0, 65.93, 11.63, 4.2)
+    assert applied.notices == []
+
+
 # Intro, outro and the Main Slot
 
 
@@ -676,6 +784,22 @@ def test_a_template_wraps_each_candidate_in_its_intro_and_outro(client, tmp_path
     plain = candidates_of(client, job, target)
     assert (plain["segments"], plain["transitions"], plain["word_edits"]) == ([], [], [])
     assert (plain["start"], plain["end"]) == (target["start"], target["end"])
+
+
+def test_a_music_bed_applied_to_a_longer_candidate_stops_at_its_songs_end(client, tmp_path, from_episode, llm, wait_for_status):
+    job, source = branded(client, wait_for_status, llm)
+    path = make(tmp_path / "bed.wav", "-f", "lavfi", "-i", "sine=frequency=330:duration=30")
+    song = client.post("/api/media", files={"file": ("bed.wav", path.read_bytes(), "application/octet-stream")}).json()
+    length = source["end"] - source["start"]
+    source = patch(client, job, source, music=[{"id": "bed", "media": song["id"], "start": 0.0, "secs": round(length, 2)}])
+    template = saved(client, job, source)
+    target = added(client, job, 800.0, 875.0)
+
+    [entry] = applied(client, job, template, [target])["candidates"]
+
+    [bed] = candidates_of(client, job, target)["music"]
+    assert bed["secs"] == pytest.approx(song["duration"], abs=0.01)
+    assert "1 Music Clip stopped at its song's end: a song never loops." in entry["notices"]
 
 
 def test_a_template_of_a_candidate_with_no_segment_of_the_source_is_refused(client, tmp_path, from_episode, llm, wait_for_status):

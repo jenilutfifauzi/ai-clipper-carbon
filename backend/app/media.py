@@ -122,6 +122,10 @@ class MediaStore:
         """The pictures' sizes (a video's or an image's), by id."""
         return {item.id: (item.width, item.height) for item in self.all() if item.width and item.height}
 
+    def lengths(self) -> dict[str, float]:
+        """The songs' and videos' lengths, in seconds, by id."""
+        return {item.id: item.duration for item in self.all() if item.duration is not None}
+
     def get(self, media_id: str) -> MediaItem:
         item = self._index.find(media_id)
         if item is None:
