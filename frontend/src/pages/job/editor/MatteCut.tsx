@@ -1,10 +1,35 @@
-import { useEffect, useLayoutEffect, useRef, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from "react";
-import type { Background, MattePiece, Panel, RenderPlan } from "../../../api";
-import { BLUR_BRIGHTNESS, BLUR_SIGMA } from "./ClipPreview";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import type { Background, BackgroundRemoval, MatteCopy, MattePiece, Panel, RenderPlan, RetimedCopy, RetimedRange } from "../../../api";
+import { cx } from "../../../format";
 import { MAX_DRIFT_SECS } from "./follow";
-import { filledStyle } from "./picture";
-import { copyFrame, matteAt, matteFrame, matteSeek, MATTE_PIECE_SECS, SOURCE_CLOCK, type MatteClock, type MatteFrame } from "./matteTime";
+import { BLUR_BRIGHTNESS, BLUR_SIGMA, filledStyle } from "./picture";
+import {
+  copyClock,
+  copyFrame,
+  itemPieces,
+  matteAt,
+  matteCopyOf,
+  matteFrame,
+  matteSeek,
+  MATTE_PIECE_SECS,
+  SOURCE_CLOCK,
+  type MatteClock,
+  type MatteFrame,
+} from "./matteTime";
 import type { Playback } from "./playback";
+import type { SegmentRange } from "./segmentTime";
 
 /*
  * The preview's cut (docs/adr/0015-background-removal-reads-a-cached-matte.md): a cut-out Segment of the
@@ -17,6 +42,11 @@ import type { Playback } from "./playback";
  * Grade's and Video Effects' SVG filters on the frame still apply to it. Where no piece is served yet,
  * the picture shows whole, and the cut appears once it is. The cut is shown by a flag on `CutGroup`
  * (`data-cut`), which the videos, canvases, fills and the Background read.
+ *
+ * A picture of a Media Library item (a video's Segment, an Overlay) is cut alike by its item's Matte
+ * (`useItemMatte`, `CutVideo`), an image by its one PNG (`CutImage`), on a canvas in place of its
+ * media inside its PicturePanel: so under its Grade, Video Effects, corners, border, shadow and
+ * Blend Mode, as the render draws them.
  */
 
 // The longest side of the canvases a picture is cut on: the Matte's own (the backend's MATTE_SIDE).
@@ -32,6 +62,11 @@ const PLAYING_FRAMES = 3;
 const BACKDROP_SHRINK = 8;
 // The rates a browser plays a video at.
 const RATES = { min: 0.0625, max: 16 };
+// The frame rate Media Library videos are kept at (the backend's media.FPS), which their Mattes have.
+const MEDIA_FPS = 30;
+
+/** The Preview Plan's Matte pieces and reversed copies (ADR 0015), of every item: what the pictures of Media Library items are cut by. */
+export const PreviewMattes = createContext<{ pieces?: MattePiece[]; copies?: MatteCopy[] }>({});
 
 const hasFrameCallback = typeof HTMLVideoElement !== "undefined" && "requestVideoFrameCallback" in HTMLVideoElement.prototype;
 
@@ -340,7 +375,7 @@ export function cutSlot(matte: DeckMatte, video: HTMLVideoElement, canvas: HTMLC
       return matte.setGood(false);
     }
     const drawn = `${source}:${shown.video.currentSrc}:${shown.frame}`;
-    if (drawn !== last && cut(video, shown.video, canvas, mask, feather())) last = drawn;
+    if (drawn !== last && cut(video, shown.video, [shown.video.videoWidth, shown.video.videoHeight], canvas, mask, feather())) last = drawn;
     matte.setGood(true);
   };
   const stopPicture = eachFrame(video, (time) => {
@@ -356,12 +391,20 @@ export function cutSlot(matte: DeckMatte, video: HTMLVideoElement, canvas: HTMLC
 }
 
 /**
- * Draws `picture` onto `canvas` (at the Matte's size), keeping only where `matte` is light: its
- * luminance made alpha on `mask`, blurred by `feather` output pixels, masks it. False when it can't yet.
+ * Draws `picture` onto `canvas` (at the Matte's size, `size`), keeping only where `matte` is light:
+ * its luminance made alpha on `mask`, blurred by `feather` output pixels, masks it (an image's own
+ * transparency kept within it). False when it can't yet.
  */
-function cut(picture: HTMLVideoElement, matte: HTMLVideoElement, canvas: HTMLCanvasElement, mask: HTMLCanvasElement, feather: number): boolean {
-  const width = Math.min(matte.videoWidth, MATTE_SIDE);
-  const height = Math.round((matte.videoHeight * width) / Math.max(1, matte.videoWidth));
+function cut(
+  picture: CanvasImageSource,
+  matte: CanvasImageSource,
+  size: [number, number],
+  canvas: HTMLCanvasElement,
+  mask: HTMLCanvasElement,
+  feather: number,
+): boolean {
+  const width = Math.min(size[0], MATTE_SIDE);
+  const height = Math.round((size[1] * width) / Math.max(1, size[0]));
   if (!width || !height) return false;
   if (canvas.width !== width || canvas.height !== height) Object.assign(canvas, { width, height });
   if (mask.width !== width || mask.height !== height) Object.assign(mask, { width, height });
@@ -428,6 +471,129 @@ export function CutGroup({
       ))}
     </div>
   );
+}
+
+/**
+ * The Matte of a picture of the Media Library video `media` (a video's Segment, an Overlay) with
+ * Background removal `removal`, playing `played` of it: its item's pieces (`PreviewMattes`),
+ * following its `video`, which plays its proxy at the item's own time, or the Retimed copy of `range`
+ * (`copy`, followed through `copyClock`: in Reverse, by its item's reversed Matte copy). Null
+ * without Background removal.
+ */
+export function useItemMatte(
+  media: string | null,
+  removal: BackgroundRemoval | null | undefined,
+  played: SegmentRange,
+  range: RetimedRange | null,
+  copy: RetimedCopy | null,
+  video: RefObject<HTMLVideoElement>,
+): DeckMatte | null {
+  const { pieces, copies } = useContext(PreviewMattes);
+  const matte = useMemo(() => new DeckMatte(), []);
+  const own = useMemo(() => itemPieces(pieces, media), [pieces, media]);
+  const at = copy?.url ? copy.at : null;
+  const { start, end, speed, reverse } = played;
+  const matteCopy = matteCopyOf(copies, { start, end }, media);
+  const cut = !!removal && !!media;
+  useEffect(() => {
+    matte.setPieces(cut ? own : undefined, MEDIA_FPS);
+    matte.setClock(!cut ? null : range ? copyClock({ start, end, speed, reverse }, range, at, matteCopy) : SOURCE_CLOCK);
+  }, [matte, cut, own, range, start, end, speed, reverse, at, matteCopy]);
+  useEffect(() => {
+    matte.attachMaster(video.current);
+    return () => matte.dispose();
+  }, [matte, video]);
+  return cut ? matte : null;
+}
+
+/**
+ * A picture's video (`children`, a Media Library video's in a PicturePanel, `videoRef`) cut by
+ * `matte` (`useItemMatte`) on a canvas in its place while the cut is shown (`CutGroup`), its edge
+ * blurred by `feather` output pixels; as it is without one.
+ */
+export function CutVideo({
+  matte,
+  feather,
+  videoRef,
+  playback,
+  children,
+}: {
+  matte: DeckMatte | null;
+  feather: number;
+  videoRef: RefObject<HTMLVideoElement>;
+  playback: Playback;
+  children: ReactNode;
+}) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const softness = useRef(feather);
+  softness.current = feather;
+  useEffect(() => {
+    const picture = videoRef.current;
+    if (!matte || !picture || !canvas.current) return;
+    return cutSlot(matte, picture, canvas.current, () => softness.current);
+  }, [matte, videoRef]);
+  if (!matte) return <>{children}</>;
+  return (
+    <CutGroup mattes={[matte]} playback={playback} cutNow={() => true} shownMatte={() => matte}>
+      <div className="absolute inset-0 group-data-[cut]/cut:opacity-0">{children}</div>
+      <canvas ref={canvas} aria-hidden className="absolute inset-0 size-full opacity-0 group-data-[cut]/cut:opacity-100" />
+    </CutGroup>
+  );
+}
+
+/**
+ * An image Overlay's picture (`children`, its `<img>` of `src`) cut by its Matte, its one PNG
+ * (`matte`, the Preview Plan's piece of it), on a canvas in its place once both are loaded, its edge
+ * blurred by `feather` output pixels; the image whole until its Matte is served (asked for again
+ * every RETRY_MS), and without one.
+ */
+export function CutImage({ src, matte, feather, children }: { src: string; matte: string | null; feather: number; children: ReactNode }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    setReady(false);
+    const element = canvas.current;
+    if (!matte || !element) return;
+    let stopped = false;
+    let timer = 0;
+    let tries = 0;
+    const picture = new Image();
+    const alpha = new Image();
+    const mask = document.createElement("canvas");
+    const draw = () => {
+      if (stopped || !picture.naturalWidth || !alpha.naturalWidth) return;
+      if (cut(picture, alpha, [alpha.naturalWidth, alpha.naturalHeight], element, mask, feather)) setReady(true);
+    };
+    const load = () => void (alpha.src = tries ? `${matte}?try=${tries}` : matte);
+    picture.onload = draw;
+    alpha.onload = draw;
+    alpha.onerror = () => {
+      if (stopped) return;
+      timer = window.setTimeout(() => {
+        tries += 1;
+        load();
+      }, RETRY_MS);
+    };
+    picture.src = src;
+    load();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [src, matte, feather]);
+  if (!matte) return <>{children}</>;
+  return (
+    <div className="absolute inset-0">
+      <div className={cx("absolute inset-0", ready && "opacity-0")}>{children}</div>
+      <canvas ref={canvas} aria-hidden className={cx("absolute inset-0 size-full", !ready && "opacity-0")} />
+    </div>
+  );
+}
+
+/** Where the one piece of the Matte of the image `media` is served (`PreviewMattes`), when it is cut out (`removal`). */
+export function useImageMatte(media: string, removal: BackgroundRemoval | null | undefined): string | null {
+  const { pieces } = useContext(PreviewMattes);
+  return removal ? (itemPieces(pieces, media)[0]?.url ?? null) : null;
 }
 
 /** What a cut-out Segment's Background is drawn as: a crop of the picture, blurred, filling `panel`'s area; or a colour, or a Media Library image covering the frame. */

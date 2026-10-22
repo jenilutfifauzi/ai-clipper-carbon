@@ -13,7 +13,7 @@ import { followCurve, setVolume } from "./PreviewMusic";
 import { firstSceneOf, sceneAt } from "./ScenesTrack";
 import { crossedBy } from "./transitionSound";
 import { silencedForCopy } from "./effectedCopy";
-import { backdropView, CutBackdrop, CutGroup, DeckMatte } from "./MatteCut";
+import { backdropView, CutBackdrop, CutGroup, CutVideo, DeckMatte, useItemMatte } from "./MatteCut";
 import { copyClock, matteCopyOf } from "./matteTime";
 import { rangeOf } from "./segmentTime";
 
@@ -91,6 +91,8 @@ export const segmentScene = (plan: RenderPlan, index: number): ScenePlan | undef
  * A reversed one, or one at a Speed a browser won't play, plays its Retimed copy, and shows its first
  * frame held with the copy's progress until the copy is made (`mediaPlay`). Where its picture doesn't
  * cover the frame, the `plan`'s Behind Overlays (ADR 0015) show over its Background, under its picture.
+ * Cut out (ADR 0015), its picture is cut by its item's Matte (`useItemMatte`), the Behind Overlays and
+ * its Background showing where it is taken away, and its Grade and Video Effects touch the picture alone.
  */
 export function MediaSegment({
   plan,
@@ -137,10 +139,15 @@ export function MediaSegment({
   const filter = useFrameFilter(segment.grade, segment.video_effects, segment.start);
   const picture = scene?.picture;
   const background = picture && scene.panels[0] ? panelStyle(scene.panels[0], picture.item_size, FRAME) : null;
+  // Cut out (ADR 0015): its Matte follows its video, through the copy it plays.
+  const removal = segment.background_removal;
+  const played = useMemo(() => (range ? { ...range } : rangeOf(segment)), [range, segment]);
+  const matte = useItemMatte(segment.media ?? null, removal, played, range, copy, main);
   return (
     <div ref={box} className="absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
-      {/* Its Grade and Video Effects over its whole frame (ADR 0013, 0014): its Background and its picture, its vignette over them. */}
-      <div className="absolute inset-0" style={{ ...filledStyle(scene?.colour ?? "#000", scene?.image), filter }}>
+      {/* Its Grade and Video Effects over its whole frame (ADR 0013, 0014): its Background and its picture, its vignette over
+          them; cut out, over its picture alone. */}
+      <div className="absolute inset-0" style={{ ...filledStyle(scene?.colour ?? "#000", scene?.image), filter: removal ? undefined : filter }}>
         {background && (
           <div className="absolute overflow-hidden" style={background.box}>
             <video
@@ -154,14 +161,20 @@ export function MediaSegment({
             />
           </div>
         )}
-        {!coversFrame(picture, FRAME) && <BehindOverlays plan={plan} playback={playback} />}
+        {(removal || !coversFrame(picture, FRAME)) && <BehindOverlays plan={plan} playback={playback} />}
         {picture && (
-          <PicturePanel
-            picture={picture}
-            frame={FRAME}
-            playback={playback}
-            media={<video ref={main} src={src} playsInline preload="auto" className="size-full object-fill" />}
-          />
+          <div className="absolute inset-0" style={{ filter: removal ? filter : undefined }}>
+            <PicturePanel
+              picture={picture}
+              frame={FRAME}
+              playback={playback}
+              media={
+                <CutVideo matte={matte} feather={removal?.feather ?? 0} videoRef={main} playback={playback}>
+                  <video ref={main} src={src} playsInline preload="auto" className="size-full object-fill" />
+                </CutVideo>
+              }
+            />
+          </div>
         )}
       </div>
       <GradeVignette grade={segment.grade} />

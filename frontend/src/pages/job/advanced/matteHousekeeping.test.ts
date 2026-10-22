@@ -106,6 +106,18 @@ describe("moving an Overlay Behind the Main Track", () => {
     expect(behinds(split(scene(state, picked(ref)), 4)!.edits)).toEqual([true, true]);
   });
 
+  test("a cut-out Overlay's Background removal moves with it too (background-removal 06)", () => {
+    const removal = { subject: "person" as const, feather: 6 };
+    const cut = { ...over("o"), background_removal: removal };
+    const removals = (state: AdvancedEdits) => state.overlays.map((each) => each.background_removal ?? null);
+    const state = edits({ overlays: [cut] });
+    const copied = copy(scene(state, picked(ref)), { job: "j1", candidate: "c1" })!;
+    expect(removals(paste(scene(edits({ overlays: [over("p")] })), copied, 0, { job: "j1", candidate: "c2" }).edits)).toEqual([null, removal]);
+    expect(removals(duplicate(scene(state, picked(ref)))!.edits)).toEqual([removal, removal]);
+    expect(removals(split(scene(state, picked(ref)), 4)!.edits)).toEqual([removal, removal]);
+    expect(removals(mergeEdits(edits({ overlays: [over("o")] }), state, edits({ overlays: [over("o")] })).merged)).toEqual([removal]);
+  });
+
   test("the Revision merge keeps mine where I moved it, and theirs where I changed something else", () => {
     const base = edits({ overlays: [over("o"), over("p")] });
     expect(behinds(mergeEdits(base, edits({ overlays: [under, over("p")] }), base).merged)).toEqual([true, false]);

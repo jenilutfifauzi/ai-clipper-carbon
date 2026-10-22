@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { useContext, useEffect, useMemo, useRef, type RefObject } from "react";
 import type { MattePiece, RenderPlan, TransitionEvent } from "../../../api";
 import { PanelView } from "./ClipPreview";
 import { DecksGraded } from "./GradeFilters";
-import { backdropView, CutBackdrop, CutGroup, DeckMatte } from "./MatteCut";
+import { backdropView, CutBackdrop, CutGroup, DeckMatte, PreviewMattes } from "./MatteCut";
 import { BehindOverlays, coversFrame } from "./PreviewOverlays";
 import { MAX_DRIFT_SECS } from "./follow";
 import { slotView } from "./picture";
@@ -28,7 +28,8 @@ const UNSTYLED: TransitionLook = { outgoing: {}, incoming: {}, veil: {} };
  * under it and a veil over both; the ghost's sound (times its own fades) gives way to the incoming
  * one's along the Transition's sound (transitionSound.ts, the incoming side's in PreviewMusic and
  * PreviewSegments). Near the render's look, not the same. A cut-out Segment's ghost is cut by its own
- * Matte (`mattes`, the Preview Plan's pieces; MatteCut.tsx), over its own Background.
+ * Matte (`mattes`, the Preview Plan's pieces of the Source; MatteCut.tsx), over its own Background; a
+ * reversed one's by its reversed Matte copy, and a video's by its item's (`PreviewMattes`).
  */
 export function PreviewTransitions({
   plan,
@@ -97,6 +98,7 @@ function Ghost({
   const sceneIndex = usePlayback(ghost, (time) => sceneAt(plan, time, index));
   const scene = plan.scenes[sceneIndex];
   const own = onOwnVideos(segment);
+  const { copies } = useContext(PreviewMattes);
 
   useEffect(() => {
     if (own) return;
@@ -185,7 +187,17 @@ function Ghost({
         {segment.media ? (
           <MediaSegment plan={plan} segment={segment} end={segment.end} scene={segmentScene(plan, index)} playback={playback} fade={transition} />
         ) : own ? (
-          <CopiedSourceSegment plan={plan} index={index} end={segment.end} playback={playback} src={src} jobId={jobId} fade={transition} />
+          <CopiedSourceSegment
+            plan={plan}
+            index={index}
+            end={segment.end}
+            playback={playback}
+            src={src}
+            jobId={jobId}
+            fade={transition}
+            mattes={mattes}
+            matteCopies={copies}
+          />
         ) : (
           // In its Segment's Grade and Video Effects, as the decks draw it (MediaSegment and CopiedSourceSegment
           // draw their own); cut out, over its Background.

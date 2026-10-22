@@ -26,7 +26,7 @@ import { cssFontSize, fontFamily } from "../../../fonts";
 import { useLooks } from "../../../looks";
 import { cx, formatPrecise } from "../../../format";
 import { RATES, usePlayback, useShown, type Playback } from "./playback";
-import { allStroke, filledStyle, FRAME, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
+import { allStroke, BLUR_BRIGHTNESS, BLUR_SIGMA, filledStyle, FRAME, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewEffected } from "./PreviewEffected";
 import { PreviewMusic } from "./PreviewMusic";
 import { BehindOverlays, coversFrame, PreviewOverlays } from "./PreviewOverlays";
@@ -38,7 +38,8 @@ import { heldLayerEvent, layerEventAt, layersAt, layerStagePicture } from "./lay
 import type { Place } from "./placing";
 import { PreviewTransitions } from "./PreviewTransitions";
 import { DecksGraded, EffectFilters, EffectsClock, GradeFilters } from "./GradeFilters";
-import { backdropView, cutSlot, CutBackdrop, CutGroup, DeckMatte } from "./MatteCut";
+import { backdropView, cutSlot, CutBackdrop, CutGroup, DeckMatte, PreviewMattes } from "./MatteCut";
+import { itemPieces } from "./matteTime";
 import { EyedropperLayer } from "./EyedropperLayer";
 import { pictureBox } from "./videoEffects";
 import { PreviewAdjusted } from "./PreviewAdjustments";
@@ -63,9 +64,7 @@ const QUOTE_DOTS = [
   [35, 58.8],
   [65, 58.8],
 ];
-// Blur's background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
-export const BLUR_SIGMA = 40;
-export const BLUR_BRIGHTNESS = 0.9;
+export { BLUR_BRIGHTNESS, BLUR_SIGMA } from "./picture";
 // How far an arrow key nudges the Watermark, in output pixels (with Shift, five times as far).
 const NUDGE_PX = 8;
 // How much of the ending "Play ending" plays.
@@ -150,9 +149,11 @@ export function ClipPreview({
   }, [playback, decks]);
   const shownDeck = usePlayback(playback, (_, p) => p.shownDeck);
   const shownSegment = usePlayback(playback, (_, p) => p.shownSegmentIndex);
-  // Each deck's Matte (ADR 0015), following its master, for the cut-out Segments' pieces.
+  // Each deck's Matte (ADR 0015), following its master, for the cut-out Segments' pieces of the Source;
+  // every item's, for the pictures of Media Library items (MatteCut.tsx's `useItemMatte`).
   const mattes = useMemo(() => [new DeckMatte(), new DeckMatte()], []);
-  const pieces = preview?.mattes;
+  const pieces = useMemo(() => itemPieces(preview?.mattes), [preview?.mattes]);
+  const itemMattes = useMemo(() => ({ pieces: preview?.mattes, copies: preview?.matte_copies }), [preview?.mattes, preview?.matte_copies]);
   const sourceFps = plan ? plan.source_fps || plan.fps : 0;
   useEffect(() => {
     for (const matte of mattes) matte.setPieces(pieces, sourceFps);
@@ -391,7 +392,11 @@ export function ClipPreview({
     </div>
   );
   // Its Video Effects that change with time follow the playback.
-  const frame = <EffectsClock playback={playback}>{stageFrame}</EffectsClock>;
+  const frame = (
+    <PreviewMattes.Provider value={itemMattes}>
+      <EffectsClock playback={playback}>{stageFrame}</EffectsClock>
+    </PreviewMattes.Provider>
+  );
   if (fit) {
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-2">

@@ -93,7 +93,7 @@ from app.preview import STILLS_DIR, THUMBNAIL_FILE, make_thumbnail, take_still
 from app.profile import ChannelProfile, ProfileStore
 from app.renderer import AudioFormat, available_codecs
 from app.matte import MATTES_DIR, MatteBusy, MatteRunner, MatteStatus, remove_mattes
-from app.rendering import NothingToRender, has_media_words, matte_wanted, media_language, ranked_clips, source_copies, source_mattes
+from app.rendering import NothingToRender, has_media_words, matte_wanted, media_language, media_mattes, ranked_clips, source_copies, source_mattes
 from app.retimed import RETIMED_DIR, Copies, CopySize, Retime, copies_used, sweep
 from app.segment_time import overlay_time, segment_time
 from app.text_presets import BuiltinTextPreset, TextPreset, TextPresetNotFound, TextPresetStore
@@ -242,7 +242,7 @@ def _after_save(request: Request, background: BackgroundTasks) -> Callable[[str,
 
     def after(job_id: str, started: float, saved: Candidate) -> None:
         background.add_task(sweep_unused_effected, state.store, state.settings, state.presets, state.logos, state.media, job_id, started)
-        background.add_task(ask_mattes, state.store, state.mattes, job_id, saved)
+        background.add_task(ask_mattes, state.store, state.mattes, job_id, saved, state.media)
 
     return after
 
@@ -1887,6 +1887,20 @@ def media_retimed_file(media_id: str, name: str, library: Media) -> FileResponse
     return FileResponse(file, media_type="video/mp4", headers=_DERIVED)
 
 
+@router.get("/media/{media_id}/mattes/{name:path}")
+def media_matte_file(media_id: str, name: str, library: Media) -> FileResponse:
+    """A video's or an image's Matte piece (docs/adr/0015), or a reversed copy of it, by the name the
+    Preview Plan gives (app/matte.py's); 404 until it is made."""
+    try:
+        folder = library.mattes(media_id).folder
+    except MediaNotFound:
+        raise HTTPException(404, f"No video or image {media_id}") from None
+    file = (folder / name).resolve()
+    if not file.is_relative_to(folder.resolve()) or file.suffix not in (".mp4", ".png") or file.name.startswith(".") or not file.is_file():
+        raise HTTPException(404, f"No Matte {name} of {media_id}")
+    return FileResponse(file, media_type="image/png" if file.suffix == ".png" else "video/mp4", headers=_DERIVED)
+
+
 def _ask_retimed(
     copies: Copies, duration: float, what: str, body: RetimedRequest, folder: str, settings: Settings, worker: Worker
 ) -> RetimedCopy:
@@ -2068,13 +2082,13 @@ def cancel_person_model_download(model: PersonModelDep) -> None:
 
 
 @router.delete("/models/person", status_code=204)
-def remove_person_model(model: PersonModelDep, mattes: MatteMaker, store: Store) -> None:
-    """Remove the person model from this Mac, and with it every Matte (every Job's MATTES_DIR). 409
-    while a Matte is being made, or the model is being downloaded."""
+def remove_person_model(model: PersonModelDep, mattes: MatteMaker, store: Store, library: Media) -> None:
+    """Remove the person model from this Mac, and with it every Matte (every Job's MATTES_DIR, and
+    every Media Library item's). 409 while a Matte is being made, or the model is being downloaded."""
     try:
         with mattes.idle("A Matte is being made: remove the person model once it is done"):
             model.remove()
-            remove_mattes(store.root.glob(f"*/{MATTES_DIR}"))
+            remove_mattes([*store.root.glob(f"*/{MATTES_DIR}"), *library.folder.glob("*.mattes")])
     except (MatteBusy, PersonModelBusy) as exc:
         raise HTTPException(409, str(exc)) from None
 
@@ -2089,9 +2103,11 @@ class MattePart(BaseModel):
 
 
 class CandidateMatte(MattePart):
-    """The Matte of a Candidate's cut-out Segments together, and each one's by its id (none: nothing is cut out)."""
+    """The Matte of a Candidate's cut-out items together, and each one's by its id: its Segments' (of
+    the Source or a video) and its Overlays' (none: nothing is cut out)."""
 
     segments: dict[str, MattePart]
+    overlays: dict[str, MattePart] = {}
 
 
 class MatteRequest(BaseModel):
@@ -2101,9 +2117,9 @@ class MatteRequest(BaseModel):
 
 @router.post("/jobs/{job_id}/candidates/{candidate_id}/matte")
 def candidate_matte(
-    job_id: str, candidate_id: str, store: Store, mattes: MatteMaker, body: MatteRequest | None = None
+    job_id: str, candidate_id: str, store: Store, mattes: MatteMaker, library: Media, body: MatteRequest | None = None
 ) -> CandidateMatte:
-    """How the Matte of the saved Candidate's cut-out Segments is coming along (\"Finding the subject…
+    """How the Matte of the saved Candidate's cut-out Segments and Overlays is coming along (\"Finding the subject…
     N%\"), polled by the Inspector and the agent; the pieces missing are asked for now (as once the person
     model is downloaded), latest first. With `retry`, their failures are forgotten and they are made
     again. 404 for an unknown Job or Candidate."""
@@ -2114,27 +2130,30 @@ def candidate_matte(
     candidate = next((c for c in store.load_candidates(job_id) or [] if c.id == candidate_id), None)
     if candidate is None or job.source is None:
         raise HTTPException(404, f"Job {job_id} has no Candidate {candidate_id}")
-    wanted = matte_wanted(candidate, source_mattes(store.job_dir(job_id), job.source))
-    pieces = [piece for segment in wanted.values() for piece in segment]
+    wanted = matte_wanted(candidate, source_mattes(store.job_dir(job_id), job.source), media_mattes(library))
+    pieces = [piece for item in wanted.values() for piece in item]
     (mattes.retry if body is not None and body.retry else mattes.ask)(pieces)
 
     def part(status: MatteStatus) -> dict:
         return {"state": status.state, "progress": status.progress, "error": status.error}
 
+    overlays = {overlay.id for overlay in candidate.overlays}
     return CandidateMatte(
-        **part(mattes.status(pieces)), segments={id: MattePart(**part(mattes.status(segment))) for id, segment in wanted.items()}
+        **part(mattes.status(pieces)),
+        segments={id: MattePart(**part(mattes.status(item))) for id, item in wanted.items() if id not in overlays},
+        overlays={id: MattePart(**part(mattes.status(item))) for id, item in wanted.items() if id in overlays},
     )
 
 
-def ask_mattes(store: JobStore, mattes: MatteRunner, job_id: str, candidate: Candidate) -> None:
-    """Ask for the Matte pieces the saved `candidate`'s cut-out Segments lack (`MatteRunner.ask`)."""
+def ask_mattes(store: JobStore, mattes: MatteRunner, job_id: str, candidate: Candidate, library: MediaStore | None = None) -> None:
+    """Ask for the Matte pieces the saved `candidate`'s cut-out Segments and Overlays lack (`MatteRunner.ask`)."""
     try:
         job = store.get(job_id)
     except JobNotFound:
         return
     if job.source is not None:
-        wanted = matte_wanted(candidate, source_mattes(store.job_dir(job_id), job.source))
-        mattes.ask([piece for segment in wanted.values() for piece in segment])
+        wanted = matte_wanted(candidate, source_mattes(store.job_dir(job_id), job.source), media_mattes(library))
+        mattes.ask([piece for item in wanted.values() for piece in item])
 
 
 @router.get("/voices/{engine}/{voice}/sample", response_class=FileResponse)
@@ -2209,8 +2228,9 @@ def sweep_unused(store: JobStore, library: MediaStore, mattes: MatteRunner, job_
     """Remove the Retimed copies (app/retimed.py) of the Job's Source, and of the videos and songs no
     other Job's Candidates use (`media_uses`), that none of its Candidates nor any state in their Revision
     History plays from; the Job's picture layers' pictures (app/layer_pictures.py) none of them shows,
-    and the folder they were kept in before (OLD_PICTURES_DIR), whole; and the Source's Matte pieces
-    (app/matte.py) none of them reads (`MatteRunner.sweep`)."""
+    and the folder they were kept in before (OLD_PICTURES_DIR), whole; and the Matte pieces (app/matte.py)
+    none of them reads (`MatteRunner.sweep`), of the Source and of the videos and images no other
+    Job's Candidates use."""
     states = []
     for candidate in store.load_candidates(job_id) or []:
         states += [candidate, *(entry.candidate for entry in store.revision_history(job_id, candidate.id))]
@@ -2231,10 +2251,14 @@ def sweep_unused(store: JobStore, library: MediaStore, mattes: MatteRunner, job_
         read = {
             pieces.path(subject, mattes.version, piece)
             for state in states
-            for wanted in matte_wanted(state, source).values()
+            for wanted in matte_wanted(state, source, media_mattes(library)).values()
             for pieces, subject, piece in wanted
         }
         mattes.sweep(source.folder, read)
+        pictured = {item.id for item in library.all() if item.kind is not MediaKind.AUDIO}
+        for media_id in sorted(set().union(*(state.media_ids() for state in states)) & pictured):
+            if all(use.job_id == job_id for use in media_uses(store, media_id)):
+                mattes.sweep(library.mattes(media_id).folder, read)
 
 
 def sweep_unused_effected(

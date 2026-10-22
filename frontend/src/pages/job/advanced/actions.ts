@@ -1670,37 +1670,50 @@ export function removeAllVideoEffects(scene: { edits: AdvancedEdits; pick: Pick 
   return repictured(scene, (stack) => (stack.length ? [] : stack));
 }
 
-/**
- * The picked Segments that Background removal cuts out (ADR 0015): those of the Source. A media Segment's
- * and an Overlay's come with their Matte beside their item (background-removal/06).
- */
+/** The picked Segments of the Source, which have a Background of their own while cut out (ADR 0015). */
 export const cuttableSegments = ({ edits, pick }: { edits: AdvancedEdits; pick: Pick }): ClipSegment[] =>
   edits.segments.filter((segment) => !segment.media && isPicked(pick, "segment", segment.id));
 
+/** The picked items Background removal cuts out (ADR 0015): Segments, of the Source or a video, and Overlays (videos and images). */
+export const cuttableItems = ({ edits, pick }: { edits: AdvancedEdits; pick: Pick }): (ClipSegment | Overlay)[] => [
+  ...edits.segments.filter((segment) => isPicked(pick, "segment", segment.id)),
+  ...edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id)),
+];
+
+/** `edits` with each of `changed` (its Segments and Overlays, by identity) made anew by `change`. */
+function cutChanged(
+  edits: AdvancedEdits,
+  changed: (ClipSegment | Overlay)[],
+  change: <T extends ClipSegment | Overlay>(item: T) => T,
+): AdvancedEdits {
+  const segments = edits.segments.map((segment) => (changed.includes(segment) ? change(segment) : segment));
+  const overlays = edits.overlays.map((overlay) => (changed.includes(overlay) ? change(overlay) : overlay));
+  return { ...edits, segments, overlays };
+}
+
 /**
- * Every picked Segment of the Source's Background removal switched on (a person, feathered by
+ * Every picked Segment's and Overlay's Background removal switched on (a person, feathered by
  * FEATHER_DEFAULT) or off (the field left out), as one change; null when none is picked or none changes.
  */
 export function setBackgroundRemoval(scene: { edits: AdvancedEdits; pick: Pick }, on: boolean): Outcome | null {
-  const picked = cuttableSegments(scene);
-  if (picked.every((segment) => !!segment.background_removal === on)) return null;
-  const segments = scene.edits.segments.map((segment) => {
-    if (!picked.includes(segment) || !!segment.background_removal === on) return segment;
-    const { background_removal: _was, ...rest } = segment;
-    return on ? { ...rest, background_removal: { subject: "person" as const, feather: FEATHER_DEFAULT } } : rest;
+  const changed = cuttableItems(scene).filter((item) => !!item.background_removal !== on);
+  if (!changed.length) return null;
+  const edits = cutChanged(scene.edits, changed, (item) => {
+    const { background_removal: _was, ...rest } = item;
+    return (on ? { ...rest, background_removal: { subject: "person" as const, feather: FEATHER_DEFAULT } } : rest) as typeof item;
   });
-  return { edits: { ...scene.edits, segments }, pick: scene.pick };
+  return { edits, pick: scene.pick };
 }
 
-/** Every picked cut-out Segment's feather set (0 to FEATHER_MAX, whole pixels), as one change; null when none changes. */
+/** Every picked cut-out Segment's and Overlay's feather set (0 to FEATHER_MAX, whole pixels), as one change; null when none changes. */
 export function setFeather(scene: { edits: AdvancedEdits; pick: Pick }, feather: number): Outcome | null {
   const value = Math.min(FEATHER_MAX, Math.max(0, Math.round(feather)));
-  const picked = cuttableSegments(scene).filter((segment) => segment.background_removal && segment.background_removal.feather !== value);
-  if (!picked.length) return null;
-  const segments = scene.edits.segments.map((segment) =>
-    picked.includes(segment) && segment.background_removal ? { ...segment, background_removal: { ...segment.background_removal, feather: value } } : segment,
+  const changed = cuttableItems(scene).filter((item) => item.background_removal && item.background_removal.feather !== value);
+  if (!changed.length) return null;
+  const edits = cutChanged(scene.edits, changed, (item) =>
+    item.background_removal ? { ...item, background_removal: { ...item.background_removal, feather: value } } : item,
   );
-  return { edits: { ...scene.edits, segments }, pick: scene.pick };
+  return { edits, pick: scene.pick };
 }
 
 // A cut-out Segment's Background when it has none of its own: the picture blurred (ADR 0015).

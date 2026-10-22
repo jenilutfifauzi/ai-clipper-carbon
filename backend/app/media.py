@@ -36,6 +36,7 @@ from app.derived import (
     strip_outputs,
 )
 from app.library import Index, shrink
+from app.matte import Mattes
 from app.renderer import last_lines
 from app.retimed import Copies, CopySize
 from app.transcript import Language
@@ -106,7 +107,8 @@ MEDIA_TYPES = {MediaKind.VIDEO: "video/mp4", MediaKind.AUDIO: "audio/mp4", Media
 class MediaStore:
     """The Media Library, in `folder`: per item <id>.mp4 (and <id>.proxy.mp4, <id>.jpg, the
     Filmstrip's chunks in <id>.strips and Retimed copies in <id>.retimed), <id>.m4a or <id>.png, the
-    Peaks' chunks of one with sound in <id>.peaks, and their index."""
+    Peaks' chunks of one with sound in <id>.peaks, a video's or an image's Matte in <id>.mattes, and
+    their index."""
 
     def __init__(self, folder: Path, ffmpeg: Path, ffprobe: Path) -> None:
         self.folder = folder
@@ -180,6 +182,15 @@ class MediaStore:
             raise MediaNotFound(media_id)
         videos = {CopySize.PREVIEW: self.proxy(media_id), CopySize.FULL: self.file(media_id)}
         return Copies(self.folder / f"{media_id}.retimed", videos, (item.width, item.height, FPS))
+
+    def mattes(self, media_id: str) -> Mattes:
+        """A video's or an image's Matte (app/matte.py), in <id>.mattes, made from its file (an image's
+        one PNG); MediaNotFound for a song."""
+        item = self.get(media_id)
+        if item.kind is MediaKind.AUDIO or not item.width or not item.height:
+            raise MediaNotFound(media_id)
+        still = item.kind is MediaKind.IMAGE
+        return Mattes(self.folder / f"{media_id}.mattes", self.file(media_id), (item.width, item.height, FPS), item.duration or 0.0, still)
 
     def add(self, upload: BinaryIO, filename: str) -> MediaItem:
         """Keep what `upload` holds, uploaded as `filename`, as an item. BadMedia when it is too large

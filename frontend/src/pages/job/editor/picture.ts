@@ -2,6 +2,10 @@ import type { CSSProperties } from "react";
 import { mediaItemUrl, type Background, type Box, type MediaItem, type Panel, type Picture, type PictureLayerEvent, type RenderPlan, type ScenePlan, type ShapeKind, type Transform } from "../../../api";
 import { KEY_RANGES, valueAt, type PictureKey } from "./keyframes";
 
+// Blur's background, blurred with a sigma of 10 shrunk pixels at a quarter size, and darkened.
+export const BLUR_SIGMA = 40;
+export const BLUR_BRIGHTNESS = 0.9;
+
 /**
  * Pictures as the preview draws them (ADR 0007): a Picture of the plan as CSS, and the fitted-size
  * rule of backend/app/pictures.py and the Transform's limits, which the inspector's Fit and Fill, a

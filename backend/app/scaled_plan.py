@@ -13,7 +13,7 @@ crop and item size in its item's; and times, Eases, scales, rotations and opacit
 - A Picture's drawn size (even), centre, bounds, corners, border, shadow and the Keyframes of its
   centre are scaled; its drawn size at scale 1 too, so that a keyed scale still gives its size.
   An Overlay's Video Effects' sizes (docs/adr/0014) are scaled with it, and a Segment's and an
-  Adjustment Layer's with the frame, as is a Segment's Background removal's feather (docs/adr/0015).
+  Adjustment Layer's with the frame, as is a Segment's and an Overlay's Background removal's feather (docs/adr/0015).
 - A picture layer's picture is rasterised at the output's size: its layout's scale is multiplied by
   the factor (under MAX_LAYER_PICTURE, as `picture_scale` keeps it), which names another picture
   (`PictureLayout.name` hashes the scale) of the same `picture_key`, so that a 4K picture and a
@@ -77,8 +77,12 @@ def drawn_scale(plan: RenderPlan) -> float:
 
 
 def _scaled_overlay(event: OverlayEvent, k: float) -> OverlayEvent:
-    """An Overlay's picture and its Video Effects' sizes drawn `k` times as large."""
-    return replace(event, picture=_scaled_picture(event.picture, k), video_effects=scaled_effects(event.video_effects, k))
+    """An Overlay's picture, its Video Effects' sizes and its Background removal's feather drawn `k` times as large."""
+    removal = event.background_removal
+    return replace(
+        event, picture=_scaled_picture(event.picture, k), video_effects=scaled_effects(event.video_effects, k),
+        background_removal=None if removal is None else replace(removal, feather=round(removal.feather * k, 3)),
+    )
 
 
 def _scaled_segment(segment: SegmentPlan, k: float) -> SegmentPlan:

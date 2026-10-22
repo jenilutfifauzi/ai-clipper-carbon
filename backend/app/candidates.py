@@ -730,11 +730,16 @@ class Overlay:
     # and under its picture, so it shows only where that picture doesn't cover the frame or is cut
     # out. Over the Main Track in one saved before it.
     behind: bool = False
+    # Its Background removal (docs/adr/0015): only its subject kept by its item's Matte, after its crop,
+    # scale and flips and before its Grade and Video Effects (a Chroma or Luma key's alpha multiplying
+    # it), so that what is under it shows elsewhere. None (off) in one saved before it.
+    background_removal: "BackgroundRemoval | None" = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "keys", checked_keys(self.keys, f"Overlay {self.id}", PICTURE_KEYS + SOUND_KEYS, self.secs))
         object.__setattr__(self, "audio_effects", checked_effects(self.audio_effects, f"Overlay {self.id}"))
         object.__setattr__(self, "video_effects", checked_video_effects(self.video_effects, f"Overlay {self.id}", keyed=True))
+        checked_background_removal(self.background_removal, f"Overlay {self.id}")
 
 
 @dataclass(frozen=True)

@@ -7,19 +7,19 @@ import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
 import { formatBytes } from "../../../format";
 import { Group, Mixed } from "../editor/StyleFields";
-import { backedSegments, cuttableSegments, sameBackground, segmentBackground, setBackgroundRemoval, setFeather, setSegmentBackground } from "./actions";
+import { backedSegments, cuttableItems, sameBackground, segmentBackground, setBackgroundRemoval, setFeather, setSegmentBackground } from "./actions";
 import type { AdvancedEdits } from "./edits";
 import { MatteSource, matteOf } from "./matte";
 import type { Pick } from "./pick";
 import { PersonModelSource, type PersonModelAction } from "./personModel";
 import { BackgroundPicker } from "./TransformFields";
 
-/** The switch and feather of the picked Segments of the Source (`backgroundRemovalChanges`). */
+/** The switch and feather of the picked Segments and Overlays (`backgroundRemovalChanges`). */
 export interface RemovalControls {
   // Each one's Background removal (null: off).
   removals: (BackgroundRemoval | null)[];
-  // The ids of those cut out, whose Matte the section follows, and what they show (their ranges and
-  // removals), so that a change of it reads the Matte again.
+  // The ids of those cut out, whose Matte the section follows (an Overlay's as `overlay:<id>`,
+  // `matteOf`), and what they show (their ranges and removals), so that a change of it reads the Matte again.
   cut: string[];
   shown: string;
   onSwitch: (on: boolean) => void;
@@ -31,30 +31,32 @@ export interface RemovalControls {
 }
 
 /**
- * The Remove background section's controls for the picked Segments of the Source (ADR 0015): switching
- * Background removal on or off, and setting the feather, on all of them, and the Background of those
- * cut out, each one change (a drag of the feather, or of the colour, one step of undo). Null without
- * any (an Overlay's, a media Segment's come later).
+ * The Remove background section's controls for the picked Segments (of the Source or a video) and
+ * Overlays (ADR 0015): switching Background removal on or off, and setting the feather, on all of
+ * them, and the Background of the Segments of the Source cut out (a video's is its framing's), each
+ * one change (a drag of the feather, or of the colour, one step of undo). Null without any.
  */
 export function backgroundRemovalChanges(
   scene: { edits: AdvancedEdits; pick: Pick },
   onEdits: (edits: AdvancedEdits, group?: string) => void,
 ): RemovalControls | null {
-  const segments = cuttableSegments(scene);
-  if (!segments.length) return null;
-  const cut = segments.filter((segment) => segment.background_removal);
-  const ids = (picked: { id: string }[]) => picked.map((segment) => segment.id).join(",");
+  const items = cuttableItems(scene);
+  if (!items.length) return null;
+  const cut = items.filter((item) => item.background_removal);
+  const ids = (picked: { id: string }[]) => picked.map((item) => item.id).join(",");
+  // An Overlay's by its kind, apart from a Segment's of the same id.
+  const named = (item: (typeof items)[number]) => ("secs" in item ? `overlay:${item.id}` : item.id);
   return {
-    removals: segments.map((segment) => segment.background_removal ?? null),
-    cut: cut.map((segment) => segment.id),
-    shown: JSON.stringify(cut.map(({ id, start, end, hold, background_removal }) => [id, start, end, hold, background_removal])),
+    removals: items.map((item) => item.background_removal ?? null),
+    cut: cut.map(named),
+    shown: JSON.stringify(cut.map((item) => [named(item), item.start, "secs" in item ? [item.secs, item.offset, item.speed, item.reverse] : [item.end, item.hold, item.speed, item.reverse], item.background_removal])),
     onSwitch: (on) => {
       const outcome = setBackgroundRemoval(scene, on);
       if (outcome) onEdits(outcome.edits);
     },
     onFeather: (feather, group) => {
       const outcome = setFeather(scene, feather);
-      if (outcome) onEdits(outcome.edits, `${group}:${ids(segments)}`);
+      if (outcome) onEdits(outcome.edits, `${group}:${ids(items)}`);
     },
     backgrounds: backedSegments(scene).map(segmentBackground),
     onBackground: (background, field) => {
@@ -67,7 +69,7 @@ export function backgroundRemovalChanges(
 
 /**
  * A Segment's or an Overlay's "Remove background" section (GLOSSARY.md, Background removal; ADR 0015),
- * on a desktop and in the phone's sheet: the picked Segments of the Source's switch and feather
+ * on a desktop and in the phone's sheet: the picked Segments' and Overlays' switch and feather
  * (`removal`), their Matte's progress (MatteSource, of the Candidate `matte` names), and the person
  * model's state, read and polled while it downloads (PersonModelSource).
  */
@@ -140,7 +142,7 @@ export function RemoveBackgroundFields({
   message: string | null;
   onAction: (action: PersonModelAction) => void;
   removal?: RemovalControls | null;
-  // The cut-out Segments' Matte together (matteOf); null with none cut out.
+  // The cut-out Segments' and Overlays' Matte together (matteOf); null with none cut out.
   matte?: MattePart | null;
   // Why it couldn't be read.
   matteMessage?: string | null;

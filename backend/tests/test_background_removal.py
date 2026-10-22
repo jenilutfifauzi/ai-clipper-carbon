@@ -213,10 +213,10 @@ def test_switching_it_on_makes_the_pieces_its_range_reads_and_a_trim_or_another_
     job = reviewed(client)
     candidate = add(client, job, "halo", "ya")
     first, second = ranges(job, ("halo", "kabar"), ("kita", "soal"))
-    assert matte_of(client, job, candidate) == {"state": "ready", "progress": 1.0, "error": None, "segments": {}}
+    assert matte_of(client, job, candidate) == {"state": "ready", "progress": 1.0, "error": None, "segments": {}, "overlays": {}}
     candidate = patch(client, job, candidate, segments=[cut_out(first), second])
     assert settled(client, job, candidate) == {
-        "state": "ready", "progress": 1.0, "error": None, "segments": {"s0": {"state": "ready", "progress": 1.0, "error": None}},
+        "state": "ready", "progress": 1.0, "error": None, "segments": {"s0": {"state": "ready", "progress": 1.0, "error": None}}, "overlays": {},
     }
     assert pieces(settings, job) == ["person-fake-1-0.mp4"]
     made = (settings.data_dir / "jobs" / job["id"] / MATTES_DIR / "person-fake-1-0.mp4").stat().st_mtime_ns
@@ -258,9 +258,9 @@ def test_the_preview_plan_says_where_the_pieces_its_cut_out_segments_read_are_se
     assert mattes() == []
     # A draft cutting it out lists its piece before it is made; the preview draws the picture whole until it is served.
     url = f"/media/{job['id']}/{MATTES_DIR}/person-fake-1-0.mp4"
-    assert mattes({"segments": [cut_out(first)]}) == [{"start": 0, "url": url}]
+    assert mattes({"segments": [cut_out(first)]}) == [{"start": 0, "url": url, "media": None}]
     settled(client, job, patch(client, job, candidate, segments=[cut_out(first)]))
-    assert mattes() == [{"start": 0, "url": url}]
+    assert mattes() == [{"start": 0, "url": url, "media": None}]
     served = client.get(url)
     assert served.status_code == 200 and served.content[4:8] == b"ftyp"
 

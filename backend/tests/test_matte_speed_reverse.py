@@ -179,15 +179,15 @@ def test_the_preview_plan_says_where_a_reversed_segments_matte_copy_is_served(cl
     [saved] = candidate["segments"]
     start, end = saved["start"], saved["end"]
     url = f"/media/{job['id']}/{MATTES_DIR}/person-fake-1/reversed-full-{round(start * 1000)}-{round(end * 1000)}.mp4"
-    assert shown["matte_copies"] == [{"start": start, "end": end, "url": url, "at": 0}]
+    assert shown["matte_copies"] == [{"start": start, "end": end, "url": url, "at": 0, "media": None}]
     served = client.get(url)
     assert served.status_code == 200 and served.content[4:8] == b"ftyp"
     # A trim inward reads the copy it has, from further in.
     [later, sooner] = ranges(job, ("apa", "kabar"), ("halo", "semua"))
     trimmed = preview(client, job, candidate, {"segments": [cut_out(later | {"reverse": True})]})
-    assert trimmed["matte_copies"] == [{"start": later["start"], "end": end, "url": url, "at": 0}]
+    assert trimmed["matte_copies"] == [{"start": later["start"], "end": end, "url": url, "at": 0, "media": None}]
     trimmed = preview(client, job, candidate, {"segments": [cut_out(sooner | {"reverse": True})]})
-    assert trimmed["matte_copies"] == [{"start": start, "end": sooner["end"], "url": url, "at": pytest.approx(end - sooner["end"])}]
+    assert trimmed["matte_copies"] == [{"start": start, "end": sooner["end"], "url": url, "at": pytest.approx(end - sooner["end"]), "media": None}]
 
 
 # The reversed copy, made from the pieces

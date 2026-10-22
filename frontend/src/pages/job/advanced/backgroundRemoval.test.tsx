@@ -1,7 +1,8 @@
 // .scratch/background-removal/issues/02-cut-out-a-source-segment-in-the-render.md: the Inspector's
-// "Remove background" section gains the switch and feather of the picked Segments of the Source, each
-// change one step of undo, on a mixed Pick by shared fields, and their Matte's status ("Finding the
-// subject… N%", waiting for the person model, failed with Retry), polled while it is made (ADR 0015).
+// "Remove background" section gains the switch and feather of the picked Segments of the Source (and,
+// issues/06, of a video's Segments and of Overlays), each change one step of undo, on a mixed Pick by
+// shared fields, and their Matte's status ("Finding the subject… N%", waiting for the person model,
+// failed with Retry), polled while it is made (ADR 0015).
 // The phone's sheet shows the same Inspector. No jsdom: the markup is checked with renderToStaticMarkup.
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
@@ -61,36 +62,49 @@ const all = picked({ kind: "segment", id: "a" }, { kind: "segment", id: "b" }, {
 const removals = (after: AdvancedEdits) => after.segments.map((segment) => segment.background_removal);
 
 describe("switching Background removal and its feather", () => {
-  test("turns it on for every picked Segment of the Source as one change, leaving a media Segment's and an Overlay's", () => {
+  test("turns it on for every picked Segment, of the Source or a video, and Overlay as one change", () => {
     const on = setBackgroundRemoval({ edits: state, pick: all }, true)!;
-    expect(removals(on.edits)).toEqual([{ subject: "person", feather: 8 }, CUT, undefined]);
-    expect(on.edits.overlays).toEqual([overlay]);
+    expect(removals(on.edits)).toEqual([{ subject: "person", feather: 8 }, CUT, CUT]);
+    expect(on.edits.overlays).toEqual([{ ...overlay, background_removal: CUT }]);
     // Off leaves the field out; nothing changes twice.
     const off = setBackgroundRemoval({ edits: on.edits, pick: all }, false)!;
-    expect(off.edits.segments.some((segment) => "background_removal" in segment)).toBe(false);
+    expect([...off.edits.segments, ...off.edits.overlays].some((item) => "background_removal" in item)).toBe(false);
     expect(setBackgroundRemoval({ edits: off.edits, pick: all }, false)).toBeNull();
-    expect(setBackgroundRemoval({ edits: state, pick: picked({ kind: "overlay", id: "o" }) }, true)).toBeNull();
+    // An Overlay alone.
+    const alone = setBackgroundRemoval({ edits: state, pick: picked({ kind: "overlay", id: "o" }) }, true)!;
+    expect(alone.edits.overlays[0].background_removal).toEqual(CUT);
+    expect(alone.edits.segments).toEqual(state.segments);
   });
 
   test("sets the feather of every picked cut-out one, in whole pixels within 0 to 40", () => {
     const on = setBackgroundRemoval({ edits: state, pick: all }, true)!;
-    expect(removals(setFeather({ edits: on.edits, pick: all }, 12.4)!.edits)).toEqual([{ subject: "person", feather: 12 }, { subject: "person", feather: 12 }, undefined]);
+    const feathered = setFeather({ edits: on.edits, pick: all }, 12.4)!.edits;
+    expect(removals(feathered)).toEqual([12, 12, 12].map((feather) => ({ subject: "person", feather })));
+    expect(feathered.overlays[0].background_removal).toEqual({ subject: "person", feather: 12 });
     expect(removals(setFeather({ edits: on.edits, pick: all }, 99)!.edits)[0]).toEqual({ subject: "person", feather: 40 });
-    // Only the cut-out ones: the other keeps its switch off.
-    expect(removals(setFeather({ edits: state, pick: all }, 2)!.edits)).toEqual([{ subject: "person", feather: 2 }, undefined, undefined]);
+    // Only the cut-out ones: the others keep their switch off.
+    const one = setFeather({ edits: state, pick: all }, 2)!.edits;
+    expect(removals(one)).toEqual([{ subject: "person", feather: 2 }, undefined, undefined]);
+    expect(one.overlays).toEqual([overlay]);
     expect(setFeather({ edits: state, pick: all }, 8)).toBeNull();
   });
 
   test("the section's controls make each change one step of undo, a drag of the feather one group", () => {
     const changes: [AdvancedEdits, string | undefined][] = [];
     const controls = backgroundRemovalChanges({ edits: state, pick: all }, (after, group) => changes.push([after, group]))!;
-    expect(controls.removals).toEqual([{ subject: "person", feather: 8 }, null]);
+    expect(controls.removals).toEqual([{ subject: "person", feather: 8 }, null, null, null]);
     expect(controls.cut).toEqual(["a"]);
     controls.onSwitch(true);
     controls.onFeather(10, "background-removal:feather");
-    expect(changes.map(([, group]) => group)).toEqual([undefined, "background-removal:feather:a,b"]);
+    expect(changes.map(([, group]) => group)).toEqual([undefined, "background-removal:feather:a,b,m,o"]);
     expect(removals(changes[1][0])[0]).toEqual({ subject: "person", feather: 10 });
-    expect(backgroundRemovalChanges({ edits: state, pick: picked({ kind: "overlay", id: "o" }) }, () => {})).toBeNull();
+    // An Overlay alone has the switch, its Matte followed by its kind; no Background of its own.
+    const cutOverlay = edits(state.segments);
+    cutOverlay.overlays = [{ ...overlay, background_removal: CUT }];
+    const own = backgroundRemovalChanges({ edits: cutOverlay, pick: picked({ kind: "overlay", id: "o" }) }, () => {})!;
+    expect(own.removals).toEqual([CUT]);
+    expect(own.cut).toEqual(["overlay:o"]);
+    expect(own.backgrounds).toEqual([]);
   });
 });
 
@@ -134,7 +148,7 @@ describe("the Remove background section's switch, feather and Matte", () => {
 });
 
 const part = (state: MattePart["state"], progress = 0, error: string | null = null): MattePart => ({ state, progress, error });
-const matte = (segments: Record<string, MattePart>): CandidateMatte => ({ ...part("ready", 1), segments });
+const matte = (segments: Record<string, MattePart>, overlays: Record<string, MattePart> = {}): CandidateMatte => ({ ...part("ready", 1), segments, overlays });
 
 describe("the cut-out Segments' Matte", () => {
   test("is told together: failed first, then being made (or not saved yet), then waiting, else ready", () => {
@@ -143,6 +157,9 @@ describe("the cut-out Segments' Matte", () => {
     expect(matteOf(matte({ a: part("making", 0.5), b: part("failed", 0, "boom") }), ["a", "b"])).toEqual(part("failed", 0.25, "boom"));
     expect(matteOf(matte({ a: part("waiting"), b: part("ready", 1) }), ["a", "b"])).toEqual(part("waiting", 0.5));
     expect(matteOf(matte({ a: part("ready", 1) }), ["a"])).toEqual(part("ready", 1));
+    // An Overlay's by its kind, apart from a Segment of the same id.
+    expect(matteOf(matte({ o: part("ready", 1) }, { o: part("making", 0.4) }), ["o", "overlay:o"])).toEqual(part("making", 0.7));
+    expect(matteOf(matte({}, { o: part("failed", 0, "boom") }), ["overlay:o"])).toEqual(part("failed", 0, "boom"));
   });
 
   test("is read when the cut-out Segments change and after their save, polled while it is made, and Retry asks again", async () => {

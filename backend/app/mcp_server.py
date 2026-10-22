@@ -369,8 +369,9 @@ Edits:
   sizes are as given. A lone Segment of the episode with a stack (even all off) stays a Segment.
   merge_candidate_items replaces its stack as a whole; the dry run lists its enabled ones under
   `segments`.
-- A Segment of the episode's `background_removal` {{subject "person", feather 0-40 px, default 4}}
-  keeps only the speaker, over their own picture blurred, in any Layout (null: off). Its Matte is
+- A Segment's or an Overlay's `background_removal` {{subject "person", feather 0-40 px, default 4}}
+  keeps only the speaker (null: off): an episode's Segment over its own picture blurred, in any Layout;
+  a video's over its framing's Background; an Overlay over what is under it (times a key's alpha). Its Matte is
   made in the background (the person model first: download_person_model); a render makes what is
   missing, and fails on a failed one. wait_for_matte follows it. The dry run lists it, feather as drawn.
   Its `background` {{kind "blur"|"colour"|"image", colour, image (a Media Library image id)}} shows
@@ -1044,9 +1045,9 @@ def build_mcp(app: FastAPI) -> MCPServer:
     async def wait_for_matte(
         ctx: Context, job_id: str, candidate_id: str, retry: bool = False, timeout_secs: int = Field(MODEL_WAIT_SECS, ge=1, le=WAIT_MAX_SECS)
     ) -> dict:
-        """Wait for the Matte of a Candidate's cut-out Segments (`retry`: a failed one). Gives its state
-        (ready; making on timeout: call again; waiting for the person model; failed, error), progress
-        0..1 and each Segment's."""
+        """Wait for the Matte of a Candidate's cut-out Segments and Overlays (`retry`: a failed one). Gives
+        its state (ready; making on timeout: call again; waiting for the person model; failed, error),
+        progress 0..1 and each Segment's and Overlay's."""
         path = f"/jobs/{job_id}/candidates/{candidate_id}/matte"
         matte = await api("POST", path, json={"retry": retry})
         deadline = asyncio.get_running_loop().time() + timeout_secs
@@ -1235,6 +1236,7 @@ def _overlay_view(event: dict, copied: Callable[[dict], bool]) -> dict:
         **_compact({
             "grade": _grade_view(event["grade"]), "video_effects": _effects_view(event.get("video_effects", [])),
             "blend": None if event.get("blend", "normal") == "normal" else event["blend"],
+            "background_removal": event.get("background_removal"),
         }),
         **({} if event["image"] else _video_read(event, copied)),
         **_motion_view(event["picture"]),

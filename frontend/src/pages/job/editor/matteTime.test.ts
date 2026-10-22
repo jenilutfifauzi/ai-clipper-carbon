@@ -2,8 +2,8 @@
 // the backend's tests read too (backend/tests/fixtures/matte_frames.json), so that the two can't drift.
 import { describe, expect, test } from "vitest";
 import cases from "../../../../../backend/tests/fixtures/matte_frames.json";
-import type { MatteCopy } from "../../../api";
-import { copyClock, copyFrame, matteAt, matteCopyOf, matteFrame, matteSeek, segmentMatte, SOURCE_CLOCK } from "./matteTime";
+import type { MatteCopy, MattePiece } from "../../../api";
+import { copyClock, copyFrame, itemPieces, matteAt, matteCopyOf, matteFrame, matteSeek, segmentMatte, SOURCE_CLOCK } from "./matteTime";
 import type { SegmentRange } from "./segmentTime";
 
 describe("a cut-out Segment's Matte", () => {
@@ -57,5 +57,25 @@ describe("a cut-out Segment played from a Retimed copy follows it", () => {
   test("its reversed Matte copy is the plan's for its range", () => {
     expect(matteCopyOf([copy], { start: 8, end: 16, reverse: true })).toBe(copy);
     expect(matteCopyOf([copy], { start: 8, end: 15, reverse: true })).toBeNull();
+  });
+});
+
+describe("a Media Library item's Matte (background-removal 06)", () => {
+  const source: MattePiece = { start: 0, url: "/media/j/mattes/person-v-0.mp4" };
+  const video: MattePiece = { start: 0, url: "/api/media/v/mattes/person-v-0.mp4", media: "v" };
+  const image: MattePiece = { start: 0, url: "/api/media/i/mattes/person-v.png", media: "i" };
+
+  test("is read in its own pieces, apart from the Source's", () => {
+    expect(itemPieces([source, video, image])).toEqual([source]);
+    expect(itemPieces([source, video, image], "v")).toEqual([video]);
+    expect(itemPieces(undefined, "i")).toEqual([]);
+  });
+
+  test("its reversed copy is the plan's for its item and range", () => {
+    const own: MatteCopy = { start: 1, end: 3, url: "/api/media/v/mattes/person-v/reversed-full-1000-3000.mp4", at: 0, media: "v" };
+    const sourceCopy: MatteCopy = { ...own, url: "/media/j/mattes/x.mp4", media: null };
+    expect(matteCopyOf([sourceCopy, own], { start: 1, end: 3, reverse: true }, "v")).toBe(own);
+    expect(matteCopyOf([sourceCopy, own], { start: 1, end: 3, reverse: true })).toBe(sourceCopy);
+    expect(matteCopyOf([own], { start: 1, end: 3, reverse: true }, "w")).toBeNull();
   });
 });

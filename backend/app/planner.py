@@ -647,20 +647,23 @@ class SegmentPlan:
     # Its frame's enabled Video Effects (docs/adr/0014), in order, drawn after its Grade and before the
     # joins; their sizes the 1080x1920 frame's (scale 1).
     video_effects: list[VideoEffect] = field(default_factory=list)
-    # Its Background removal (docs/adr/0015), a Source Segment's: its picture (its Scenes' panels and
-    # pictures, Blur's fill left out) cut by its Matte, the feather times its picture's scale (as drawn),
-    # then graded and drawn through its Video Effects, laid over its `background` (the Background in
-    # force: the picture blurred unless it has one of its own), before the joins. `matte` is the
-    # pieces of the Source's Matte it reads (app/matte.py), by their starts in seconds; `matte_files`
-    # the renderer's: their files, in the render's `files`. A reversed one's Matte is read from its
-    # reversed copy (`matte_copy`, the renderer's: its file, played forwards from `matte_copy_at`
-    # seconds, as its picture is from its Retimed copy).
+    # Its Background removal (docs/adr/0015): its picture (its Scenes' panels and pictures, Blur's
+    # fill left out; a video's picture) cut by its item's Matte, the feather times its picture's scale
+    # (as drawn), then graded and drawn through its Video Effects, laid over its `background` (a
+    # Source Segment's Background in force: the picture blurred unless it has one of its own; a
+    # video's is its Scene's, its Framing's, and this None), before the joins. `matte` is the pieces
+    # of the Source's Matte it reads (app/matte.py), by their starts in seconds (a video's, filled in
+    # by the renderer's `matted` with the rest); `matte_files` the renderer's: their files, in the
+    # render's `files`, its picture's first frame `matte_at` seconds into them joined. A reversed
+    # one's Matte is read from its reversed copy (`matte_copy`, the renderer's: its file, played
+    # forwards from `matte_copy_at` seconds, as its picture is from its Retimed copy).
     background_removal: BackgroundRemoval | None = None
     background: Background | None = None
     matte: list[int] = field(default_factory=list)
     matte_files: list[str] = field(default_factory=list)
     matte_copy: str | None = None
     matte_copy_at: float = 0.0
+    matte_at: float = 0.0
 
     @property
     def time(self) -> SegmentTime:
@@ -791,6 +794,18 @@ class OverlayEvent:
     # (`overlay_scale`), as drawn.
     video_effects: list[VideoEffect] = field(default_factory=list)
     blend: BlendMode = BlendMode.NORMAL
+    # Its Background removal (docs/adr/0015), its feather times its scale (`overlay_scale`), as drawn:
+    # its picture cut by its item's Matte after its crop, scale and flips, before its Grade and Video
+    # Effects (whose Chroma or Luma key multiplies the alpha). The rest is the renderer's, filled in by
+    # `matted`: the pieces of its item's Matte it reads (`matte`, by their starts; an image's one, 0)
+    # and their files (`matte_files`), its first frame `matte_at` seconds into them joined; a reversed
+    # one's reversed copy (`matte_copy`, read from `matte_copy_at`), as SegmentPlan's.
+    background_removal: BackgroundRemoval | None = None
+    matte: list[int] = field(default_factory=list)
+    matte_files: list[str] = field(default_factory=list)
+    matte_at: float = 0.0
+    matte_copy: str | None = None
+    matte_copy_at: float = 0.0
 
     @property
     def time(self) -> SegmentTime:
@@ -1165,7 +1180,7 @@ def plan_render(
                 moved = [keyed_scene(scene, given.framing.transform, given.keys, at, rate) for scene in moved]
             plans.extend(moved)
             fade_in, fade_out = fades_within(given.fade_in, given.fade_out, length)
-            cut = _cut_out(given, framing if layout is Layout.MANUAL else None, source.duration, source.fps)
+            cut = _cut_out(given, given.framing if given.media is not None else framing if layout is Layout.MANUAL else None, source.duration, source.fps)
             segments.append(
                 SegmentPlan(
                     at, round(at + length, 3), given.start, given.end, given.media, given.volume, given.silent, len(framed),
@@ -1226,15 +1241,18 @@ def plan_render(
 
 
 def _cut_out(given: SegmentInput, framing: Framing | None, duration: float, fps: float) -> dict:
-    """A Source Segment's Background removal as its SegmentPlan carries it (docs/adr/0015): its
-    feather times its picture's scale (`overlay_scale`: a Manual Candidate's Framing's; 1 in Track,
-    Split and Blur, whose pictures fill their panels), the Background in force (its own, else the
-    picture blurred) and the pieces of the Source's Matte (`duration` long, at `fps`) its range reads. Nothing without one, and
-    for now nothing for a media Segment's."""
+    """A Segment's Background removal as its SegmentPlan carries it (docs/adr/0015): its feather times
+    its picture's scale (`overlay_scale` of its `framing`: a video's own, a Manual Candidate's; 1 in
+    Track, Split and Blur, whose pictures fill their panels). A Source Segment's also has the
+    Background in force (its own, else the picture blurred) and the pieces of the Source's Matte
+    (`duration` long, at `fps`) its range reads; a video's Background is its Framing's, in its Scene,
+    and its pieces are its item's, found by the renderer. Nothing without one."""
     removal = given.background_removal
-    if removal is None or given.media is not None:
+    if removal is None:
         return {}
     scale = overlay_scale(framing.transform) if framing is not None else 1.0
+    if given.media is not None:
+        return {"background_removal": replace(removal, feather=round(removal.feather * scale, 3))}
     end = given.start if given.hold is not None else given.end
     return {
         "background_removal": replace(removal, feather=round(removal.feather * scale, 3)),
@@ -1817,10 +1835,13 @@ def _overlay_event(overlay: Overlay, duration: float, items: dict[str, MediaInfo
     # and shadow are in output pixels, so they don't.
     radius = round(overlay.radius * min(picture.width, picture.height), 2)
     picture = replace(picture, radius=radius, border=overlay.border, shadow=overlay.shadow)
+    scale = overlay_scale(overlay.transform)
+    removal = overlay.background_removal
     return OverlayEvent(
         overlay.media, picture, start, end, offset, item.duration is None, overlay.id, overlay.speed, overlay.pitch, overlay.reverse,
         overlay.animation_in, overlay.animation_out, overlay.animation_ms, overlay.grade,
-        scaled_effects(enabled_video_effects(overlay.video_effects), overlay_scale(overlay.transform)), overlay.blend,
+        scaled_effects(enabled_video_effects(overlay.video_effects), scale), overlay.blend,
+        None if removal is None else replace(removal, feather=round(removal.feather * scale, 3)),
     )
 
 

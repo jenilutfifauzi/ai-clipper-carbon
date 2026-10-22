@@ -344,9 +344,10 @@ export interface MattePart {
   error: string | null;
 }
 
-// The Matte of a saved Candidate's cut-out Segments together, and each one's by its id.
+// The Matte of a saved Candidate's cut-out Segments and Overlays together, and each one's by its id.
 export interface CandidateMatte extends MattePart {
   segments: Record<string, MattePart>;
+  overlays?: Record<string, MattePart>;
 }
 
 export interface VoicesList {
@@ -884,6 +885,9 @@ export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   // Behind the Main Track (ADR 0015): on the Behind Track, over each Segment's Background and under its
   // picture. Over the Main Track when missing.
   behind?: boolean;
+  // Its Background removal (ADR 0015): only its subject kept by its item's Matte, what is under it
+  // showing elsewhere (times a Chroma or Luma key's alpha). Off when missing.
+  background_removal?: BackgroundRemoval | null;
 }
 
 // How an Overlay is laid over what is under it (GLOSSARY.md, Blend Mode; ADR 0014): covering it by its
@@ -971,6 +975,8 @@ export interface OverlayEvent extends Omit<Retiming, "hold">, OverlayAnimation {
   video_effects?: VideoEffect[];
   // Its Overlay's Blend Mode (ADR 0014). Normal when missing.
   blend?: BlendMode;
+  // Its Overlay's Background removal (ADR 0015), the feather as drawn (times its scale).
+  background_removal?: BackgroundRemoval | null;
 }
 
 // How one Segment gives way to the next: its stored id, with a recipe in backend/app/transitions.py and a look in pages/job/editor/transitions.ts.
@@ -1078,9 +1084,9 @@ export interface SegmentPlan extends Retiming {
   audio_effects?: AudioEffect[];
   // Its frame's enabled Video Effects (ADR 0014), in order, after its Grade; sizes the 1080x1920 frame's.
   video_effects?: VideoEffect[];
-  // A cut-out Source Segment's (ADR 0015): its Background removal, the feather as drawn (times its
-  // picture's scale); the Background in force (its own, else the picture blurred); and the pieces of the Source's
-  // Matte it reads, by their starts in seconds (10 s each).
+  // A cut-out Segment's (ADR 0015): its Background removal, the feather as drawn (times its picture's
+  // scale); a Source Segment's Background in force (its own, else the picture blurred; a video's is
+  // its Scene's) and the pieces of the Source's Matte it reads, by their starts in seconds (10 s each).
   background_removal?: BackgroundRemoval | null;
   background?: Background | null;
   matte?: number[];
@@ -1169,28 +1175,32 @@ export interface PreviewPlan {
   words_errors: Record<string, string>;
   // False while the Clip is planned as one Scene, unanalysed.
   analysed: boolean;
-  // The Matte pieces its cut-out Segments read (ADR 0015), in order: the preview draws the cut from
-  // them, and the picture whole where a piece isn't served yet. None in a plan made by hand.
+  // The Matte pieces its cut-out Segments and Overlays read (ADR 0015), in order: the preview draws
+  // the cut from them, and the picture whole where a piece isn't served yet. None in a plan made by hand.
   mattes?: MattePiece[];
   // The reversed copies of the Matte its reversed cut-out Segments read (ADR 0015, 0009).
   matte_copies?: MatteCopy[];
 }
 
-// A reversed copy of the Source's Matte (backend/app/matte.py's `Reversed`): what a reversed cut-out
-// Segment playing its range from `start` to `end` reads, where it is served once it is made, and
-// seconds into it where it shows the range (`at`, as a Retimed copy's).
+// A reversed copy of an item's Matte (backend/app/matte.py's `Reversed`; the Source's, or the
+// Media Library video `media`'s): what a reversed cut-out picture playing its range from `start` to
+// `end` reads, where it is served once it is made, and seconds into it where it shows the range
+// (`at`, as a Retimed copy's).
 export interface MatteCopy {
   start: number;
   end: number;
   url: string;
   at: number;
+  media?: string | null;
 }
 
-// A piece of the Source's Matte (backend/app/matte.py), by its `start` in seconds (10 s long), and
-// where it is served once it is made.
+// A piece of an item's Matte (backend/app/matte.py; the Source's, or the Media Library item
+// `media`'s), by its `start` in seconds (10 s long; an image's one, 0, a PNG), and where it is
+// served once it is made.
 export interface MattePiece {
   start: number;
   url: string;
+  media?: string | null;
 }
 
 export interface NewPreset {

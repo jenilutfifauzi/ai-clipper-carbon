@@ -27,6 +27,7 @@ never runs at the same time as the face detection or an encode: each Clip's step
 """
 
 import logging
+import math
 import threading
 import time
 from enum import StrEnum
@@ -168,62 +169,125 @@ def source_mattes(job_dir: Path, source: Source) -> Mattes:
     return Mattes(job_dir / MATTES_DIR, job_dir / source.video, (metadata.width, metadata.height, metadata.fps), metadata.duration)
 
 
+# Which of its items an item's Matte is: a Media Library item's (None: not one with a Matte).
+MediaMattes = Callable[[str], Mattes | None]
+
+
+def media_mattes(media: MediaStore | None) -> MediaMattes:
+    """The Mattes of the Media Library's videos and images (`MediaStore.mattes`), by id: None for an
+    item that isn't there, or a song."""
+
+    def of(media_id: str) -> Mattes | None:
+        try:
+            return media.mattes(media_id) if media is not None else None
+        except MediaNotFound:
+            return None
+
+    return of
+
+
 def matte_parts(mattes: Mattes, start: float, end: float, reverse: bool, hold: float | None) -> list[Part]:
-    """What of the Source's Matte a cut-out Segment of the Source playing `start` to `end` (backwards
-    when `reverse`, or its first frame held when `hold`) reads: the pieces holding its frames
-    (`matte_pieces`), then, when reversed, the reversed copy of its range made from them."""
+    """What of an item's Matte a cut-out picture of it playing `start` to `end` (backwards when
+    `reverse`, or its first frame held when `hold`) reads: the pieces holding its frames
+    (`matte_pieces`; an image's one), then, when reversed, the reversed copy of its range made from them."""
     held = hold is not None
-    pieces: list[Part] = list(matte_pieces(start, start if held else end, mattes.duration, mattes.frame[2]))
-    return pieces + [Reversed(start, end)] if reverse and not held else pieces
+    pieces: list[Part] = list(mattes.pieces(start, start if held else end))
+    return pieces + [Reversed(start, end)] if reverse and not held and not mattes.still else pieces
 
 
-def matte_wanted(candidate: Candidate, mattes: Mattes) -> dict[str, list[tuple]]:
-    """The Matte pieces (and reversed copies) each of the Candidate's cut-out Source Segments reads
-    (`matte_parts`), by its id: what `MatteRunner` asks for, makes and reports on."""
+def matte_wanted(candidate: Candidate, mattes: Mattes, media: MediaMattes = lambda media_id: None) -> dict[str, list[tuple]]:
+    """The Matte pieces (and reversed copies) each of the Candidate's cut-out items reads
+    (`matte_parts`), by its id: its Source Segments' of the Source's Matte (`mattes`), its videos'
+    Segments' and its Overlays' of their items' (`media`, an item without one left out). What
+    `MatteRunner` asks for, makes and reports on."""
     wanted = {}
-    for segment in candidate.source_segments():
-        if (removal := segment.background_removal) is not None:
-            parts = matte_parts(mattes, segment.start, segment.end, segment.reverse, segment.hold)
-            wanted[segment.id] = [(mattes, removal.subject, part) for part in parts]
+    for segment in candidate.main_track():
+        removal = segment.background_removal
+        own = mattes if segment.media is None else media(segment.media)
+        if removal is not None and own is not None:
+            parts = matte_parts(own, segment.start, segment.end, segment.reverse, segment.hold)
+            wanted[segment.id] = [(own, removal.subject, part) for part in parts]
+    for overlay in candidate.overlays:
+        removal = overlay.background_removal
+        if removal is None or (own := media(overlay.media)) is None:
+            continue
+        time = overlay_time(overlay.offset, overlay.secs, overlay.speed, overlay.reverse, math.inf if own.still else own.duration)
+        parts = matte_parts(own, time.start, time.end, overlay.reverse, None)
+        wanted[overlay.id] = [(own, removal.subject, part) for part in parts]
     return wanted
 
 
+# A cut-out picture of a Render Plan: ("segment", its place among its Segments), ("overlay", among
+# its Overlays) or ("behind", among its Behind Overlays).
+Cut = tuple[str, int]
+
+
+def matte_reads(plan: RenderPlan, mattes: Mattes, media: MediaMattes = lambda media_id: None) -> dict[Cut, tuple[Mattes, list[Part]]]:
+    """The plan's cut-out pictures (its Segments' and its Overlays', those behind too) and what each
+    reads of its item's Matte (`matte_parts`): a Segment of the Source of `mattes`, a video's Segment
+    and an Overlay of their items' (`media`; one without is left out, and isn't cut)."""
+    reads: dict[Cut, tuple[Mattes, list[Part]]] = {}
+    for i, segment in enumerate(plan.segments):
+        own = mattes if segment.media is None else media(segment.media)
+        if segment.background_removal is not None and own is not None:
+            reads[("segment", i)] = (own, matte_parts(own, segment.source_start, segment.source_end, segment.reverse, segment.hold))
+    for kind, events in (("overlay", plan.overlays), ("behind", plan.behind)):
+        for i, event in enumerate(events):
+            if event.background_removal is not None and (own := media(event.media)) is not None:
+                time = event.time
+                reads[(kind, i)] = (own, matte_parts(own, time.start, time.end, event.reverse, None))
+    return reads
+
+
 def matted(
-    plan: RenderPlan, mattes: Mattes, runner: MatteRunner | None, progress: Callable[[float], None] = lambda done: None
+    plan: RenderPlan, mattes: Mattes, runner: MatteRunner | None, progress: Callable[[float], None] = lambda done: None,
+    media: MediaMattes = lambda media_id: None,
 ) -> tuple[RenderPlan, dict[str, Path]]:
-    """The plan with each cut-out Segment reading its Matte's pieces (`matte_files`), and a reversed
-    one its reversed copy (`matte_copy`, from where it shows its range), made now where they aren't
-    there (`MatteRunner.make`, `progress` from 0 to 1 over them all), and their files. A
-    RuntimeError naming the Segment and the cause when one can't be had: the person model isn't
-    downloaded, or a piece failed (now, or before a Retry)."""
-    cut = [segment for segment in plan.segments if segment.background_removal is not None and segment.media is None]
-    if not cut:
+    """The plan with each cut-out picture (`matte_reads`: a Segment, of the Source's Matte `mattes` or
+    its video's, or an Overlay, of its item's in `media`) reading its Matte's pieces (`matte`,
+    `matte_files`, its first frame `matte_at` seconds into them), and a reversed one its reversed copy
+    (`matte_copy`, from where it shows its range), made now where they aren't there
+    (`MatteRunner.make`, `progress` from 0 to 1 over them all), and their files. A RuntimeError
+    naming the item and the cause when one can't be had: the person model isn't downloaded, or a
+    piece failed (now, or before a Retry)."""
+    reads = matte_reads(plan, mattes, media)
+    if not reads:
         return plan, {}
-    parts = {id(segment): matte_parts(mattes, segment.source_start, segment.source_end, segment.reverse, segment.hold) for segment in cut}
-    total = sum(len(found) for found in parts.values())
-    done, files, segments = 0, {}, []
-    for segment in plan.segments:
-        if segment not in cut:
-            segments.append(segment)
-            continue
-        assert segment.background_removal is not None
-        subject = segment.background_removal.subject
-        wanted = [(mattes, subject, part) for part in parts[id(segment)]]
+    total = sum(len(parts) for _, parts in reads.values())
+    done, files = 0, {}
+    found: dict[Cut, dict] = {}
+    for cut, (own, parts) in reads.items():
+        kind, i = cut
+        item = plan.segments[i] if kind == "segment" else (plan.overlays if kind == "overlay" else plan.behind)[i]
+        assert item.background_removal is not None
+        subject = item.background_removal.subject
+        wanted = [(own, subject, part) for part in parts]
         try:
             if runner is None:
                 raise ModelAbsent("the person model isn't offered here")
             paths = runner.make(wanted, lambda d, done=done, count=len(wanted): progress((done + d * count) / total))
         except Exception as exc:
-            raise RuntimeError(f"Segment {segment.id}'s background couldn't be removed: {exc}") from exc
+            what = f"Segment {item.id}" if kind == "segment" else f"Overlay {item.id}"
+            raise RuntimeError(f"{what}'s background couldn't be removed: {exc}") from exc
         done += len(wanted)
         files |= {str(path): path for path in paths}
-        pieces = [str(path) for path, (_, _, part) in zip(paths, wanted) if not isinstance(part, Reversed)]
-        copy = {}
-        if reversed_part := next((part for _, _, part in wanted if isinstance(part, Reversed)), None):
-            path, at = mattes.reversed_copy(subject, runner.version, reversed_part)
-            copy = {"matte_copy": str(path), "matte_copy_at": at}
-        segments.append(replace(segment, matte_files=pieces, **copy))
-    return replace(plan, segments=segments), files
+        pieces = [part for part in parts if not isinstance(part, Reversed)]
+        start = item.source_start if kind == "segment" else item.time.start
+        fps = own.frame[2] if own.frame[2] > 0 else 30
+        found[cut] = {
+            "matte": pieces,
+            "matte_files": [str(path) for path, (_, _, part) in zip(paths, wanted) if not isinstance(part, Reversed)],
+            "matte_at": 0.0 if own.still else round(max(0.0, start - round(pieces[0] * fps) / fps), 6),
+        }
+        if reversed_part := next((part for part in parts if isinstance(part, Reversed)), None):
+            path, at = own.reversed_copy(subject, runner.version, reversed_part)
+            found[cut] |= {"matte_copy": str(path), "matte_copy_at": at}
+    return replace(
+        plan,
+        segments=[replace(item, **found[("segment", i)]) if ("segment", i) in found else item for i, item in enumerate(plan.segments)],
+        overlays=[replace(item, **found[("overlay", i)]) if ("overlay", i) in found else item for i, item in enumerate(plan.overlays)],
+        behind=[replace(item, **found[("behind", i)]) if ("behind", i) in found else item for i, item in enumerate(plan.behind)],
+    ), files
 
 
 def analysed_range(candidate: Candidate, segment: Segment, duration: float) -> tuple[float, float]:
@@ -490,14 +554,14 @@ def drawing_inputs(
     matting: Callable[[float], None] = lambda done: None,
 ) -> tuple[RenderPlan, Path | None, dict[str, Path], dict[str, Path]]:
     """What the renderer draws `plan` (of the Job in `job_dir`, of `source`) as `export` says from:
-    the plan reading its cut-out Segments' Matte pieces, made now by `mattes` if they aren't there
+    the plan reading its cut-out Segments' and Overlays' Matte pieces, made now by `mattes` if they aren't there
     (`matted`, its progress `matting`), and its reversed Segments and Overlays from their full-size
     Retimed copies, made now if they aren't there (`progress(copies)` gives each copy's progress); its Logo's file; the
     file of each Media Library item it plays, by id; and its picture layers' pictures at the export's
     size, made now if they aren't there (docs/adr/0010), by name. A render and a saved frame both
     draw from these."""
     logo = logos.file(plan.watermark.logo) if plan.watermark and plan.watermark.logo else None
-    plan, matte_files = matted(plan, source_mattes(job_dir, source), mattes, matting)
+    plan, matte_files = matted(plan, source_mattes(job_dir, source), mattes, matting, media_mattes(media))
     plan, files = played_files(plan, job_dir, source, media, settings.ffmpeg_bin, progress)
     files |= matte_files
     pictures = make_pictures(settings.ffmpeg_bin, picture_layouts(plan, export), job_dir / PICTURES_DIR)

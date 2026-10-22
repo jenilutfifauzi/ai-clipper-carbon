@@ -19,13 +19,15 @@ export const MATTE_POLL_MS = 1000;
 export const MATTE_SETTLE_MS = 1500;
 
 /**
- * How the Matte of the cut-out Segments `ids` is coming along together ("Finding the subject… N%"): one
- * not in the saved Candidate's yet (its save on its way) is being made; any failed is failed (its error);
- * then any being made, then any waiting for the person model; else ready. Null for none.
+ * How the Matte of the cut-out Segments and Overlays `ids` (an Overlay's as `overlay:<id>`) is coming
+ * along together ("Finding the subject… N%"): one not in the saved Candidate's yet (its save on its
+ * way) is being made; any failed is failed (its error); then any being made, then any waiting for the
+ * person model; else ready. Null for none.
  */
 export function matteOf(matte: CandidateMatte | null, ids: string[]): MattePart | null {
   if (!ids.length) return null;
-  const parts = ids.map((id): MattePart => matte?.segments[id] ?? { state: "making", progress: 0, error: null });
+  const partOf = (id: string) => (id.startsWith("overlay:") ? matte?.overlays?.[id.slice("overlay:".length)] : matte?.segments[id]);
+  const parts = ids.map((id): MattePart => partOf(id) ?? { state: "making", progress: 0, error: null });
   const progress = parts.reduce((sum, part) => sum + part.progress, 0) / parts.length;
   const failed = parts.find((part) => part.state === "failed");
   if (failed) return { state: "failed", progress, error: failed.error };

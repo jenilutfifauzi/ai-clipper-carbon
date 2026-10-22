@@ -3,6 +3,7 @@ import { mediaItemUrl, mediaProxyUrl, type OverlayEvent, type Picture, type Rend
 import { cx } from "../../../format";
 import { isAnimated, overlayLook, type Look } from "./animation";
 import { follow } from "./follow";
+import { CutImage, CutVideo, useImageMatte, useItemMatte } from "./MatteCut";
 import { PicturePanel } from "./PicturePanel";
 import { useShown, type Playback } from "./playback";
 import { copyProgress, eventCopy, eventPlay, useRetimedCopy } from "./retimedCopy";
@@ -19,7 +20,9 @@ import { copyProgress, eventCopy, eventPlay, useRetimedCopy } from "./retimedCop
  * laid by its Blend Mode (ADR 0014) over what is under it.
  * A selected one is shown whole while paused in its time, as a picked Text Layer is, so that it can
  * be seen while it is edited on a frame its animation hasn't reached. Its media element names its
- * Overlay (`data-overlay-media`), for Chroma key's eyedropper to read (EyedropperLayer).
+ * Overlay (`data-overlay-media`), for Chroma key's eyedropper to read (EyedropperLayer). With
+ * Background removal (ADR 0015), its picture is cut by its item's Matte (MatteCut.tsx) under its
+ * Grade, effects, corners, border, shadow and Blend Mode, as the render orders them.
  */
 export function PreviewOverlays({
   plan,
@@ -114,6 +117,15 @@ function OverlayView({
     () => eventPlay({ start, end, offset, speed, pitch, reverse }, mediaProxyUrl(media), copy),
     [start, end, offset, speed, pitch, reverse, media, copy],
   );
+  // Its range of its item (its copy's, when it plays one), which its Matte follows (ADR 0015).
+  const played = useMemo(
+    () => ({ start: range?.start ?? offset, end: range?.end ?? offset + (end - start) * (speed ?? 1), speed, reverse }),
+    [range, offset, start, end, speed, reverse],
+  );
+  const removal = event.background_removal;
+  const matte = useItemMatte(image ? null : media, removal, played, range, copy, video);
+  const imageMatte = useImageMatte(media, image ? removal : null);
+  const feather = removal?.feather ?? 0;
   useEffect(() => {
     const element = video.current;
     if (!element) return;
@@ -137,9 +149,13 @@ function OverlayView({
         start={start}
         media={
           image ? (
-            <img src={mediaItemUrl(media)} alt="" draggable={false} className="size-full object-fill" data-overlay-media={event.id} />
+            <CutImage src={mediaItemUrl(media)} matte={imageMatte} feather={feather}>
+              <img src={mediaItemUrl(media)} alt="" draggable={false} className="size-full object-fill" data-overlay-media={event.id} />
+            </CutImage>
           ) : (
-            <video ref={video} src={src} muted playsInline preload="auto" className="size-full object-fill" data-overlay-media={event.id} />
+            <CutVideo matte={matte} feather={feather} videoRef={video} playback={playback}>
+              <video ref={video} src={src} muted playsInline preload="auto" className="size-full object-fill" data-overlay-media={event.id} />
+            </CutVideo>
           )
         }
       />

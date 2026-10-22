@@ -1,9 +1,11 @@
 """Mattes (GLOSSARY.md, Matte; docs/adr/0015-background-removal-reads-a-cached-matte.md): the subject's
 mask of every frame of a video, made by the person model on this Mac, which Background removal reads.
 
-A Matte is kept in pieces of PIECE_SECS seconds aligned to its item's own timeline (the Source's, for
-now), beside the item, in `jobs/<id>/mattes/`, each named by its subject, its matter's version and its
-start in seconds: `person-rvm-mnv3-2-20.mp4` holds 20..30 s. A piece is a grayscale video (H.264,
+A Matte is kept in pieces of PIECE_SECS seconds aligned to its item's own timeline, beside the item
+(the Source's in `jobs/<id>/mattes/`, a Media Library video's in `media/<id>.mattes/`), each named by
+its subject, its matter's version and its start in seconds: `person-rvm-mnv3-2-20.mp4` holds 20..30 s.
+A Media Library image's Matte is one grayscale PNG of its size (`person-rvm-mnv3-2.png`), made by one
+run of the matter, which every Overlay of it reads as its one piece (0). A piece is a grayscale video (H.264,
 yuv420p, so that a browser plays it for the preview) no larger than MATTE_SIDE on its long edge, at
 its item's frame rate, one Matte frame per frame of the item; its last is cut where the item ends.
 White keeps the picture, black takes it away. Every Segment, Candidate and trim showing that time
@@ -166,14 +168,21 @@ def matte_frame(source: float, fps: float) -> tuple[int, int]:
 
 
 class Mattes:
-    """The Matte pieces of one item (the Source), in `folder`, made from its `video`, whose picture is
-    `frame` (width, height, frames a second), `duration` seconds long."""
+    """The Matte pieces of one item (the Source, or a Media Library video), in `folder`, made from its
+    `video`, whose picture is `frame` (width, height, frames a second), `duration` seconds long. With
+    `still`, the item is an image (`video` its file, `duration` and the frame rate unused), whose
+    Matte is one PNG: its piece 0."""
 
-    def __init__(self, folder: Path, video: Path, frame: tuple[int, int, float], duration: float) -> None:
+    def __init__(self, folder: Path, video: Path, frame: tuple[int, int, float], duration: float, still: bool = False) -> None:
         self.folder = folder
         self.video = video
         self.frame = frame
         self.duration = duration
+        self.still = still
+
+    def pieces(self, start: float, end: float) -> list[int]:
+        """The pieces holding its frames from `start` to `end` seconds (`matte_pieces`); an image's one."""
+        return [0] if self.still else matte_pieces(start, end, self.duration, self.frame[2])
 
     def size(self) -> tuple[int, int]:
         """The Matte's frames' width and height: the item's, no larger than MATTE_SIDE on the long
@@ -186,6 +195,8 @@ class Mattes:
         """A piece's file; a reversed copy's, the one serving it (`reversed_copy`)."""
         if isinstance(piece, Reversed):
             return self.reversed_copy(subject, version, piece)[0]
+        if self.still:
+            return self.folder / f"{subject}-{version}.png"
         return self.folder / f"{subject}-{version}-{piece}.mp4"
 
     def copies(self, subject: Subject, version: str) -> Path:
@@ -245,6 +256,8 @@ class Mattes:
         try:
             if isinstance(piece, Reversed):
                 self._reversed(ffmpeg, subject, matter.version, piece, target, progress, nice)
+            elif self.still:
+                self._still(ffmpeg, matter, target, progress, nice)
             else:
                 self._made(ffmpeg, matter, piece, target, progress, nice)
         except Exception as exc:
@@ -312,6 +325,26 @@ class Mattes:
         os.replace(part, target)
         progress(1.0)
 
+    def _still(self, ffmpeg: Path, matter: Matter, target: Path, progress: Callable[[float], None], nice: bool) -> None:
+        """Write an image's Matte to `target`: its one picture at the Matte's size (its own colours, its
+        transparency left out) given to one run of `matter`, its alpha a grayscale PNG."""
+        width, height = self.size()
+        run = ["nice", "-n", "10"] if nice else []
+        base = [str(ffmpeg), "-hide_banner", "-nostdin", "-v", "error", "-y"]
+        decode = [*run, *base, "-i", str(self.video), "-frames:v", "1", "-vf", f"scale={width}:{height},format=rgb24", "-f", "rawvideo", "pipe:1"]
+        read = subprocess.run(decode, capture_output=True)
+        if read.returncode or len(read.stdout) != width * height * 3:
+            raise RuntimeError(f"ffmpeg couldn't read {self.video.name}: {_last_line(read.stderr)}")
+        alpha = matter.run()(np.frombuffer(read.stdout, np.uint8).reshape(height, width, 3))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        part = target.with_name(f".{target.stem}.{uuid.uuid4().hex}.part.png")
+        encode = [*run, *base, "-f", "rawvideo", "-pixel_format", "gray", "-video_size", f"{width}x{height}", "-i", "pipe:0", "-frames:v", "1", "-c:v", "png", "-f", "image2", str(part)]
+        written = subprocess.run(encode, input=np.ascontiguousarray(alpha, np.uint8).tobytes(), capture_output=True)
+        if written.returncode or not part.is_file():
+            part.unlink(missing_ok=True)
+            raise RuntimeError(f"ffmpeg couldn't write the Matte: {_last_line(written.stderr)}")
+        os.replace(part, target)
+        progress(1.0)
 
     def _reversed(
         self, ffmpeg: Path, subject: Subject, version: str, part: Reversed, target: Path, progress: Callable[[float], None], nice: bool
@@ -512,14 +545,15 @@ class MatteRunner:
                         shutil.rmtree(path, ignore_errors=True)
                         removed.append(path)
                     continue
-                if name.startswith(".") and name.endswith(".part.mp4"):
-                    # `.{piece's stem}.{uuid}.part.mp4`
-                    piece = path.with_name(name[1:-len(".part.mp4")].rsplit(".", 1)[0] + ".mp4")
+                if name.startswith(".") and name.endswith((".part.mp4", ".part.png")):
+                    # `.{piece's stem}.{uuid}.part.mp4` (an image's: `.png`)
+                    suffix = name[-4:]
+                    piece = path.with_name(name[1:-len(".part.mp4")].rsplit(".", 1)[0] + suffix)
                     if piece in self._writing:
                         continue
-                elif name.startswith(".") or not name.endswith((".mp4", ".failed")) or path.with_suffix(".mp4") in used:
+                elif name.startswith(".") or not name.endswith((".mp4", ".png", ".failed")) or _piece_of(path) & used:
                     continue
-                elif path.with_suffix(".mp4") in self._writing:
+                elif _piece_of(path) & self._writing:
                     continue
                 path.unlink(missing_ok=True)
                 removed.append(path)
@@ -590,6 +624,11 @@ class MatteRunner:
             finally:
                 with self._changed:
                     self._making = None
+
+
+def _piece_of(path: Path) -> set[Path]:
+    """The piece a file in a Matte's folder is, or whose failure it is: a video's or an image's."""
+    return {path.with_suffix(".mp4"), path.with_suffix(".png")} if path.suffix == ".failed" else {path}
 
 
 def remove_mattes(folders: Iterable[Path]) -> None:
