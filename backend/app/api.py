@@ -1878,14 +1878,15 @@ def _saveable(
     body: TemplateBody, store: JobStore, settings: Settings, presets: PresetStore, library: MediaStore, faces: Faces, logos: LogoStore
 ) -> Captured:
     """What `body` would save, validated as an edit is, the Candidate's saved items with its draft's:
-    422 for media that isn't in the Media Library or can't be used so, or a Look, a Face or a Logo
-    that isn't there. (A Logo deleted later shows no Watermark, as a Preset's does.)"""
-    if body.edits is not None and body.edits.style_overrides is not None:
-        _check_logo(logos, body.edits.style_overrides.watermark.get("logo"))
+    422 for media that isn't in the Media Library or can't be used so (its layers' and its intro's and
+    outro's), or a Look, a Face or a Logo that isn't there (its layers' and its style's). (A Logo
+    deleted later shows no Watermark, as a Preset's does.)"""
     captured = _captured(body, store, settings, presets, library)
+    _check_logo(logos, captured.style_overrides.watermark.get("logo"))
     now = datetime.now(UTC)
-    template = Template("", "", now, now, captured.layers)
-    _check_media(library, [layer.item for layer in captured.layers.music], [], [layer.item for layer in captured.layers.overlays])
+    template = Template("", "", now, now, **captured.contents())
+    segments = captured.intro.segments + captured.outro.segments
+    _check_media(library, [layer.item for layer in captured.layers.music], segments, [layer.item for layer in captured.layers.overlays])
     _check_looks(template.grades())
     for face_id, parts in template.faces().items():
         if faces.find(face_id) is None:
