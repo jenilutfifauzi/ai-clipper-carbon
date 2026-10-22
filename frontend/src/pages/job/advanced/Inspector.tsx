@@ -11,7 +11,7 @@ import { isPlaced, unplacedOverrides } from "../editor/placing";
 import { StyleFieldsSkeleton } from "../editor/StyleFields";
 import type { StyleControls } from "../editor/useStyleDraft";
 import { HookTimingFields } from "../HookEditor";
-import { applyTextStyle, reshape, restyle, setAdjustment, setBehind, setBlend, setDuck, setFade, setSpeech, setVolume, sharedBlend, type Detacher, type ItemActions, type Outcome, type SpeedRef, type StackRef } from "./actions";
+import { applyTextStyle, reshape, restyle, setAdjustment, setBehind, setBlend, sharedBehind, setDuck, setFade, setSpeech, setVolume, sharedBlend, type Detacher, type ItemActions, type Outcome, type SpeedRef, type StackRef } from "./actions";
 import { audioEffectChanges, AudioEffectsFields } from "./AudioEffectsFields";
 import { videoEffectChanges, VideoEffectsFields } from "./VideoEffectsFields";
 import { AdjustmentLayerFields } from "./AdjustmentLayers";
@@ -23,7 +23,7 @@ import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from ".
 import { SegmentFields } from "./MainTrack";
 import { SceneFields } from "./SceneFields";
 import { MusicFields } from "./Music";
-import { BlendModeField, OverlayFields } from "./Overlays";
+import { BehindSwitch, BlendModeField, OverlayFields } from "./Overlays";
 import { itemsOf, onlyItem, type ItemKind, type Pick } from "./pick";
 import { CueFields } from "./CueFields";
 import type { TrackKind } from "./trackState";
@@ -201,6 +201,18 @@ export function Inspector({
         }}
       />
     );
+    // The picked Overlays Behind the Main Track or over it, switched for them all: its own step of undo, refused onto or off a locked Track.
+    const behind = sharedBehind({ edits, pick });
+    const behindField = behind !== null && (
+      <BehindSwitch
+        behind={behind}
+        onChange={(on) => {
+          const outcome = setBehind({ edits, pick, locked }, on);
+          if (outcome?.notice) keying?.onNotice?.(outcome.notice);
+          else if (outcome) onEdits(outcome.edits);
+        }}
+      />
+    );
     // Several Segments and Overlays: their Remove background section.
     const cut = items.every((item) => item.kind === "segment" || item.kind === "overlay");
     // Several Segments, Overlays and Adjustment Layers: their Grades edited together.
@@ -212,6 +224,7 @@ export function Inspector({
       <div className="flex flex-col gap-4">
         {summary}
         {blendField}
+        {behindField}
         {cut && removeBackgroundOf()}
         {graded && colorOf()}
         {graded && pictureEffectsOf()}
@@ -370,7 +383,7 @@ export function Inspector({
         effects={effectsOf()}
         onBehind={(behind) => {
           // Its own step of undo; refused onto a locked Track.
-          const outcome = setBehind({ edits, pick, locked }, overlay.id, behind);
+          const outcome = setBehind({ edits, pick, locked }, behind);
           if (outcome?.notice) keying?.onNotice?.(outcome.notice);
           else if (outcome) onEdits(outcome.edits);
         }}

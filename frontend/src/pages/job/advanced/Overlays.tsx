@@ -51,13 +51,17 @@ export function newOverlay(item: MediaItem, at: number, duration: number, behind
 
 /**
  * "Behind the Main Track" (ADR 0015): on, the Overlay moves to the Behind Track and shows only where a
- * Segment is cut out or its picture doesn't cover the frame; off, back over the Main Track.
+ * Segment is cut out or its picture doesn't cover the frame; off, back over the Main Track. On a Pick
+ * of several, Mixed (and off) while only some are Behind: switched on, they all are.
  */
-export function BehindSwitch({ behind, onChange }: { behind: boolean; onChange: (behind: boolean) => void }) {
+export function BehindSwitch({ behind, onChange }: { behind: boolean | "mixed"; onChange: (behind: boolean) => void }) {
   return (
     <div className="flex flex-col gap-1">
-      <Switch checked={behind} onChange={onChange}>
-        <span className="text-sm font-medium">Behind the Main Track</span>
+      <Switch checked={behind === true} onChange={onChange}>
+        <span className="flex items-center gap-2 text-sm font-medium">
+          Behind the Main Track
+          {behind === "mixed" && <Mixed />}
+        </span>
       </Switch>
       <p className="text-sm text-pretty text-muted">Shows only where a Segment is cut out or doesn’t cover the frame.</p>
     </div>

@@ -1740,12 +1740,12 @@ export function setSegmentBackground(scene: { edits: AdvancedEdits; pick: Pick }
   return { edits: { ...scene.edits, segments }, pick: scene.pick };
 }
 
-// The picked Overlays, which a Blend Mode is set on (ADR 0014).
-const blendedOverlays = ({ edits, pick }: { edits: AdvancedEdits; pick: Pick }) => edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id));
+// The picked Overlays, which a Blend Mode (ADR 0014) and Behind (ADR 0015) are set on.
+const pickedOverlays = ({ edits, pick }: { edits: AdvancedEdits; pick: Pick }) => edits.overlays.filter((overlay) => isPicked(pick, "overlay", overlay.id));
 
 /** The picked Overlays' Blend Mode, when every one's is the same (Normal when missing); "mixed" when they differ; null when no Overlay is picked. */
 export function sharedBlend(scene: { edits: AdvancedEdits; pick: Pick }): BlendMode | "mixed" | null {
-  const [first, ...rest] = blendedOverlays(scene).map((overlay) => overlay.blend ?? "normal");
+  const [first, ...rest] = pickedOverlays(scene).map((overlay) => overlay.blend ?? "normal");
   if (!first) return null;
   return rest.every((blend) => blend === first) ? first : "mixed";
 }
@@ -1753,7 +1753,7 @@ export function sharedBlend(scene: { edits: AdvancedEdits; pick: Pick }): BlendM
 /** Every picked Overlay laid by `blend`, as one change (Normal leaves one without the field); null when no Overlay is picked or none changes. */
 export function setBlend(scene: { edits: AdvancedEdits; pick: Pick }, blend: BlendMode): Outcome | null {
   const { edits, pick } = scene;
-  const picked = blendedOverlays(scene);
+  const picked = pickedOverlays(scene);
   if (picked.every((overlay) => (overlay.blend ?? "normal") === blend)) return null;
   const overlays = edits.overlays.map((overlay) => {
     if (!picked.includes(overlay) || (overlay.blend ?? "normal") === blend) return overlay;
@@ -1763,19 +1763,31 @@ export function setBlend(scene: { edits: AdvancedEdits; pick: Pick }, blend: Ble
   return { edits: { ...edits, overlays }, pick };
 }
 
+/** Whether the picked Overlays are Behind the Main Track: true or false when every one is, "mixed" when they differ; null when no Overlay is picked. */
+export function sharedBehind(scene: { edits: AdvancedEdits; pick: Pick }): boolean | "mixed" | null {
+  const [first, ...rest] = pickedOverlays(scene).map((overlay) => !!overlay.behind);
+  if (first === undefined) return null;
+  return rest.every((behind) => behind === first) ? first : "mixed";
+}
+
 /**
- * Overlay `id` moved Behind the Main Track (`behind`), onto the Behind Track, or back over it onto the
- * Overlay Track (ADR 0015), as one change: Over leaves it without the field, as one saved before. It
- * keeps its Timeline time and the Pick. Refused, with a notice, onto a `locked` Track; null when it is
- * gone or there already.
+ * The picked Overlays moved Behind the Main Track (`behind`), onto the Behind Track, or back over it
+ * onto the Overlay Track (ADR 0015), as one change: Over leaves each without the field, as one saved
+ * before. They keep their Timeline time and the Pick. Refused, with a notice, when any would move
+ * onto or off a `locked` Track; null when no Overlay is picked or all are there already.
  */
-export function setBehind(scene: { edits: AdvancedEdits; pick: Pick; locked?: TrackKind[] }, id: string, behind: boolean): Outcome | null {
+export function setBehind(scene: { edits: AdvancedEdits; pick: Pick; locked?: TrackKind[] }, behind: boolean): Outcome | null {
   const { edits, pick } = scene;
-  const overlay = edits.overlays.find((other) => other.id === id);
-  if (!overlay || !!overlay.behind === behind) return null;
+  const moving = pickedOverlays(scene).filter((overlay) => !!overlay.behind !== behind);
+  if (!moving.length) return null;
   const onto: TrackKind = behind ? "behind" : "overlay";
-  if (scene.locked?.includes(onto)) return { edits, pick, notice: `The ${behind ? "Behind" : "Overlay"} Track is locked.` };
-  const { behind: _was, ...rest } = overlay;
-  const moved: Overlay = behind ? { ...rest, behind } : rest;
-  return { edits: { ...edits, overlays: edits.overlays.map((other) => (other.id === id ? moved : other)) }, pick };
+  const off: TrackKind = behind ? "overlay" : "behind";
+  const stuck = [onto, off].find((track) => scene.locked?.includes(track));
+  if (stuck) return { edits, pick, notice: `The ${stuck === "behind" ? "Behind" : "Overlay"} Track is locked.` };
+  const overlays = edits.overlays.map((overlay) => {
+    if (!moving.includes(overlay)) return overlay;
+    const { behind: _was, ...rest } = overlay;
+    return behind ? { ...rest, behind } : rest;
+  });
+  return { edits: { ...edits, overlays }, pick };
 }

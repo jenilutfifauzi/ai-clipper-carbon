@@ -9,7 +9,7 @@ import type { ClipSegment, Overlay, OverlayEvent, RenderPlan } from "../../../ap
 import { NO_CROP } from "../editor/cropGestures";
 import { Playback, playedFrom } from "../editor/playback";
 import { BehindOverlays, coversFrame } from "../editor/PreviewOverlays";
-import { remove, rippleRemove, setBehind, splitAt, type PickContext } from "./actions";
+import { remove, rippleRemove, setBehind, sharedBehind, splitAt, type PickContext } from "./actions";
 import { copy, paste } from "./clipboard";
 import { trackLanes, type AdvancedEdits } from "./edits";
 import { BehindSwitch, newOverlay } from "./Overlays";
@@ -182,16 +182,57 @@ describe("the Inspector's Behind the Main Track switch", () => {
 
   test("moves an Overlay onto the Behind Track and back, as one change, keeping its time and the Pick", () => {
     const pick = picked(ref("o"));
-    const under = setBehind({ edits: before, pick }, "o", true)!;
+    const under = setBehind({ edits: before, pick }, true)!;
     expect(under).toEqual({ edits: { ...before, overlays: [{ ...before.overlays[0], behind: true }, before.overlays[1]] }, pick });
     expect(overlaysOn(under.edits.overlays, "behind").map((each) => each.id)).toEqual(["o"]);
     // Back over it, without the field, as one saved before.
-    expect(setBehind({ edits: under.edits, pick }, "o", false)!.edits).toEqual(before);
-    expect(setBehind({ edits: before, pick }, "o", false)).toBeNull();
+    expect(setBehind({ edits: under.edits, pick }, false)!.edits).toEqual(before);
+    expect(setBehind({ edits: before, pick }, false)).toBeNull();
+    expect(setBehind({ edits: before, pick: null }, true)).toBeNull();
   });
 
   test("is refused onto a locked Track, with a notice", () => {
-    expect(setBehind({ edits: before, pick: null, locked: ["behind"] }, "o", true)).toEqual({ edits: before, pick: null, notice: "The Behind Track is locked." });
+    const pick = picked(ref("o"));
+    expect(setBehind({ edits: before, pick, locked: ["behind"] }, true)).toEqual({ edits: before, pick, notice: "The Behind Track is locked." });
+  });
+
+  describe("on a Pick of several Overlays", () => {
+    const mixed = edits([overlay("o", 2, 3), behind("b", 4, 3), overlay("p", 6, 2), { ...overlay("q", 9, 1) }]);
+    const both = picked(ref("o"), ref("b"));
+
+    test("is shared: on or off when every picked Overlay is, Mixed when they differ, none without an Overlay", () => {
+      expect(sharedBehind({ edits: mixed, pick: both })).toBe("mixed");
+      expect(sharedBehind({ edits: mixed, pick: picked(ref("o"), ref("p")) })).toBe(false);
+      expect(sharedBehind({ edits: mixed, pick: picked(ref("b")) })).toBe(true);
+      expect(sharedBehind({ edits: mixed, pick: picked({ kind: "segment", id: "s1" }) })).toBeNull();
+      expect(sharedBehind({ edits: mixed, pick: null })).toBeNull();
+    });
+
+    test("switched on, moves them all Behind as one change; off, all back over it; the others untouched", () => {
+      const pick = picked(ref("o"), ref("b"), ref("p"));
+      const under = setBehind({ edits: mixed, pick }, true)!;
+      expect(under.pick).toBe(pick);
+      expect(overlaysOn(under.edits.overlays, "behind").map((each) => each.id)).toEqual(["o", "b", "p"]);
+      expect(under.edits.overlays[3]).toBe(mixed.overlays[3]);
+      // The one already there is kept as it was.
+      expect(under.edits.overlays[1]).toBe(mixed.overlays[1]);
+      const over = setBehind({ edits: under.edits, pick }, false)!;
+      expect(overlaysOn(over.edits.overlays, "behind")).toEqual([]);
+      expect(over.edits.overlays.every((each) => !("behind" in each))).toBe(true);
+    });
+
+    test("is refused, with a notice, when any would move onto or off a locked Track", () => {
+      expect(setBehind({ edits: mixed, pick: both, locked: ["behind"] }, true)).toEqual({ edits: mixed, pick: both, notice: "The Behind Track is locked." });
+      expect(setBehind({ edits: mixed, pick: both, locked: ["overlay"] }, false)).toEqual({ edits: mixed, pick: both, notice: "The Overlay Track is locked." });
+      // Switched on, the one over the Main Track would move off the locked Overlay Track.
+      expect(setBehind({ edits: mixed, pick: both, locked: ["overlay"] }, true)).toEqual({ edits: mixed, pick: both, notice: "The Overlay Track is locked." });
+    });
+
+    test("the Inspector's switch shows Mixed, off, when they differ", () => {
+      const markup = renderToStaticMarkup(createElement(BehindSwitch, { behind: "mixed", onChange: () => {} }));
+      expect(markup).toContain("Mixed");
+      expect(markup).not.toContain('checked=""');
+    });
   });
 
   test("is shown, on when the Overlay is Behind", () => {
