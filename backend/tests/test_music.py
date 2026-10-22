@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from app.candidates import MusicClip
+from app.canvas import PORTRAIT
 from app.config import RenderTuning
 from app.planner import MediaInfo, audio_events, plan_render
 from app.renderer import Renderer
@@ -47,11 +48,11 @@ def test_a_music_clip_is_kept_inside_the_clip_and_its_song():
 
 def test_the_encode_mixes_music_only_when_there_is_some(tmp_path):
     renderer = Renderer(Path("ffmpeg"), RenderTuning())
-    plain = plan_render(0, 5, SOURCE)
+    plain = plan_render(0, 5, SOURCE, canvas=PORTRAIT)
     command = " ".join(renderer._command(Path("s.mp4"), plain, None, "libx264", tmp_path / "v.mp4", tmp_path / "p.jpg", None))
     assert "amix" not in command and "[0:a:0]aresample" in command
 
-    mixed = plan_render(0, 5, SOURCE, music=[music(volume=0.5, fade_out=1.0)], media_info=SONGS, source_volume=0.2)
+    mixed = plan_render(0, 5, SOURCE, music=[music(volume=0.5, fade_out=1.0)], media_info=SONGS, source_volume=0.2, canvas=PORTRAIT)
     command = renderer._command(
         Path("s.mp4"), mixed, None, "libx264", tmp_path / "v.mp4", tmp_path / "p.jpg", None, files={SONG: Path("song.m4a")}
     )

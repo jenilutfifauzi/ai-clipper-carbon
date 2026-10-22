@@ -75,8 +75,9 @@ class Clock:
 # A setting's value: a number, or a colour's `#RRGGBB`.
 type Value = float | str
 # An effect's filters from its settings (each one given, sizes at the drawn size), the picture's
-# drawn size (width, height) and its Clock.
-Build = Callable[[dict[str, Value], tuple[int, int], Clock], list[str]]
+# drawn size (width, height), its Clock, and the Canvas it is drawn on, at the plan's size (short
+# side 1080), whatever the export's.
+Build = Callable[[dict[str, Value], tuple[int, int], Clock, tuple[int, int]], list[str]]
 
 
 @dataclass(frozen=True)
@@ -123,12 +124,12 @@ class EffectNotFound(LookupError):
 # Blur
 
 
-def _gaussian_blur(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> list[str]:
+def _gaussian_blur(params: dict[str, Value], size: tuple[int, int], clock: Clock, frame: tuple[int, int]) -> list[str]:
     """A Gaussian of sigma `radius` drawn pixels, as Concat's is (the picture's edges extended)."""
     return [f"gblur=sigma={params['radius']:.3f}"]
 
 
-def _motion_blur(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> list[str]:
+def _motion_blur(params: dict[str, Value], size: tuple[int, int], clock: Clock, frame: tuple[int, int]) -> list[str]:
     """A blur along one line only, of about a Gaussian's sigma `length` drawn pixels, as Concat's
     streak is. The line is turned `angle` degrees from the horizontal, upwards on the right for a
     positive one (dblur turns the other way)."""
@@ -138,13 +139,13 @@ def _motion_blur(params: dict[str, Value], size: tuple[int, int], clock: Clock) 
 # Distort
 
 
-def _pixelate(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> list[str]:
+def _pixelate(params: dict[str, Value], size: tuple[int, int], clock: Clock, frame: tuple[int, int]) -> list[str]:
     """Blocks `size` drawn pixels square, each the mean of its pixels, counted from the top left."""
     block = min(max(round(params["size"]), 1), 1024)
     return [f"pixelize=w={block}:h={block}:mode=avg"]
 
 
-def _chromatic_aberration(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> list[str]:
+def _chromatic_aberration(params: dict[str, Value], size: tuple[int, int], clock: Clock, frame: tuple[int, int]) -> list[str]:
     """Red scaled up and blue scaled down about the centre, each by `shift` drawn pixels at the
     picture's side edges, as Concat's are; green and the alpha kept. Planes taken apart and merged
     (a per-pixel expression is several times slower); blue's border, uncovered, takes its edge's
@@ -166,7 +167,7 @@ def _chromatic_aberration(params: dict[str, Value], size: tuple[int, int], clock
     ]
 
 
-def _fisheye(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> list[str]:
+def _fisheye(params: dict[str, Value], size: tuple[int, int], clock: Clock, frame: tuple[int, int]) -> list[str]:
     """The middle swollen and the corners kept, as Concat's, whose point at `r` (its distance from the
     centre over the corner's) shows the picture's point `(1 - s) + s r²` times as far out. Here twice
     over with `s` up to 0.3 at 100 % (each a lens correction, then the part whose samples stay on the
@@ -188,19 +189,15 @@ def _fisheye(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> l
 # size (Concat's are 16 and 12 of its picture's pixels).
 GLOW_SIGMA = 16.0
 BLOOM_SIGMA = 12.0
-# The frame a fitted picture fits, whose size a picture's light spreads with.
-_FRAME = (1080, 1920)
-
-
-def _screened(size: tuple[int, int], sigma: float, light: str, over: str) -> list[str]:
+def _screened(size: tuple[int, int], frame: tuple[int, int], sigma: float, light: str, over: str) -> list[str]:
     """The picture with its own light, `light` (filters of a planar RGB copy of it, a quarter its size
     each way), blurred by a Gaussian of `sigma` drawn pixels at that quarter size, scaled back and
     screened over it, as two projectors add light: the blend's `over` options for red, green and blue
     (its strength), its alpha kept. A picture's own sigma grows with its size, as its fitted size's
-    scale (the larger of its width and height over the frame's). One part: its labels run it on every
-    frame."""
+    scale (the larger of its width and height over those of `frame`, the Canvas it fits, so that a
+    full-frame picture's is `sigma` on every aspect). One part: its labels run it on every frame."""
     width, height = size
-    spread = sigma * max(width / _FRAME[0], height / _FRAME[1]) / 4
+    spread = sigma * max(width / frame[0], height / frame[1]) / 4
     quarter = f"{max(1, round(width / 4))}:{max(1, round(height / 4))}"
     return [
         f"format=gbrap,setsar=1,split[base][light];"
@@ -209,18 +206,18 @@ def _screened(size: tuple[int, int], sigma: float, light: str, over: str) -> lis
     ]
 
 
-def _glow(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> list[str]:
+def _glow(params: dict[str, Value], size: tuple[int, int], clock: Clock, frame: tuple[int, int]) -> list[str]:
     """The picture's light spread wide and screened back over it by `amount`, as Concat's."""
     amount = params["amount"] / 100
     over = "".join(f"c{plane}_opacity={amount:.4f}:" for plane in range(3))
-    return _screened(size, GLOW_SIGMA, "", over)
+    return _screened(size, frame, GLOW_SIGMA, "", over)
 
 
 # Rec. 709's luma of red, green and blue, as Concat's Bloom weighs a pixel's brightness.
 _LUMA = (0.2126, 0.7152, 0.0722)
 
 
-def _bloom_pulse(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> list[str]:
+def _bloom_pulse(params: dict[str, Value], size: tuple[int, int], clock: Clock, frame: tuple[int, int]) -> list[str]:
     """The highlights' light (each pixel weighted by how far its luma is past 0.55, smoothed and taken
     to the 2.4th power, as Concat's) spread and screened back over the picture, at a strength
     `amount` × (0.6 + 0.4 sin(time × `speed`)) of its own time: it breathes, a full breath every
@@ -243,13 +240,13 @@ def _bloom_pulse(params: dict[str, Value], size: tuple[int, int], clock: Clock) 
         f"[colour][weight]blend=c0_mode=multiply:c1_mode=multiply:c2_mode=multiply:c3_mode=normal,"
         f"sendcmd=c='0 {gains}',colorchannelmixer@pulse={first}"
     )
-    return _screened(size, BLOOM_SIGMA, light, "")
+    return _screened(size, frame, BLOOM_SIGMA, light, "")
 
 
 # Stylize
 
 
-def _posterize(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> list[str]:
+def _posterize(params: dict[str, Value], size: tuple[int, int], clock: Clock, frame: tuple[int, int]) -> list[str]:
     """Each of red, green and blue rounded to the nearest of `levels` evenly spaced values, black and
     white among them, as Concat's (on the display's values, as here). The alpha kept."""
     steps = round(params["levels"]) - 1
@@ -257,7 +254,7 @@ def _posterize(params: dict[str, Value], size: tuple[int, int], clock: Clock) ->
     return [f"format=gbrap,lutrgb=r='{table}':g='{table}':b='{table}',format={EFFECTS_FORMAT}"]
 
 
-def _film_grain(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> list[str]:
+def _film_grain(params: dict[str, Value], size: tuple[int, int], clock: Clock, frame: tuple[int, int]) -> list[str]:
     """Grain in the brightness alone, as Concat's (the same in red, green and blue): each pixel moved
     up or down by up to `amount` of 255, evenly, in a new pattern every frame (counted from the first
     frame the stack draws)."""
@@ -288,7 +285,7 @@ def _smoothstep(edge: str, width: str, value: str) -> str:
     return f"st(0,clip(({value}-{edge})/{width},0,1));ld(0)*ld(0)*(3-2*ld(0))"
 
 
-def _chroma_key(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> list[str]:
+def _chroma_key(params: dict[str, Value], size: tuple[int, int], clock: Clock, frame: tuple[int, int]) -> list[str]:
     """A key on the display's colours, as Concat's: a pixel whose chroma (`chroma`) is within
     `similarity` % of the key `color`'s (of the farthest two chromas can be apart) is taken out, fading
     back in over `softness` % more; then, by `spill` %, what leans towards the key's hue has that lean
@@ -317,7 +314,7 @@ def _chroma_key(params: dict[str, Value], size: tuple[int, int], clock: Clock) -
     ]
 
 
-def _luma_key(params: dict[str, Value], size: tuple[int, int], clock: Clock) -> list[str]:
+def _luma_key(params: dict[str, Value], size: tuple[int, int], clock: Clock, frame: tuple[int, int]) -> list[str]:
     """A key on the display's luma (BT.709), as Concat's: a pixel darker than `threshold` % is taken
     out, fading back in over `softness` % below it; with `invert`, a pixel lighter than it, fading over
     `softness` % above it. The picture's own alpha times the key's, by a table of the luma and the
@@ -487,11 +484,13 @@ def changes_with_time(stack: list[VideoEffect]) -> bool:
 
 
 def video_effect_chain(
-    stack: list[VideoEffect], size: tuple[int, int], enable: str | None = None, label: str = "vfx", clock: Clock = Clock()
+    stack: list[VideoEffect], size: tuple[int, int], enable: str | None = None, label: str = "vfx", clock: Clock = Clock(),
+    *,
+    frame: tuple[int, int],
 ) -> list[str]:
     """The filters `stack` (checked, its sizes as drawn) is drawn through on a picture of `size`
-    (width, height): its enabled entries in order, on `EFFECTS_FORMAT`. Nothing for a stack with
-    nothing enabled. With
+    (width, height) on the Canvas `frame` (at the plan's size, short side 1080: `canvas.unscaled`):
+    its enabled entries in order, on `EFFECTS_FORMAT`. Nothing for a stack with nothing enabled. With
     `enable` (an ffmpeg expression of `t`, an Adjustment Layer's span), each lone filter does its work
     only while it holds and passes the other frames through untouched; a part with labels of its own
     works throughout, which costs time but draws the same once laid over within the span. A builder's
@@ -500,7 +499,7 @@ def video_effect_chain(
     parts = [
         _labelled(part, f"{label}{i}_")
         for i, applied in enumerate(enabled_video_effects(stack))
-        for part in get_effect(applied.id).build(applied.params, size, clock)
+        for part in get_effect(applied.id).build(applied.params, size, clock, frame)
     ]
     if not parts:
         return []

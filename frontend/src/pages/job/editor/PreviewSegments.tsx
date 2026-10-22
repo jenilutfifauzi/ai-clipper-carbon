@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { MatteCopy, MattePiece, RenderPlan, RetimedCopy, RetimedRange, ScenePlan, SegmentPlan, TransitionEvent } from "../../../api";
+import { useCanvas } from "./canvas";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA, PanelView } from "./ClipPreview";
 import { follow } from "./follow";
 import { GradeVignette, useFrameFilter } from "./GradeFilters";
-import { filledStyle, FRAME, panelStyle, slotView } from "./picture";
+import { filledStyle, panelStyle, slotView } from "./picture";
 import { PicturePanel } from "./PicturePanel";
 import { BehindOverlays, coversFrame } from "./PreviewOverlays";
 import { onOwnVideos, playable, useShown, type Playback } from "./playback";
@@ -137,8 +138,9 @@ export function MediaSegment({
   }, [playback, segment, end, fade, into, span]);
 
   const filter = useFrameFilter(segment.grade, segment.video_effects, segment.start);
+  const canvas = useCanvas();
   const picture = scene?.picture;
-  const background = picture && scene.panels[0] ? panelStyle(scene.panels[0], picture.item_size, FRAME) : null;
+  const background = picture && scene.panels[0] ? panelStyle(scene.panels[0], picture.item_size, canvas) : null;
   // Cut out (ADR 0015): its Matte follows its video, through the copy it plays.
   const removal = segment.background_removal;
   const played = useMemo(() => (range ? { ...range } : rangeOf(segment)), [range, segment]);
@@ -161,12 +163,12 @@ export function MediaSegment({
             />
           </div>
         )}
-        {(removal || !coversFrame(picture, FRAME)) && <BehindOverlays plan={plan} playback={playback} />}
+        {(removal || !coversFrame(picture, canvas)) && <BehindOverlays plan={plan} playback={playback} />}
         {picture && (
           <div className="absolute inset-0" style={{ filter: removal ? filter : undefined }}>
             <PicturePanel
               picture={picture}
-              frame={FRAME}
+              frame={canvas}
               playback={playback}
               media={
                 <MaskedVideo matte={matte} feather={removal?.feather ?? 0} videoRef={main} playback={playback} name={`segment:${segment.id}`}>

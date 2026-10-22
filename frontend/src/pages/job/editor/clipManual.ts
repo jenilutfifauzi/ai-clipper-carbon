@@ -1,5 +1,6 @@
 import type { CandidateChange, Layout, RenderPlan, Transform } from "../../../api";
-import { FITTED, withClipLayout, type LayoutEdits } from "./manual";
+import { canvasOf } from "./canvas";
+import { fitted, withClipLayout, type LayoutEdits } from "./manual";
 import { sourceTime } from "./ScenesTrack";
 import { withPictureTransform, type PictureEdits, type PictureSource } from "./stagePicture";
 
@@ -27,7 +28,7 @@ export function sourceSceneNear(plan: RenderPlan, near: number): number | null {
  */
 export function clipLayoutChange(edits: LayoutEdits, plan: RenderPlan | null, near: number, layout: Layout): Pick<CandidateChange, "layout" | "framing"> {
   const index = plan && sourceSceneNear(plan, near);
-  if (!plan || index === null) return { layout, framing: layout === "manual" ? (edits.framing ?? FITTED) : null };
+  if (!plan || index === null) return { layout, framing: layout === "manual" ? (edits.framing ?? fitted(canvasOf(plan))) : null };
   const next = withClipLayout(edits, plan, index, layout);
   return { layout: next.layout, framing: next.framing };
 }

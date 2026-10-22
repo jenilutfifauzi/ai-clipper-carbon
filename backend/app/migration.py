@@ -30,8 +30,12 @@ from pydantic import TypeAdapter
 
 from app.candidates import MAX_SCALE, MIN_SCALE, MIN_TEXT_SIZE, TextLayer
 from app.pictures import cover_scale, fitted
-from app.planner import FRAME, OUTPUT_HEIGHT, OUTPUT_WIDTH, TEXT_MARGIN, font_metrics, text_event, without_emoji
+from app.canvas import PORTRAIT
+from app.planner import TEXT_MARGIN, font_metrics, text_event, without_emoji
 
+# Every Candidate saved in an older shape is 9:16: on the PORTRAIT Canvas.
+FRAME = PORTRAIT.size
+OUTPUT_WIDTH, OUTPUT_HEIGHT = FRAME
 # Media Library items' picture sizes, by id.
 Sizes = Mapping[str, tuple[int, int]]
 # The size taken for an item that is missing.
@@ -156,7 +160,8 @@ def _shrunk_text(data: dict[str, Any], size: float) -> tuple[float, float] | Non
 def _drawn_where_it_was(layer: dict[str, Any]) -> dict[str, Any]:
     """A migrated Text Layer centred where the planner drew it: then, one whose area went past the
     frame's edges was moved inside them. Its area is today's, centred on its Transform."""
-    event = text_event(_TEXT_LAYER.validate_python(layer), math.inf)
+    # An old Text Layer was saved on 9:16 (before Canvas Aspects).
+    event = text_event(_TEXT_LAYER.validate_python(layer), math.inf, PORTRAIT)
     if event is None:
         return layer
     area = event.area

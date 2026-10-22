@@ -1,21 +1,28 @@
 import type { StyleOverrides, StyleValue } from "../../../api";
+import { toReference, type Canvas } from "./canvas";
 
-/** Where a move or resize on the preview put the hook or the captions (see StageControls). */
+/** Where a move or resize on the preview put the hook or the captions, in the Canvas's pixels (see StageControls). */
 export interface Place {
   x: number;
   y: number;
   size: number | null;
 }
 
-/** The fields of the hook's or the captions' style that put it at `place`: Custom, at x and y, and its size. */
-export function placedFields(place: Place): Record<string, StyleValue> {
-  return { position: "custom", x: place.x, y: place.y, ...(place.size === null ? {} : { size: place.size }) };
+/**
+ * The fields of the hook's or the captions' style that put it at `place` on `canvas`: Custom, at its
+ * x and y in the Reference Space (GLOSSARY.md), where a Style keeps them, and its size (which isn't mapped).
+ */
+export function placedFields(place: Place, canvas: Canvas): Record<string, StyleValue> {
+  return { position: "custom", ...toReference(canvas, place), ...(place.size === null ? {} : { size: place.size }) };
 }
 
-/** `overrides` with the hook's (`part` "hook") or the captions' ("caption") put at `place`. */
-export function placedOverrides(overrides: StyleOverrides, part: "hook" | "caption", place: Place): StyleOverrides {
-  return { ...overrides, [part]: { ...overrides[part], ...placedFields(place) } };
+/** `overrides` with the hook's (`part` "hook") or the captions' ("caption") put at `place` on `canvas`. */
+export function placedOverrides(overrides: StyleOverrides, part: "hook" | "caption", place: Place, canvas: Canvas): StyleOverrides {
+  return { ...overrides, [part]: { ...overrides[part], ...placedFields(place, canvas) } };
 }
+
+/** The Watermark's style fields that centre it at (`x`, `y`) on `canvas`: Custom, in the Reference Space. */
+export const watermarkPlaced = (canvas: Canvas, x: number, y: number): Record<string, StyleValue> => ({ position: "custom", ...toReference(canvas, { x, y }) });
 
 // What a move on the preview sets, which "Reset position" takes back to the Style Preset's.
 const PLACED_FIELDS = ["position", "x", "y"] as const;

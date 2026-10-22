@@ -6,6 +6,7 @@ import vectors from "../../../../../backend/tests/fixtures/ease_vectors.json";
 import type { Ease, Keyframe } from "../../../api";
 import { EASE_OUT, LINEAR, valueAt } from "../editor/keyframes";
 import { curvePath, curveRange, easeHandles, handleShares, plotPoint, plotValue } from "./curves";
+import { PORTRAIT } from "../editor/canvas";
 
 type Point = [number, number];
 
@@ -94,7 +95,7 @@ describe("the Curves' plot", () => {
     const [low, high] = curveRange("x", [
       { at: 0, value: 200, ease: LINEAR },
       { at: 2, value: 600, ease: [0.34, 1.56, 0.64, 1] },
-    ]);
+    ], PORTRAIT);
     // It goes past 600 (to about 635) on its way.
     expect(low).toBeLessThan(200);
     expect(high).toBeGreaterThan(635);
@@ -102,7 +103,7 @@ describe("the Curves' plot", () => {
   });
 
   test("of a flat curve is a band around its value, within its property's range", () => {
-    const [low, high] = curveRange("opacity", [{ at: 0, value: 1, ease: LINEAR }]);
+    const [low, high] = curveRange("opacity", [{ at: 0, value: 1, ease: LINEAR }], PORTRAIT);
     expect(low).toBeLessThan(1);
     expect(high).toBe(1);
   });

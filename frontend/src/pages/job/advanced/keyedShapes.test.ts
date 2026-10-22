@@ -31,6 +31,7 @@ import { picked, type Pick } from "./pick";
 import { ShapeFields } from "./Shapes";
 import { newShapeStyle } from "./shapeStyle";
 import { MotionFields } from "./TextLayers";
+import { PORTRAIT } from "../editor/canvas";
 
 const key = (at: number, value: number, ease = LINEAR): Keyframe => ({ at, value, ease });
 
@@ -106,7 +107,7 @@ describe("a Shape picked alone", () => {
     const keyed = edits([plate({ scale: [key(0, 1), key(4, 2)], rotation: [key(0, 0)] })]);
     const shape = keyed.shapes[0];
     // Where its Grips hold it at 4 s (2 s in): half way to twice its size.
-    const held = heldTransform(shape.transform, shape.keys, shape, 4);
+    const held = heldTransform(shape.transform, shape.keys, shape, 4, PORTRAIT);
     expect(held.scale).toBeCloseTo(1.5, 3);
     const gripped = writeItemTransform(scene(keyed), R, { ...held, scale: 3, rotation: 45, x: 700 }, 4, held);
     const [written] = gripped!.edits.shapes;
@@ -191,7 +192,7 @@ function found(node: ReactNode, type: unknown, label: string): ReactElement<{ on
 describe("a Shape's in and out animations", () => {
   test("are the Text Layer's Motion fields in its inspector", () => {
     const markup = (changes: Partial<Shape>) =>
-      renderToStaticMarkup(createElement(ShapeFields, { shape: plate({}, changes), duration: 10, onChange: () => {}, onDuplicate: () => {}, onDelete: () => {} }));
+      renderToStaticMarkup(createElement(ShapeFields, { shape: plate({}, changes), duration: 10, frame: PORTRAIT, onChange: () => {}, onDuplicate: () => {}, onDelete: () => {} }));
     for (const label of ["Motion", "Comes on", "Goes off"]) expect(markup({})).toContain(label);
     // Their length is set once one of them animates.
     expect(markup({})).not.toContain("Animation length");

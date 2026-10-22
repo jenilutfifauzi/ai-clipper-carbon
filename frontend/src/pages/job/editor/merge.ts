@@ -114,6 +114,7 @@ const PART_OF: Record<Collision["field"], string> = {
   cue_edits: "Cue Edits",
   layout: "Layout",
   framing: "Layout",
+  aspect: "Layout",
   layout_overrides: "Layout Overrides",
   source_volume: "Source volume",
   grade: "Color",

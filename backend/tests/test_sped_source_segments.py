@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from app.candidates import Layout, LayoutOverride, Segment, WordEdit
+from app.canvas import PORTRAIT
 from app.config import CameraTuning
 from app.planner import FrameFaces, Scene, SceneLayout, SegmentInput, plan_render
 from app.rendering import candidate_plan
@@ -38,7 +39,7 @@ def test_words_of_a_sped_source_segment_land_at_their_offsets_divided_by_its_spe
     words = [Word("dua", 1.0, 1.4), Word("tiga", 2.0, 2.6)]
     planned = plan_render(
         10, 22, SOURCE,
-        main_track=[SegmentInput(20, 22, words=[Word("satu", 0.5, 0.9)]), SegmentInput(10, 14, words=words, speed=speed)],
+        main_track=[SegmentInput(20, 22, words=[Word("satu", 0.5, 0.9)]), SegmentInput(10, 14, words=words, speed=speed)], canvas=PORTRAIT,
     )
     assert planned.segments[1].start == 2 and planned.segments[1].end == 2 + 4 / speed
     assert caption_words(planned) == [("SATU", 0.5), ("DUA", 2 + 1 / speed), ("TIGA", 2 + 2 / speed)]
@@ -63,7 +64,7 @@ def test_scenes_and_the_camera_path_of_a_sped_segment_are_those_at_1x_scaled_by_
     shots = [Scene(0, 1.5), Scene(1.5, 4)]
 
     def planned(speed: float):
-        return plan_render(10, 14, SOURCE, layout=Layout.TRACK, main_track=[SegmentInput(10, 14, shots, GLIDE, speed=speed)]).scenes
+        return plan_render(10, 14, SOURCE, layout=Layout.TRACK, main_track=[SegmentInput(10, 14, shots, GLIDE, speed=speed)], canvas=PORTRAIT).scenes
 
     at_1x = planned(1)
     assert len(at_1x) == 2 and len(at_1x[1].panels[0].path) > 5
@@ -80,7 +81,7 @@ def test_scenes_and_the_camera_path_of_a_sped_segment_are_those_at_1x_scaled_by_
 def test_a_layout_override_in_a_2x_segment_applies_to_the_scene_holding_its_source_time():
     shots = [Scene(0, 2), Scene(2, 4)]
     sped = SegmentInput(10, 14, shots, speed=2, layout_overrides=[LayoutOverride(3.0, Layout.BLUR)])
-    planned = plan_render(10, 14, SOURCE, layout=Layout.TRACK, main_track=[SegmentInput(20, 21), sped])
+    planned = plan_render(10, 14, SOURCE, layout=Layout.TRACK, main_track=[SegmentInput(20, 21), sped], canvas=PORTRAIT)
     assert [(scene.start, scene.end, scene.layout) for scene in planned.scenes] == [
         (0, 1, SceneLayout.TRACK), (1, 2, SceneLayout.TRACK), (2, 3, SceneLayout.BLUR),
     ]
@@ -89,7 +90,7 @@ def test_a_layout_override_in_a_2x_segment_applies_to_the_scene_holding_its_sour
 def test_a_manual_scenes_keyframes_in_a_2x_segment_stay_on_the_same_frames():
     # The override at 13 s frames the shot from 12 s; its Keyframes 0 and 4 s into the shot on the Source.
     sped = SegmentInput(10, 20, [Scene(0, 2), Scene(2, 10)], speed=2, layout_overrides=[by_hand(3)])
-    _, manual_scene = plan_render(10, 20, SOURCE, main_track=[sped]).scenes
+    _, manual_scene = plan_render(10, 20, SOURCE, main_track=[sped], canvas=PORTRAIT).scenes
     assert (manual_scene.start, manual_scene.end, manual_scene.keys_from) == (1, 5, 1)
     assert [(key.at, key.value) for key in manual_scene.picture.motion["x"]] == [(1, 300), (3, 800)]
 

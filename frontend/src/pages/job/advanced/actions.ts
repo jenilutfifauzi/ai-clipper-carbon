@@ -1,8 +1,10 @@
 import { FEATHER_DEFAULT, FEATHER_MAX } from "../../../api";
 import type { Adjust, AdjustmentLayer, AudioEffect, Background, AudioEffectKind, AudioEffectSetting, BlendMode, ClipSegment, Grade, JoinTransition, Keyframe, Keys, MusicClip, Overlay, Shape, TextLayer, TextStyle, Transform, Transition, TransitionKind, VideoEffect, VideoEffectKind } from "../../../api";
 import { CLEAN_SWITCHES, isCleanSwitch, type CleanSwitchId } from "../../../audioEffects";
+import { PORTRAIT, type Canvas } from "../editor/canvas";
 import { adjusted, NEUTRAL_GRADE, relooked } from "../editor/grading";
 import { withJoinTransition } from "../editor/joinTransition";
+import type { Size } from "../editor/pictureGestures";
 import type { PlayedSegment } from "../editor/playback";
 import type { StyleDraft } from "../editor/useStyleDraft";
 import { offsetAt, playedSourceAt, playedTimeAt, rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
@@ -34,6 +36,8 @@ export interface PickContext {
   magnetic?: boolean;
   locked?: TrackKind[];
   join?: JoinTransition | null;
+  // The Canvas the Candidate is drawn on (canvas.ts), which its items' centres stay on: the 9:16 one when not given.
+  canvas?: Canvas;
 }
 
 /** An action's result: the edits after it (one change, so one step of undo), what is picked then, and what to tell. */
@@ -66,23 +70,23 @@ export function fadesHalved<T extends Timed>(item: T): T {
 const KINDS: {
   [K in TimedKind]: {
     list: "text_layers" | "shapes" | "music" | "overlays" | "adjustment_layers";
-    aside: (item: Timed) => Partial<Timed>;
+    aside: (item: Timed, frame: Size) => Partial<Timed>;
     cut: (item: Timed, at: number) => { first: Partial<Timed>; second: Partial<Timed> };
   };
 } = {
   text: {
     list: "text_layers",
-    aside: (item) => {
+    aside: (item, frame) => {
       const { transform } = item as TextLayer;
-      return { transform: { ...transform, y: Math.min(transform.y + 80, 1920) } };
+      return { transform: { ...transform, y: Math.min(transform.y + 80, frame.height) } };
     },
     cut: () => ({ first: {}, second: {} }),
   },
   shape: {
     list: "shapes",
-    aside: (item) => {
+    aside: (item, frame) => {
       const { transform } = item as Shape;
-      return { transform: { ...transform, y: Math.min(transform.y + 80, 1920) } };
+      return { transform: { ...transform, y: Math.min(transform.y + 80, frame.height) } };
     },
     cut: () => ({ first: {}, second: {} }),
   },
@@ -101,9 +105,9 @@ const KINDS: {
   },
   overlay: {
     list: "overlays",
-    aside: (item) => {
+    aside: (item, frame) => {
       const { transform } = item as Overlay;
-      return { transform: { ...transform, y: Math.min(transform.y + 80, 1920) } };
+      return { transform: { ...transform, y: Math.min(transform.y + 80, frame.height) } };
     },
     // Each part shows its stretch of the video (keptOffset): in Reverse, the first the later part.
     cut: (item, at) => {
@@ -421,7 +425,7 @@ export function duplicate(scene: PickContext): Outcome | null {
     const end = Math.max(...moved.map(({ item }) => item.start + item.secs));
     const room = end + (end - first) <= length + 1e-6;
     for (const { kind, item } of moved) {
-      const copy = stillDetached({ ...item, id: idOf(scene), ...(room ? { start: round(item.start + end - first) } : KINDS[kind].aside(item)) } as Timed, next.segments);
+      const copy = stillDetached({ ...item, id: idOf(scene), ...(room ? { start: round(item.start + end - first) } : KINDS[kind].aside(item, scene.canvas ?? PORTRAIT)) } as Timed, next.segments);
       const list = KINDS[kind].list;
       Object.assign(next, { [list]: [...(listOf(next, kind) as Timed[]), copy] });
       copies.push({ kind, id: copy.id });
@@ -573,7 +577,7 @@ export function freezeFrame(scene: PickContext, at: number, limits: { longest?: 
   if (segment.media) {
     held.media = segment.media;
     held.volume = segment.volume;
-    if (segment.framing) held.framing = { ...segment.framing, transform: heldTransform(segment.framing.transform, segment.keys ?? {}, at - shown.start) };
+    if (segment.framing) held.framing = { ...segment.framing, transform: heldTransform(segment.framing.transform, segment.keys ?? {}, at - shown.start, scene.canvas ?? PORTRAIT) };
   }
   const next = {
     ...edits,
@@ -586,10 +590,10 @@ export function freezeFrame(scene: PickContext, at: number, limits: { longest?: 
   });
 }
 
-// A video's Transform as it is shown `at` seconds into its Segment, its Keyframes sampled into
-// constants; a turn past ±360° (a Keyframe's may be) as the same turn within it.
-function heldTransform(transform: Transform, keys: Keys, at: number): Transform {
-  const shown = shownTransform(transform, keys, at);
+// A video's Transform as it is shown `at` seconds into its Segment on the Canvas `frame`, its
+// Keyframes sampled into constants; a turn past ±360° (a Keyframe's may be) as the same turn within it.
+function heldTransform(transform: Transform, keys: Keys, at: number, frame: Size): Transform {
+  const shown = shownTransform(transform, keys, at, frame);
   return Math.abs(shown.rotation) > 360 ? { ...shown, rotation: shown.rotation % 360 } : shown;
 }
 
@@ -653,9 +657,6 @@ export function move(scene: PickContext, delta: number): Outcome | null {
   return { edits: next, pick: scene.pick };
 }
 
-// The output's size, in pixels: where the middles of Text Layers, Shapes and Overlays can be.
-const FRAME = { width: 1080, height: 1920 };
-
 // What is placed on the frame by its Transform: a Text Layer, a Shape or an Overlay.
 type Placed = TextLayer | Shape | Overlay;
 
@@ -676,8 +677,10 @@ export function nudge(scene: PickContext, dx: number, dy: number): Outcome | nul
   const placed = pickedItems(scene).layers.filter(({ kind }) => isPlaced(kind)) as { kind: PlacedKind; item: Placed }[];
   if (!placed.length) return null;
   const within = (by: number, values: number[], size: number) => Math.min(Math.max(by, -Math.min(...values)), size - Math.max(...values));
-  const byX = within(dx, placed.flatMap(({ item }) => [middleOf(item).x, ...keyedMiddles(item, "x")]), FRAME.width);
-  const byY = within(dy, placed.flatMap(({ item }) => [middleOf(item).y, ...keyedMiddles(item, "y")]), FRAME.height);
+  // The Canvas: where the middles of Text Layers, Shapes and Overlays can be.
+  const frame = scene.canvas ?? PORTRAIT;
+  const byX = within(dx, placed.flatMap(({ item }) => [middleOf(item).x, ...keyedMiddles(item, "x")]), frame.width);
+  const byY = within(dy, placed.flatMap(({ item }) => [middleOf(item).y, ...keyedMiddles(item, "y")]), frame.height);
   const shifted = (keys: Keyframe[], by: number) => keys.map((key) => ({ ...key, value: toMillionth(key.value + by) }));
   const next = { ...scene.edits };
   for (const { kind, item } of placed) {

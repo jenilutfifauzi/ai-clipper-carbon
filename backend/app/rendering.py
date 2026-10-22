@@ -41,7 +41,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.analysis import Analyzer, ClipAnalysis, analysis_file
 from app.audio_effects import MEASURED_DIR
-from app.candidates import Candidate, Framing, Layout, Segment, WordEdit
+from app.candidates import Candidate, Layout, Segment, WordEdit
 from app.caption_files import CaptionFormat, caption_file
 from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, caption_paths, clip_files
 from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
@@ -399,6 +399,7 @@ def candidate_plan(
     shows their time of their timeline, the Source's or an item's (`edit_shown`, docs/adr/0020). Not `captioned`, its
     `words` are heard but not captioned: they and its Music Clips of the Source's (`music`,
     `music_words`) are speech, which ducks its music (docs/adr/0016).
+    It is planned on the Candidate's Canvas (docs/adr/0022).
     Renders and the editor's preview both plan by this, so that the preview shows what the render will."""
     caption_style, hook_style, watermark_style = presets.styles(candidate.preset_id, candidate.style_overrides)
     logo = logos.find(watermark_style.logo) if logos else None
@@ -421,6 +422,7 @@ def candidate_plan(
         music_words=music,
         grade=candidate.grade,
         adjustment_layers=candidate.adjustment_layers,
+        canvas=candidate.canvas,
     )
     if not candidate.segments:
         [analysis] = analyses
@@ -448,7 +450,7 @@ def candidate_plan(
                 continue
             inputs.append(SegmentInput(
                 segment.start, segment.end, media=segment.media, width=item.width, height=item.height,
-                framing=segment.framing or Framing(), volume=segment.volume, silent=not item.has_audio,
+                framing=segment.framing, volume=segment.volume, silent=not item.has_audio,
                 words=None if words is None else words[i], word_edits=shown_edits(candidate.word_edits, segment),
                 join=join, keys=segment.keys, id=segment.id,
                 speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,
@@ -940,6 +942,7 @@ class Renders:
                 export_preset_id=preset.id,
                 export=export,
                 bitrate_fallback=bitrate_fallback,
+                aspect=candidate.aspect,
             )
             logger.info(
                 "Job %s: rendered Candidate %s (%.1f s) in %.1f s with %s, %.1f MB",

@@ -3,6 +3,7 @@
 import { describe, expect, test } from "vitest";
 import type { OverlayEvent, Picture, RenderPlan, ScenePlan, Transform } from "../../../api";
 import { pictureSpot, reachedBehind, segmentShows } from "./behindStage";
+import { PORTRAIT } from "./canvas";
 import type { PictureTarget, StageControls } from "./ClipPreview";
 import { stagePictures } from "./stagePictures";
 
@@ -45,12 +46,12 @@ const scene = (changes: Partial<ScenePlan>): ScenePlan => ({
 describe("where the Segment's picture shows", () => {
   test("on a Manual or media picture: a share of its item's frame, flipped and cropped as drawn; null off it", () => {
     const half = scene({ picture: picture([540, 960], 960, 540) });
-    expect(pictureSpot(half, { x: 540, y: 960 }, 0, SOURCE)).toEqual({
+    expect(pictureSpot(half, { x: 540, y: 960 }, 0, SOURCE, PORTRAIT)).toEqual({
       u: 0.5,
       v: 0.5,
     });
-    expect(pictureSpot(half, { x: 60 + 240, y: 690 + 135 }, 0, SOURCE)).toEqual({ u: 0.25, v: 0.25 });
-    expect(pictureSpot(half, { x: 540, y: 300 }, 0, SOURCE)).toBeNull();
+    expect(pictureSpot(half, { x: 60 + 240, y: 690 + 135 }, 0, SOURCE, PORTRAIT)).toEqual({ u: 0.25, v: 0.25 });
+    expect(pictureSpot(half, { x: 540, y: 300 }, 0, SOURCE, PORTRAIT)).toBeNull();
     const flipped = scene({
       picture: picture([540, 960], 960, 540, {
         flip_h: true,
@@ -58,7 +59,7 @@ describe("where the Segment's picture shows", () => {
       }),
     });
     // Its left edge shows its crop's right edge: the item's own.
-    expect(pictureSpot(flipped, { x: 61, y: 960 }, 0, SOURCE)!.u).toBeCloseTo(1, 2);
+    expect(pictureSpot(flipped, { x: 61, y: 960 }, 0, SOURCE, PORTRAIT)!.u).toBeCloseTo(1, 2);
   });
 
   test("turned: by its own axes", () => {
@@ -66,8 +67,8 @@ describe("where the Segment's picture shows", () => {
       picture: picture([540, 960], 960, 540, { rotation: 90 }),
     });
     // Turned a quarter, its top edge is on the right.
-    expect(pictureSpot(turned, { x: 540 + 260, y: 960 }, 0, SOURCE)!.v).toBeCloseTo(0.0185, 3);
-    expect(pictureSpot(turned, { x: 540 + 300, y: 960 }, 0, SOURCE)).toBeNull();
+    expect(pictureSpot(turned, { x: 540 + 260, y: 960 }, 0, SOURCE, PORTRAIT)!.v).toBeCloseTo(0.0185, 3);
+    expect(pictureSpot(turned, { x: 540 + 300, y: 960 }, 0, SOURCE, PORTRAIT)).toBeNull();
   });
 
   test("on a Track or Split panel, by its crop at that time; a Blur fill isn't the picture", () => {
@@ -93,16 +94,16 @@ describe("where the Segment's picture shows", () => {
         },
       ],
     });
-    expect(pictureSpot(split, { x: 540, y: 450 }, 1, SOURCE)).toEqual({
+    expect(pictureSpot(split, { x: 540, y: 450 }, 1, SOURCE, PORTRAIT)).toEqual({
       u: 270 / 1920,
       v: 225 / 1080,
     });
-    expect(pictureSpot(split, { x: 540, y: 450 }, 6, SOURCE)).toEqual({
+    expect(pictureSpot(split, { x: 540, y: 450 }, 6, SOURCE, PORTRAIT)).toEqual({
       u: 370 / 1920,
       v: 225 / 1080,
     });
     // The gap between the two.
-    expect(pictureSpot(split, { x: 540, y: 960 }, 1, SOURCE)).toBeNull();
+    expect(pictureSpot(split, { x: 540, y: 960 }, 1, SOURCE, PORTRAIT)).toBeNull();
     const fill = scene({
       layout: "blur",
       panels: [
@@ -115,7 +116,7 @@ describe("where the Segment's picture shows", () => {
         },
       ],
     });
-    expect(pictureSpot(fill, { x: 540, y: 960 }, 1, SOURCE)).toBeNull();
+    expect(pictureSpot(fill, { x: 540, y: 960 }, 1, SOURCE, PORTRAIT)).toBeNull();
   });
 
   test("cut out, only where its Matte keeps it; shown whole (no cut drawn), all of it", () => {
@@ -123,11 +124,11 @@ describe("where the Segment's picture shows", () => {
       picture: picture([540, 960], 1080, 1920 * (1080 / 1920)),
     });
     const at = { x: 540, y: 960 };
-    expect(segmentShows(whole, at, 0, SOURCE, () => null)).toBe(true);
-    expect(segmentShows(whole, at, 0, SOURCE, () => 0.9)).toBe(true);
-    expect(segmentShows(whole, at, 0, SOURCE, () => 0.1)).toBe(false);
-    expect(segmentShows(whole, { x: 540, y: 100 }, 0, SOURCE, () => 1)).toBe(false);
-    expect(segmentShows(undefined, at, 0, SOURCE, () => 1)).toBe(false);
+    expect(segmentShows(whole, at, 0, SOURCE, () => null, PORTRAIT)).toBe(true);
+    expect(segmentShows(whole, at, 0, SOURCE, () => 0.9, PORTRAIT)).toBe(true);
+    expect(segmentShows(whole, at, 0, SOURCE, () => 0.1, PORTRAIT)).toBe(false);
+    expect(segmentShows(whole, { x: 540, y: 100 }, 0, SOURCE, () => 1, PORTRAIT)).toBe(false);
+    expect(segmentShows(undefined, at, 0, SOURCE, () => 1, PORTRAIT)).toBe(false);
   });
 });
 
@@ -146,15 +147,15 @@ describe("the Behind Overlay a press reaches", () => {
   };
 
   test("the topmost showing under the point, where the Segment's picture doesn't show", () => {
-    expect(reachedBehind([full, corner], { x: 200, y: 200 }, 3, () => false)).toBe("overlay:corner");
-    expect(reachedBehind([full, corner], { x: 200, y: 200 }, 5, () => false)).toBe("overlay:full");
-    expect(reachedBehind([full, corner], { x: 900, y: 1500 }, 3, () => false)).toBe("overlay:full");
+    expect(reachedBehind([full, corner], { x: 200, y: 200 }, 3, () => false, PORTRAIT)).toBe("overlay:corner");
+    expect(reachedBehind([full, corner], { x: 200, y: 200 }, 5, () => false, PORTRAIT)).toBe("overlay:full");
+    expect(reachedBehind([full, corner], { x: 900, y: 1500 }, 3, () => false, PORTRAIT)).toBe("overlay:full");
   });
 
   test("none where the Segment's picture shows over it, or where none is", () => {
-    expect(reachedBehind([full, corner], { x: 200, y: 200 }, 3, () => true)).toBeNull();
-    expect(reachedBehind([corner], { x: 900, y: 1500 }, 3, () => false)).toBeNull();
-    expect(reachedBehind([], { x: 900, y: 1500 }, 3, () => false)).toBeNull();
+    expect(reachedBehind([full, corner], { x: 200, y: 200 }, 3, () => true, PORTRAIT)).toBeNull();
+    expect(reachedBehind([corner], { x: 900, y: 1500 }, 3, () => false, PORTRAIT)).toBeNull();
+    expect(reachedBehind([], { x: 900, y: 1500 }, 3, () => false, PORTRAIT)).toBeNull();
   });
 });
 

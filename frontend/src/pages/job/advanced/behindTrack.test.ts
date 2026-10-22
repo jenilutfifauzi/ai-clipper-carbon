@@ -6,6 +6,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { ClipSegment, Overlay, OverlayEvent, RenderPlan } from "../../../api";
+import { PORTRAIT } from "../editor/canvas";
 import { NO_CROP } from "../editor/cropGestures";
 import { Playback, playedFrom } from "../editor/playback";
 import { BehindOverlays, coversFrame } from "../editor/PreviewOverlays";
@@ -83,8 +84,8 @@ describe("the Behind Track's lanes", () => {
 
   test("an item dropped on it is an Overlay Behind the Main Track; one dropped on the Overlay Track has no field", () => {
     const item = { id: "m", kind: "image", name: "B-roll", width: 1920, height: 1080, duration: null, has_audio: false } as never;
-    expect(newOverlay(item, 2, 25, true).behind).toBe(true);
-    expect("behind" in newOverlay(item, 2, 25)).toBe(false);
+    expect(newOverlay(item, 2, 25, PORTRAIT, true).behind).toBe(true);
+    expect("behind" in newOverlay(item, 2, 25, PORTRAIT)).toBe(false);
   });
 });
 

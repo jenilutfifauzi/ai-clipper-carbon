@@ -1,5 +1,6 @@
 import type { Shape, ShapeKind, ShapeStyle, Transform } from "../../../api";
-import { allStroke, FRAME, IDENTITY } from "../editor/picture";
+import { PORTRAIT, type Canvas } from "../editor/canvas";
+import { allStroke, identity } from "../editor/picture";
 import type { Size } from "../editor/pictureGestures";
 import { NO_SHADOW } from "../editor/shadow";
 import type { Outcome } from "./actions";
@@ -59,13 +60,14 @@ export const drawsSomething = (style: ShapeStyle): boolean =>
 
 /**
  * A Shape of `kind` added at `at` (the playhead) in a Clip `duration` long: for NEW_LAYER_SECS, as
- * a new Text Layer (or to the Clip's end, `newTiming`), centred on the frame, in its tile's look, unanimated.
+ * a new Text Layer (or to the Clip's end, `newTiming`), centred on the Canvas `frame`, in its tile's
+ * look, unanimated.
  */
-export function newShape(kind: ShapeKind, at: number, duration: number, id: string = newId()): Shape {
+export function newShape(kind: ShapeKind, at: number, duration: number, frame: Size, id: string = newId()): Shape {
   return {
     id,
     ...newTiming(at, duration),
-    transform: IDENTITY,
+    transform: identity(frame),
     style: newShapeStyle(kind),
     animation_in: "none",
     animation_out: "none",
@@ -76,18 +78,20 @@ export function newShape(kind: ShapeKind, at: number, duration: number, id: stri
 
 /**
  * A new Shape of `kind` (`newShape`) put on top of the others, picked: one change. Dropped on the
- * preview, its centre is at the drop point (`place`, in output pixels), whole pixels inside the frame.
+ * preview, its centre is at the drop point (`place`, in output pixels), whole pixels inside the
+ * scene's Canvas (the 9:16 one when not given).
  */
 export function addShape(
-  scene: { edits: AdvancedEdits },
+  scene: { edits: AdvancedEdits; canvas?: Canvas },
   kind: ShapeKind,
   at: number,
   duration: number,
   { id, place }: { id?: string; place?: { x: number; y: number } } = {},
 ): Outcome {
-  const made = newShape(kind, at, duration, id);
+  const frame = scene.canvas ?? PORTRAIT;
+  const made = newShape(kind, at, duration, frame, id);
   const within = (value: number, most: number) => Math.round(Math.min(Math.max(value, 0), most));
-  const shape = place ? { ...made, transform: { ...made.transform, x: within(place.x, FRAME.width), y: within(place.y, FRAME.height) } } : made;
+  const shape = place ? { ...made, transform: { ...made.transform, x: within(place.x, frame.width), y: within(place.y, frame.height) } } : made;
   return { edits: { ...scene.edits, shapes: [...scene.edits.shapes, shape] }, pick: picked({ kind: "shape", id: shape.id }) };
 }
 

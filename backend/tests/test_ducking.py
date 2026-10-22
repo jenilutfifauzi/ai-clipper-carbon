@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from app.candidates import MusicClip, TransitionKind
+from app.canvas import PORTRAIT
 from app.config import DuckTuning
 from app.ducking import ducked_stretches
 from app.planner import Join, MediaInfo, SegmentInput, gain_at, plan_render
@@ -46,7 +47,7 @@ def song(**fields) -> MusicClip:
 
 def speech(main_track: list[SegmentInput], music: list[MusicClip] | None = None, **planned) -> list[tuple[float, float]]:
     """The speech spans the ducked song `m` carries, in a Clip of `main_track`."""
-    plan = plan_render(0, 1, SOURCE, main_track=main_track, music=[song(), *(music or [])], media_info=ITEMS, **planned)
+    plan = plan_render(0, 1, SOURCE, main_track=main_track, music=[song(), *(music or [])], media_info=ITEMS, **{"canvas": PORTRAIT, **planned})
     [ducked] = [event for event in plan.audio if event.id == "m"]
     assert ducked.duck == DEPTH
     return ducked.speech_spans
@@ -81,7 +82,7 @@ def test_none_comes_from_a_muted_a_reversed_or_a_held_segment_nor_from_a_video()
 def test_spans_stay_joined_through_a_short_pause_and_not_through_a_long_one():
     assert speech([SegmentInput(10, 20, words=said((1.0, 2.0), (2.5, 3.0)))]) == [(1.0, 3.0)]
     assert speech([SegmentInput(10, 20, words=said((1.0, 2.0), (4.0, 5.0)))]) == [(1.0, 2.0), (4.0, 5.0)]
-    plan = plan_render(0, 1, SOURCE, main_track=[SegmentInput(10, 20, words=said((1.0, 2.0), (4.0, 5.0)))], music=[song()], media_info=ITEMS)
+    plan = plan_render(0, 1, SOURCE, main_track=[SegmentInput(10, 20, words=said((1.0, 2.0), (4.0, 5.0)))], music=[song()], media_info=ITEMS, canvas=PORTRAIT)
     [ducked] = plan.audio
     tenth = 10 ** (DEPTH / 20)
     # Down through the 0.5 s pause; back up 0.5 s after the first Word, and down again from 0.25 s
@@ -91,11 +92,11 @@ def test_spans_stay_joined_through_a_short_pause_and_not_through_a_long_one():
 
 def test_speech_is_gathered_with_captions_off():
     main_track = [SegmentInput(10, 20, words=said((1.0, 2.0)))]
-    plan = plan_render(0, 1, SOURCE, main_track=main_track, music=[song()], media_info=ITEMS, captioned=False)
+    plan = plan_render(0, 1, SOURCE, main_track=main_track, music=[song()], media_info=ITEMS, captioned=False, canvas=PORTRAIT)
     assert plan.captions == [] and plan.audio[0].speech_spans == [(1.0, 2.0)]
-    assert plan_render(0, 1, SOURCE, main_track=main_track).captions != []
+    assert plan_render(0, 1, SOURCE, main_track=main_track, canvas=PORTRAIT).captions != []
     # A Clip of one range too, its Words heard in it only (those of the margins aren't).
-    whole = plan_render(10, 20, SOURCE, words=said((-1.0, -0.4), (1.0, 2.0), (9.8, 10.6)), music=[song()], media_info=ITEMS, captioned=False)
+    whole = plan_render(10, 20, SOURCE, words=said((-1.0, -0.4), (1.0, 2.0), (9.8, 10.6)), music=[song()], media_info=ITEMS, captioned=False, canvas=PORTRAIT)
     assert whole.captions == [] and whole.audio[0].speech_spans == [(1.0, 2.0)]
 
 
@@ -115,7 +116,7 @@ def test_a_music_clip_of_the_sources_words_are_speech_where_it_plays_at_its_spee
 
 def test_a_ducked_sound_carries_the_spans_whose_ramps_reach_it_and_the_plan_its_ramps():
     main_track = [SegmentInput(10, 30, words=said((1.0, 2.0), (4.4, 4.6), (8.1, 9.0), (12.0, 13.0)))]
-    plan = plan_render(0, 1, SOURCE, main_track=main_track, music=[song(start=5.0, secs=3.0)], media_info=ITEMS)
+    plan = plan_render(0, 1, SOURCE, main_track=main_track, music=[song(start=5.0, secs=3.0)], media_info=ITEMS, canvas=PORTRAIT)
     # Its release reaches 5.1 s, past its start; the next's lead begins at 7.85 s, before its end.
     assert plan.audio[0].speech_spans == [(4.4, 4.6), (8.1, 9.0)]
     assert plan.ducking == DuckTuning(lead_secs=0.25, release_secs=0.5, bridge_secs=0.8)
@@ -131,7 +132,7 @@ def test_the_ducked_stretches_are_joined_where_they_meet_and_cut_to_the_sound():
 
 
 def test_an_unducked_song_carries_no_speech_and_a_music_clip_of_the_source_refuses_a_duck():
-    plan = plan_render(0, 1, SOURCE, main_track=[SegmentInput(10, 20, words=said((1.0, 2.0)))], music=[song(duck=None)], media_info=ITEMS)
+    plan = plan_render(0, 1, SOURCE, main_track=[SegmentInput(10, 20, words=said((1.0, 2.0)))], music=[song(duck=None)], media_info=ITEMS, canvas=PORTRAIT)
     assert (plan.audio[0].duck, plan.audio[0].speech_spans) == (None, [])
     assert gain_at(plan.audio[0], 1.5) == 1
     with pytest.raises(ValueError, match="Music Clip s plays the episode's sound, which is never ducked"):

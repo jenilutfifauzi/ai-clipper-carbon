@@ -24,6 +24,7 @@ import { NAMES, picked, stageIdsOf, stageItem, TRACK_OF, unlockedPick, type Pick
 import { addShape, drawsSomething, newShape, NOTHING_TO_DRAW } from "./shapeStyle";
 import { ShapeAssets, ShapeFields, ShapesFields } from "./Shapes";
 import { shownPlan, TRACKS, UNTOUCHED } from "./trackState";
+import { PORTRAIT } from "../editor/canvas";
 
 const FRAME = { width: 1080, height: 1920 };
 
@@ -103,8 +104,8 @@ describe("the Stickers tab", () => {
   });
 
   test("near the Clip's end it starts early enough to last as long, and in a short Clip it lasts the whole Clip", () => {
-    expect(newShape("rectangle", 9, 10, "a")).toMatchObject({ start: 7, secs: 3 });
-    expect(newShape("rectangle", 1, 2, "b")).toMatchObject({ start: 0, secs: 2 });
+    expect(newShape("rectangle", 9, 10, PORTRAIT, "a")).toMatchObject({ start: 7, secs: 3 });
+    expect(newShape("rectangle", 1, 2, PORTRAIT, "b")).toMatchObject({ start: 0, secs: 2 });
   });
 });
 
@@ -196,7 +197,7 @@ describe("a Shape on the preview", () => {
   test("keyed, is where its Keyframes have it at a time", () => {
     const motion = { x: [{ at: 0, value: 200, ease: LINEAR }, { at: 2, value: 800, ease: LINEAR }] };
     const moving: ShapeEvent = { ...event(), picture: { ...event().picture, motion, unscaled: [404, 404] } };
-    const { shapes } = layersAt({ shapes: [moving], texts: [] } as unknown as RenderPlan, 1);
+    const { shapes } = layersAt({ ...PORTRAIT, shapes: [moving], texts: [] } as unknown as RenderPlan, 1);
     expect(shapes[0].layer.transform.x).toBe(500);
   });
 
@@ -229,7 +230,7 @@ describe("a Shape on the preview", () => {
 describe("a Shape in the inspector", () => {
   test("shows its width, height and fill, its Transform and its timing", () => {
     const markup = renderToStaticMarkup(
-      createElement(ShapeFields, { shape: shape("a", 1, 2), duration: 10, onChange: () => {}, onDuplicate: () => {}, onDelete: () => {} }),
+      createElement(ShapeFields, { shape: shape("a", 1, 2), duration: 10, frame: PORTRAIT, onChange: () => {}, onDuplicate: () => {}, onDelete: () => {} }),
     );
     for (const label of ["Width", "Height", "Fill", "Scale", "Rotation", "Opacity", "Comes on at", "Stays for"]) expect(markup).toContain(label);
     expect(markup).toContain("400 px");
@@ -246,7 +247,7 @@ function laidOut(node: ReactNode): ReactElement[] {
 
 function inspected(style: Partial<ShapeStyle>, changed: Shape[] = []) {
   const picked = shape("a", 1, 2, { style: { ...WHITE_SQUARE, ...style } });
-  const props = { shape: picked, duration: 10, onChange: (next: Shape) => void changed.push(next), onDuplicate: () => {}, onDelete: () => {} };
+  const props = { shape: picked, duration: 10, frame: PORTRAIT, onChange: (next: Shape) => void changed.push(next), onDuplicate: () => {}, onDelete: () => {} };
   const elements = laidOut(ShapeFields(props));
   const slider = (label: string) => elements.find((element) => element.type === Slider && (element.props as { label: string }).label === label);
   const fillSwitch = elements.find((element) => element.type === Switch && laidOut((element.props as { children: ReactNode }).children).some(
@@ -257,7 +258,7 @@ function inspected(style: Partial<ShapeStyle>, changed: Shape[] = []) {
 
 describe("a Shape's look in the inspector", () => {
   test("a new one is white, with no stroke, square corners and no shadow", () => {
-    expect(newShape("rectangle", 0, 10, "a").style).toEqual(WHITE_SQUARE);
+    expect(newShape("rectangle", 0, 10, PORTRAIT, "a").style).toEqual(WHITE_SQUARE);
   });
 
   test("its stroke, corners and drop shadow are set there", () => {
@@ -310,7 +311,7 @@ describe("several Shapes' look in the inspector", () => {
 
   function several(shapes: Shape[]) {
     const changes: ((shape: Shape) => Shape)[] = [];
-    const props = { shapes, onChange: (change: (shape: Shape) => Shape) => void changes.push(change), onDuplicate: () => {}, onCopy: () => {}, onDelete: () => {} };
+    const props = { shapes, frame: PORTRAIT, onChange: (change: (shape: Shape) => Shape) => void changes.push(change), onDuplicate: () => {}, onCopy: () => {}, onDelete: () => {} };
     const elements = laidOut(ShapesFields(props));
     const slider = (label: string) => elements.find((element) => element.type === Slider && (element.props as { label: string }).label === label)!;
     return { markup: renderToStaticMarkup(createElement(ShapesFields, props)), slider, changes };
@@ -370,7 +371,7 @@ describe("every Shape Kind on the Stickers tab", () => {
 
   test("each kind is added in its default look: a figure 400 square and white, a line or an arrow 600 long and 12 thick", () => {
     for (const kind of KINDS) {
-      const { style } = newShape(kind, 0, 10, "a");
+      const { style } = newShape(kind, 0, 10, PORTRAIT, "a");
       if (kind === "line" || kind === "arrow") expect(style).toEqual({ ...WHITE_SQUARE, kind, ...WHITE_LINE });
       else expect(style).toEqual({ ...WHITE_SQUARE, kind });
       expect(drawsSomething(style)).toBe(true);
@@ -392,7 +393,7 @@ describe("every Shape Kind on the Stickers tab", () => {
 describe("a Shape's kind in the inspector", () => {
   const select = (style: Partial<ShapeStyle>, changed: Shape[] = []) => {
     const picked = shape("a", 1, 2, { style: { ...WHITE_SQUARE, ...style } });
-    const props = { shape: picked, duration: 10, onChange: (next: Shape) => void changed.push(next), onDuplicate: () => {}, onDelete: () => {} };
+    const props = { shape: picked, duration: 10, frame: PORTRAIT, onChange: (next: Shape) => void changed.push(next), onDuplicate: () => {}, onDelete: () => {} };
     return laidOut(ShapeFields(props)).find((element) => element.type === Select) as ReactElement<{
       label: string;
       value: ShapeKind;
@@ -465,7 +466,7 @@ describe("several Shapes' kinds in the inspector", () => {
 
   function several(shapes: Shape[]) {
     const changes: ((shape: Shape) => Shape)[] = [];
-    const props = { shapes, onChange: (change: (shape: Shape) => Shape) => void changes.push(change), onDuplicate: () => {}, onCopy: () => {}, onDelete: () => {} };
+    const props = { shapes, frame: PORTRAIT, onChange: (change: (shape: Shape) => Shape) => void changes.push(change), onDuplicate: () => {}, onCopy: () => {}, onDelete: () => {} };
     const elements = laidOut(ShapesFields(props));
     const kind = elements.find((element) => element.type === Select && (element.props as { label: string }).label === "Figure") as ReactElement<{
       value: ShapeKind;

@@ -16,6 +16,7 @@ from pydantic import TypeAdapter
 from app.candidates import Candidate, Overlay, Segment, manual_candidate
 from app.config import CameraTuning
 from app.media import MediaKind
+from app.canvas import PORTRAIT
 from app.planner import MediaInfo, SegmentInput, plan_render
 from app.rendering import candidate_plan
 from app.styles import PresetStore
@@ -40,8 +41,8 @@ ITEMS = {VIDEO: MediaInfo(320, 180, 4.0, True), IMAGE: MediaInfo(320, 180, None,
 
 def test_behind_overlays_are_listed_apart_as_the_others_are_drawn():
     front, behind = Overlay("f", IMAGE, 0.5, 1.0), Overlay("b", VIDEO, 1.0, 2.0, offset=0.5, volume=1.0, behind=True)
-    planned = plan_render(10, 14, SOURCE, overlays=[front, behind], media_info=ITEMS)
-    alone = plan_render(10, 14, SOURCE, overlays=[front, replace(behind, behind=False)], media_info=ITEMS)
+    planned = plan_render(10, 14, SOURCE, overlays=[front, behind], media_info=ITEMS, canvas=PORTRAIT)
+    alone = plan_render(10, 14, SOURCE, overlays=[front, replace(behind, behind=False)], media_info=ITEMS, canvas=PORTRAIT)
     assert [event.id for event in planned.overlays] == ["f"] and [event.id for event in planned.behind] == ["b"]
     # The same OverlayEvent as one over the Main Track would be.
     assert planned.behind[0] == alone.overlays[1]

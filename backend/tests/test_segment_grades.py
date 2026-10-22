@@ -15,6 +15,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import Adjust, Candidate, Grade, Segment, manual_candidate
+from app.canvas import PORTRAIT
 from app.config import CameraTuning, load_settings
 from app.planner import SegmentInput, plan_render
 from app.rendering import candidate_plan
@@ -36,7 +37,7 @@ GREY = {"adjust": {"saturation": -100}}
 
 def test_segment_plans_carry_their_grade_as_given():
     warm = Grade(Adjust(temperature=9000, exposure=0.5))
-    planned = plan_render(10, 23, SOURCE, main_track=[SegmentInput(10, 12, grade=warm), SegmentInput(20, 23)])
+    planned = plan_render(10, 23, SOURCE, main_track=[SegmentInput(10, 12, grade=warm), SegmentInput(20, 23)], canvas=PORTRAIT)
     assert [segment.grade for segment in planned.segments] == [warm, Grade()]
 
 

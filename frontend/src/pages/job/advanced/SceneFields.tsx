@@ -6,7 +6,8 @@ import { Select } from "../../../components/Select";
 import { forAllScenes, framingSource, reframed, sceneLayoutOverrides, sourceSceneAt, withClipLayout, withSceneFraming, type LayoutEdits } from "../editor/manual";
 import { offeredLayouts, portraitSource, shownLayout } from "../editor/layouts";
 import { PICTURE_KEYS } from "../editor/keyframes";
-import { IDENTITY } from "../editor/picture";
+import { canvasOf } from "../editor/canvas";
+import { identity } from "../editor/picture";
 import { usePlayback, type Playback } from "../editor/playback";
 import { sceneOverride } from "../editor/ScenesTrack";
 import { Group } from "../editor/StyleFields";
@@ -82,7 +83,7 @@ export function SceneFields<T extends LayoutEdits>({
   const keyed = source?.own ? manualScene(edits.layout_overrides, plan, at) : null;
   const keyAt = keyed && keyTime(keyed, time);
   const shown = keyed
-    ? shownTransform(keyed.framing.transform, keyed.keys, keyAt ?? heldKeyTime(keyed, time))
+    ? shownTransform(keyed.framing.transform, keyed.keys, keyAt ?? heldKeyTime(keyed, time), canvasOf(plan))
     : source?.framing.transform;
   const setTransform = (transform: Transform, field: string) => {
     if (!keyed || !source?.own) return setFraming({ ...source!.framing, transform }, `transform.${field}`);
@@ -123,7 +124,7 @@ export function SceneFields<T extends LayoutEdits>({
             transform={shown ?? source.framing.transform}
             crop={source.framing.crop}
             size={{ width: plan.source_width, height: plan.source_height }}
-            defaults={IDENTITY}
+            defaults={identity(canvasOf(plan))}
             onChange={setTransform}
             onCrop={setCrop}
             onCropMode={onCropMode}

@@ -33,12 +33,13 @@ function spotOnPicture(picture: Picture, point: Point): Spot | null {
 }
 
 /**
- * Where the picture of `scene` shows at `point` (output pixels) at `time` seconds into the Clip, on
- * its item's frame (`source`: the Source's size, which a panel crops): on its one picture (a Manual
- * or media Scene's), or on a panel that isn't a Blur fill; null where it doesn't show.
+ * Where the picture of `scene` shows at `point` (in the pixels of the plan's Canvas `frame`) at `time`
+ * seconds into the Clip, on its item's frame (`source`: the Source's size, which a panel crops): on
+ * its one picture (a Manual or media Scene's), or on a panel that isn't a Blur fill; null where it
+ * doesn't show.
  */
-export function pictureSpot(scene: ScenePlan, point: Point, time: number, source: Size): Spot | null {
-  if (scene.picture) return spotOnPicture(pictureAt(scene.picture, time), point);
+export function pictureSpot(scene: ScenePlan, point: Point, time: number, source: Size, frame: Size): Spot | null {
+  if (scene.picture) return spotOnPicture(pictureAt(scene.picture, time, frame), point);
   // The panels drawn last are on top.
   for (const panel of [...scene.panels].reverse()) {
     if (panel.blur) continue;
@@ -67,10 +68,10 @@ export interface BehindTarget {
 /**
  * The Behind Overlay a press at `point` reaches at `time`: the last drawn (the topmost) of `behind`
  * showing then whose picture holds `point`, unless the Segment's picture `shows` there; null
- * without one.
+ * without one. On the plan's Canvas `frame`.
  */
-export function reachedBehind(behind: BehindTarget[], point: Point, time: number, shows: (point: Point) => boolean): string | null {
-  const under = [...behind].reverse().find((each) => each.start <= time && time < each.end && spotOnPicture(pictureAt(each.picture, time), point));
+export function reachedBehind(behind: BehindTarget[], point: Point, time: number, shows: (point: Point) => boolean, frame: Size): string | null {
+  const under = [...behind].reverse().find((each) => each.start <= time && time < each.end && spotOnPicture(pictureAt(each.picture, time, frame), point));
   if (!under || shows(point)) return null;
   return under.id;
 }
@@ -81,9 +82,12 @@ const SHOWN_ALPHA = 0.5;
 /**
  * Whether the Segment's picture of `scene` shows at `point` at `time`: on it, and, where its cut is
  * drawn (`alpha` of a spot: how much of it the Matte keeps, null when it is shown whole), kept there.
+ * On the plan's Canvas `frame`.
  */
-export function segmentShows(scene: ScenePlan | undefined, point: Point, time: number, source: Size, alpha: (spot: Spot) => number | null): boolean {
-  const spot = scene && pictureSpot(scene, point, time, source);
+export function segmentShows(
+  scene: ScenePlan | undefined, point: Point, time: number, source: Size, alpha: (spot: Spot) => number | null, frame: Size,
+): boolean {
+  const spot = scene && pictureSpot(scene, point, time, source, frame);
   if (!spot) return false;
   const kept = alpha(spot);
   return kept === null || kept >= SHOWN_ALPHA;

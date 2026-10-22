@@ -15,6 +15,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from app.candidates import Border, Keyframe, KeyProperty, Layout, Overlay, Shadow, Shape, TextLayer, Transform, TransitionKind
+from app.canvas import PORTRAIT
 from app.config import RenderTuning
 from app.encoding import ExportSettings
 from app.layer_pictures import make_pictures
@@ -54,7 +55,7 @@ def thirds(box: Box) -> Box:
 
 
 def test_a_plan_at_its_own_size_is_itself():
-    plan = plan_render(10, 14, SOURCE, layout=Layout.BLUR, words=SPOKEN, hook="Halo semua")
+    plan = plan_render(10, 14, SOURCE, layout=Layout.BLUR, words=SPOKEN, hook="Halo semua", canvas=PORTRAIT)
     assert scaled_plan(plan, (1080, 1920)) is plan
 
 
@@ -66,7 +67,7 @@ def test_at_720p_every_output_pixel_is_two_thirds_and_source_and_item_pixels_sta
     plan = plan_render(
         10, 14, SOURCE, layout=Layout.BLUR, words=SPOKEN, hook="Halo semua", hook_kicker="Baru",
         watermark_style=logo, logo_size=(200, 100), text_layers=[text_layer()], shapes=[shape()],
-        overlays=[overlay], media_info={STILL: MediaInfo(200, 100, None, False)},
+        overlays=[overlay], media_info={STILL: MediaInfo(200, 100, None, False)}, canvas=PORTRAIT,
     )
     drawn = scaled_plan(plan, (720, 1280))
     assert (drawn.width, drawn.height) == (720, 1280)
@@ -141,7 +142,7 @@ def test_at_720p_every_output_pixel_is_two_thirds_and_source_and_item_pixels_sta
 def test_at_4k_a_picture_is_rasterised_twice_as_large_under_the_cap():
     # A line 1106 px wide at 4 times its size is past the cap already, so it is rasterised at 3.7.
     huge = text_layer(text="Kalimat yang panjang sekali", transform={"scale": 4}, style={"size": 200})
-    plan = plan_render(10, 14, SOURCE, text_layers=[text_layer(), huge], shapes=[shape(transform={"scale": 1.2})])
+    plan = plan_render(10, 14, SOURCE, text_layers=[text_layer(), huge], shapes=[shape(transform={"scale": 1.2})], canvas=PORTRAIT)
     drawn = scaled_plan(plan, (2160, 3840))
     small, large = drawn.texts
     assert small.layout.scale == 2 and small.layout.raster == (2 * plan.texts[0].layout.width, 2 * plan.texts[0].layout.height)
@@ -212,7 +213,7 @@ def test_at_720p_a_caption_a_text_layer_a_shape_an_overlay_and_the_logo_land_at_
         2.0, 5.0, PLAIN, layout=Layout.BLUR, words=SPOKEN, watermark_style=logo, logo_size=(200, 100),
         text_layers=[text_layer(style={"size": 120, "colour": "#00FF00"})],
         shapes=[shape(transform={"x": 760, "y": 650}, style={"width": 300, "height": 120, "fill": "#FF00FF"})],
-        overlays=[overlay], media_info={STILL: MediaInfo(200, 100, None, False)},
+        overlays=[overlay], media_info={STILL: MediaInfo(200, 100, None, False)}, canvas=PORTRAIT,
     )
     planned = copy.deepcopy(plan)
     frames = {}
@@ -238,7 +239,7 @@ def edge_pixels(picture: np.ndarray, background: np.ndarray, ink: np.ndarray) ->
 
 
 def test_at_1440p_a_text_layers_edge_is_as_wide_as_at_1080_its_picture_rasterised_at_1440(settings, plain_video, tmp_path):
-    plan = plan_render(2.0, 4.0, PLAIN, layout=Layout.BLUR, text_layers=[text_layer(text="HALO SEMUA", style={"size": 120, "colour": "#FFFFFF"})])
+    plan = plan_render(2.0, 4.0, PLAIN, layout=Layout.BLUR, text_layers=[text_layer(text="HALO SEMUA", style={"size": 120, "colour": "#FFFFFF"})], canvas=PORTRAIT)
     [layout] = picture_layouts(plan, ExportSettings())
     [sharp] = picture_layouts(plan, ExportSettings(resolution=1440))
     assert sharp.raster == pytest.approx((layout.raster[0] * 4 / 3, layout.raster[1] * 4 / 3), abs=1) and sharp.name != layout.name
@@ -264,7 +265,7 @@ def test_at_720p_a_keyed_overlay_and_a_turned_keyed_shape_are_where_their_scaled
         transform={"x": 540, "y": 1100}, style={"width": 300, "height": 120, "fill": "#FF00FF"},
         keys={"y": [{"at": 0.0, "value": 1000.0}, {"at": 2.0, "value": 1400.0}], "rotation": [{"at": 0.0, "value": 0.0}, {"at": 2.0, "value": 60.0}]},
     )
-    plan = plan_render(2.0, 4.0, PLAIN, layout=Layout.BLUR, shapes=[turning], overlays=[overlay], media_info={STILL: MediaInfo(200, 100, None, False)})
+    plan = plan_render(2.0, 4.0, PLAIN, layout=Layout.BLUR, shapes=[turning], overlays=[overlay], media_info={STILL: MediaInfo(200, 100, None, False)}, canvas=PORTRAIT)
     videos = {resolution: rendered_at(settings, tmp_path, plain_video, plan, resolution, {STILL: stills["blue"]}) for resolution in (1080, 720)}
     for at in (0.5, 1.5):
         for name, colour in (("overlay", BLUE), ("shape", MAGENTA)):
@@ -282,7 +283,7 @@ def test_at_720p_a_keyed_overlay_and_a_turned_keyed_shape_are_where_their_scaled
 def test_a_blur_scene_and_a_transition_render_at_720p_and_4k_at_their_size(settings, plain_video, tmp_path, resolution):
     plan = plan_render(
         1.0, 5.0, PLAIN, layout=Layout.BLUR,
-        main_track=[SegmentInput(1.0, 2.0), SegmentInput(4.0, 5.0, join=Join(TransitionKind.SLIDELEFT, 0.4))],
+        main_track=[SegmentInput(1.0, 2.0), SegmentInput(4.0, 5.0, join=Join(TransitionKind.SLIDELEFT, 0.4))], canvas=PORTRAIT,
     )
     assert plan.transitions
     video = rendered_at(settings, tmp_path, plain_video, plan, resolution)
@@ -308,12 +309,12 @@ def test_at_720p_an_overlays_slide_drops_two_thirds_as_far():
     plan = plan_render(
         0.0, 5.0, SOURCE,
         overlays=[TypeAdapter(Overlay).validate_python({"id": "o1", "media": STILL, "start": 1.0, "secs": 2.0, "animation_out": "slide", "animation_ms": 400})],
-        media_info={STILL: MediaInfo(200, 100, None, False)},
+        media_info={STILL: MediaInfo(200, 100, None, False)}, canvas=PORTRAIT,
     )
     drawn = scaled_plan(plan, (720, 1280))
     [event] = drawn.overlays
-    assert overlay_at(event, 2.8, drawn_scale(drawn)).centre[1] == pytest.approx(event.picture.centre[1] + 20)
-    assert overlay_at(plan.overlays[0], 2.8).centre[1] == pytest.approx(plan.overlays[0].picture.centre[1] + 30)
+    assert overlay_at(event, 2.8, drawn_scale(drawn), frame=PORTRAIT.size).centre[1] == pytest.approx(event.picture.centre[1] + 20)
+    assert overlay_at(plan.overlays[0], 2.8, frame=PORTRAIT.size).centre[1] == pytest.approx(plan.overlays[0].picture.centre[1] + 30)
 
 
 @pytest.mark.parametrize("kind", [TransitionKind.ZOOMBLUR, TransitionKind.SPIN, TransitionKind.RGBSPLIT])
@@ -321,7 +322,7 @@ def test_a_transition_with_its_own_side_chains_renders_at_720p_at_its_size(setti
     """transitions-expanded's recipes around xfade read the frame's size from the drawn plan."""
     plan = plan_render(
         1.0, 5.0, PLAIN,
-        main_track=[SegmentInput(1.0, 2.0), SegmentInput(4.0, 5.0, join=Join(kind, 0.4))],
+        main_track=[SegmentInput(1.0, 2.0), SegmentInput(4.0, 5.0, join=Join(kind, 0.4))], canvas=PORTRAIT,
     )
     video = rendered_at(settings, tmp_path, plain_video, plan, 720)
     stream = next(s for s in probe(settings, video)["streams"] if s["codec_type"] == "video")

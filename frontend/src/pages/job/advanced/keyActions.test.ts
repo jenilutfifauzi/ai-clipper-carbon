@@ -5,6 +5,7 @@ import type { Keyframe, Keys, Transform } from "../../../api";
 import { EASE_IN, EASE_IN_OUT, EASE_OUT, LINEAR, PICTURE_KEYS } from "../editor/keyframes";
 import { IDENTITY } from "../editor/picture";
 import { clearKeys, easedKey, easeName, handleEase, keyAt, keyedRange, keysAround, keyState, MAX_KEYS, moveKey, moveKeysAt, removeKey, setEase, setKey, shownTransform, toggleKey, tooManyKeys, writeKey, writtenTransform } from "./keyActions";
+import { PORTRAIT } from "../editor/canvas";
 
 const key = (at: number, value: number, ease = LINEAR): Keyframe => ({ at, value, ease });
 
@@ -12,36 +13,36 @@ describe("setting a Keyframe", () => {
   const keys = [key(0, 1), key(2, 2, EASE_IN)];
 
   test("puts it in order, with the Ease of the one before it, or Linear as the first", () => {
-    expect(setKey(keys, "scale", 3, 1.5)).toEqual([key(0, 1), key(2, 2, EASE_IN), key(3, 1.5, EASE_IN)]);
-    expect(setKey(keys, "scale", 1, 1.5)).toEqual([key(0, 1), key(1, 1.5), key(2, 2, EASE_IN)]);
-    expect(setKey([key(1, 1, EASE_OUT)], "scale", 0.5, 2)).toEqual([key(0.5, 2), key(1, 1, EASE_OUT)]);
+    expect(setKey(keys, "scale", 3, 1.5, PORTRAIT)).toEqual([key(0, 1), key(2, 2, EASE_IN), key(3, 1.5, EASE_IN)]);
+    expect(setKey(keys, "scale", 1, 1.5, PORTRAIT)).toEqual([key(0, 1), key(1, 1.5), key(2, 2, EASE_IN)]);
+    expect(setKey([key(1, 1, EASE_OUT)], "scale", 0.5, 2, PORTRAIT)).toEqual([key(0.5, 2), key(1, 1, EASE_OUT)]);
   });
 
   test("within half a frame of another replaces it, keeping its Ease", () => {
-    expect(setKey(keys, "scale", 2 + 1 / 70, 3)).toEqual([key(0, 1), key(2.014, 3, EASE_IN)]);
-    expect(setKey(keys, "scale", 2, 3)).toEqual([key(0, 1), key(2, 3, EASE_IN)]);
+    expect(setKey(keys, "scale", 2 + 1 / 70, 3, PORTRAIT)).toEqual([key(0, 1), key(2.014, 3, EASE_IN)]);
+    expect(setKey(keys, "scale", 2, 3, PORTRAIT)).toEqual([key(0, 1), key(2, 3, EASE_IN)]);
   });
 
   test("closer than a frame to another, which the Candidate refuses, replaces that one too", () => {
     // 0.02 s after the one at 2 s: a frame at 50 fps.
-    expect(setKey(keys, "scale", 2.02, 3)).toEqual([key(0, 1), key(2.02, 3, EASE_IN)]);
+    expect(setKey(keys, "scale", 2.02, 3, PORTRAIT)).toEqual([key(0, 1), key(2.02, 3, EASE_IN)]);
   });
 
   test("a frame from another is a Keyframe of its own", () => {
-    expect(setKey(keys, "scale", 2 + 1 / 30, 3)).toEqual([key(0, 1), key(2, 2, EASE_IN), key(2.033, 3, EASE_IN)]);
+    expect(setKey(keys, "scale", 2 + 1 / 30, 3, PORTRAIT)).toEqual([key(0, 1), key(2, 2, EASE_IN), key(2.033, 3, EASE_IN)]);
   });
 
   test("is held to its property's range, at a time to the millisecond", () => {
-    expect(setKey([], "opacity", 0.12345, 1.4)).toEqual([key(0.123, 1)]);
-    expect(setKey([], "scale", 0, 20)).toEqual([key(0, 8)]);
-    expect(setKey([], "x", 0, -40)).toEqual([key(0, 0)]);
-    expect(setKey([], "rotation", 0, 720)).toEqual([key(0, 720)]);
+    expect(setKey([], "opacity", 0.12345, 1.4, PORTRAIT)).toEqual([key(0.123, 1)]);
+    expect(setKey([], "scale", 0, 20, PORTRAIT)).toEqual([key(0, 8)]);
+    expect(setKey([], "x", 0, -40, PORTRAIT)).toEqual([key(0, 0)]);
+    expect(setKey([], "rotation", 0, 720, PORTRAIT)).toEqual([key(0, 720)]);
   });
 
   test("is not added past the hundredth, but still replaces", () => {
     const full = Array.from({ length: MAX_KEYS }, (_, i) => key(i / 10, 1));
-    expect(setKey(full, "scale", 20, 2)).toBe(full);
-    expect(setKey(full, "scale", 0.5, 2)[5]).toEqual(key(0.5, 2));
+    expect(setKey(full, "scale", 20, 2, PORTRAIT)).toBe(full);
+    expect(setKey(full, "scale", 0.5, 2, PORTRAIT)[5]).toEqual(key(0.5, 2));
   });
 });
 
@@ -72,18 +73,18 @@ describe("toggling a Keyframe", () => {
   const keys: Keys = { x: [key(0, 200), key(2, 800, EASE_IN)], volume: [key(0, 1)] };
 
   test("adds one with the value shown at the playhead and the Ease of the one before; again removes it", () => {
-    const added = toggleKey(keys, "x", 3, 540);
+    const added = toggleKey(keys, "x", 3, 540, PORTRAIT);
     expect(added).toEqual({ keys: { ...keys, x: [key(0, 200), key(2, 800, EASE_IN), key(3, 800, EASE_IN)] }, constant: 540 });
-    expect(toggleKey(added.keys, "x", 3, 540)).toEqual({ keys, constant: 540 });
+    expect(toggleKey(added.keys, "x", 3, 540, PORTRAIT)).toEqual({ keys, constant: 540 });
   });
 
   test("on a constant property adds its first, at the constant, so that nothing moves", () => {
-    expect(toggleKey(keys, "scale", 1.5, 1.2)).toEqual({ keys: { ...keys, scale: [key(1.5, 1.2)] }, constant: 1.2 });
+    expect(toggleKey(keys, "scale", 1.5, 1.2, PORTRAIT)).toEqual({ keys: { ...keys, scale: [key(1.5, 1.2)] }, constant: 1.2 });
   });
 
   test("removing the last Keyframe sets the constant to the value at the playhead", () => {
     const one: Keys = { opacity: [key(1, 0.4)] };
-    expect(toggleKey(one, "opacity", 1.01, 1)).toEqual({ keys: {}, constant: 0.4 });
+    expect(toggleKey(one, "opacity", 1.01, 1, PORTRAIT)).toEqual({ keys: {}, constant: 0.4 });
     expect(removeKey(one.opacity!, 1)).toEqual([]);
   });
 });
@@ -91,38 +92,38 @@ describe("toggling a Keyframe", () => {
 describe("auto-key", () => {
   test("on a keyed property writes a Keyframe at the playhead; on an unkeyed one it changes the constant", () => {
     const keys: Keys = { scale: [key(0, 1)] };
-    expect(writeKey(keys, "scale", 2, 1.5, 1)).toEqual({ keys: { scale: [key(0, 1), key(2, 1.5)] }, constant: 1 });
-    expect(writeKey(keys, "opacity", 2, 0.5, 1)).toEqual({ keys, constant: 0.5 });
+    expect(writeKey(keys, "scale", 2, 1.5, 1, PORTRAIT)).toEqual({ keys: { scale: [key(0, 1), key(2, 1.5)] }, constant: 1 });
+    expect(writeKey(keys, "opacity", 2, 0.5, 1, PORTRAIT)).toEqual({ keys, constant: 0.5 });
   });
 
   const transform: Transform = { ...IDENTITY, x: 300 };
   const keys: Keys = { x: [key(0, 200), key(2, 800)], volume: [key(0, 1)] };
 
   test("a Transform is shown with its keyed fields at the playhead", () => {
-    expect(shownTransform(transform, keys, 1)).toEqual({ ...transform, x: 500 });
-    expect(shownTransform(transform, {}, 1)).toBe(transform);
+    expect(shownTransform(transform, keys, 1, PORTRAIT)).toEqual({ ...transform, x: 500 });
+    expect(shownTransform(transform, {}, 1, PORTRAIT)).toBe(transform);
   });
 
   test("a Transform change on a keyed field writes a Keyframe at the playhead, and on an unkeyed one it changes the constant", () => {
-    const shown = shownTransform(transform, keys, 1);
-    expect(writtenTransform(transform, keys, { ...shown, x: 450 }, 1)).toEqual({
+    const shown = shownTransform(transform, keys, 1, PORTRAIT);
+    expect(writtenTransform(transform, keys, { ...shown, x: 450 }, 1, PORTRAIT)).toEqual({
       transform,
       keys: { ...keys, x: [key(0, 200), key(1, 450), key(2, 800)] },
     });
-    expect(writtenTransform(transform, keys, { ...shown, scale: 2, flip_h: true }, 1)).toEqual({
+    expect(writtenTransform(transform, keys, { ...shown, scale: 2, flip_h: true }, 1, PORTRAIT)).toEqual({
       transform: { ...transform, scale: 2, flip_h: true },
       keys,
     });
   });
 
   test("a keyed field left as shown writes nothing, by the shown Transform the change was made from", () => {
-    const tidied = { ...shownTransform(transform, keys, 1.01), x: 505 };
-    expect(writtenTransform(transform, keys, { ...tidied, rotation: 15 }, 1.01, tidied)).toEqual({ transform: { ...transform, rotation: 15 }, keys });
+    const tidied = { ...shownTransform(transform, keys, 1.01, PORTRAIT), x: 505 };
+    expect(writtenTransform(transform, keys, { ...tidied, rotation: 15 }, 1.01, PORTRAIT, tidied)).toEqual({ transform: { ...transform, rotation: 15 }, keys });
   });
 
   test("with the playhead outside the item, a keyed field's change is dropped", () => {
-    const shown = shownTransform(transform, keys, 0);
-    expect(writtenTransform(transform, keys, { ...shown, x: 540, scale: 2 }, null)).toEqual({ transform: { ...transform, scale: 2 }, keys });
+    const shown = shownTransform(transform, keys, 0, PORTRAIT);
+    expect(writtenTransform(transform, keys, { ...shown, x: 540, scale: 2 }, null, PORTRAIT)).toEqual({ transform: { ...transform, scale: 2 }, keys });
   });
 });
 
@@ -132,25 +133,25 @@ describe("a 101st Keyframe", () => {
   const keys: Keys = { x: full };
 
   test("refuses the edit that would add it, naming the property, and leaves everything as it was", () => {
-    expect(toggleKey(keys, "x", 20, 300)).toEqual({ keys, constant: 300, full: "x" });
-    expect(writeKey(keys, "x", 20, 500, 300)).toEqual({ keys, constant: 300, full: "x" });
+    expect(toggleKey(keys, "x", 20, 300, PORTRAIT)).toEqual({ keys, constant: 300, full: "x" });
+    expect(writeKey(keys, "x", 20, 500, 300, PORTRAIT)).toEqual({ keys, constant: 300, full: "x" });
     // The unkeyed scale isn't changed either: the whole edit is refused.
-    expect(writtenTransform(transform, keys, { ...shownTransform(transform, keys, 20), x: 500, scale: 2 }, 20)).toEqual({ transform, keys, full: "x" });
+    expect(writtenTransform(transform, keys, { ...shownTransform(transform, keys, 20, PORTRAIT), x: 500, scale: 2 }, 20, PORTRAIT)).toEqual({ transform, keys, full: "x" });
     expect(tooManyKeys("x")).toBe("At most 100 Keyframes on X");
   });
 
   test("replacing one, or removing one, is no 101st", () => {
-    expect(writeKey(keys, "x", 0.5, 7, 300).full).toBeUndefined();
-    expect(toggleKey(keys, "x", 0.5, 300).full).toBeUndefined();
+    expect(writeKey(keys, "x", 0.5, 7, 300, PORTRAIT).full).toBeUndefined();
+    expect(toggleKey(keys, "x", 0.5, 300, PORTRAIT).full).toBeUndefined();
   });
 });
 
 describe("a keyable field's range", () => {
   test("a turn's is ±360° as a constant and ±3600° once keyed; the others' are their Keyframes'", () => {
-    expect(keyedRange("rotation", false)).toEqual([-360, 360]);
-    expect(keyedRange("rotation", true)).toEqual([-3600, 3600]);
-    expect(keyedRange("x", false)).toEqual([0, 1080]);
-    expect(keyedRange("scale", true)).toEqual([0.05, 8]);
+    expect(keyedRange("rotation", false, PORTRAIT)).toEqual([-360, 360]);
+    expect(keyedRange("rotation", true, PORTRAIT)).toEqual([-3600, 3600]);
+    expect(keyedRange("x", false, PORTRAIT)).toEqual([0, 1080]);
+    expect(keyedRange("scale", true, PORTRAIT)).toEqual([0.05, 8]);
   });
 });
 
@@ -265,6 +266,6 @@ describe("a Keyframe dragged along its lane", () => {
   });
 
   test("in the Curves, moves in value too, held to its property's range", () => {
-    expect(moveKey(keys, 1, 0.99, grid, { prop: "opacity", value: 1.4 })[1]).toEqual(key(0.983, 1, EASE_IN));
+    expect(moveKey(keys, 1, 0.99, grid, { prop: "opacity", value: 1.4, frame: PORTRAIT })[1]).toEqual(key(0.983, 1, EASE_IN));
   });
 });

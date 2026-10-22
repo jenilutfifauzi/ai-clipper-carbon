@@ -9,6 +9,7 @@ import subprocess
 import numpy as np
 import pytest
 
+from app.canvas import PORTRAIT
 from app.config import load_settings
 from app.video_effects import VideoEffect, catalogue, checked_video_effects, video_effect_chain
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
@@ -35,7 +36,7 @@ GREEN = "0x00B140"
 def keyed(screen: str, boxes: str, *stack: VideoEffect, frames: int = 30) -> np.ndarray:
     """The frames of 1 s of a 1080x1920 picture at 30 fps, the colour `screen` with the drawboxes
     `boxes` on it, through `stack`, RGBA."""
-    chain = video_effect_chain(checked_video_effects(list(stack), "Overlay o", keyed=True), (1080, 1920))
+    chain = video_effect_chain(checked_video_effects(list(stack), "Overlay o", keyed=True), (1080, 1920), frame=PORTRAIT.size)
     command = [
         str(load_settings().ffmpeg_bin), "-v", "error", *LAVFI, f"color=c={screen}:{FRAME}:rate=30:duration=1,{boxes}",
         "-vf", ",".join([*chain, "format=rgba"]), "-f", "rawvideo", "-",

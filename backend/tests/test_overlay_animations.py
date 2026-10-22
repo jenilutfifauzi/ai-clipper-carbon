@@ -11,6 +11,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from app.candidates import Animation, Overlay
+from app.canvas import PORTRAIT
 from app.planner import MediaInfo, overlay_events, picture_at
 from app.renderer import overlay_at
 from test_keyed_volume import tone_level
@@ -35,7 +36,7 @@ def overlay(**fields) -> Overlay:
 
 
 def event_of(**fields):
-    [event] = overlay_events([overlay(**fields)], 10, ITEMS)
+    [event] = overlay_events([overlay(**fields)], 10, ITEMS, canvas=PORTRAIT)
     return event
 
 
@@ -51,7 +52,7 @@ def test_an_overlay_stored_without_animations_reads_with_none_and_its_length_is_
             overlay(animation_ms=ms)
     # Unanimated, it is drawn as its picture says, whenever.
     still = event_of()
-    assert overlay_at(still, 1.0) == still.picture
+    assert overlay_at(still, 1.0, frame=PORTRAIT.size) == still.picture
 
 
 def test_an_overlays_animations_are_stacked_on_its_keyed_values():
@@ -62,30 +63,30 @@ def test_an_overlays_animations_are_stacked_on_its_keyed_values():
     }
     popped = event_of(keys=keys, radius=0.5, animation_in="pop", animation_out="slide", animation_ms=400)
     # Half way in: half its keyed opacity, 85% of its keyed scale (its corners with it), at its keyed place.
-    keyed, drawn = picture_at(popped.picture, 1.2), overlay_at(popped, 1.2)
+    keyed, drawn = picture_at(popped.picture, 1.2, frame=PORTRAIT.size), overlay_at(popped, 1.2, frame=PORTRAIT.size)
     assert drawn.opacity == pytest.approx(0.25)
     assert (drawn.width, drawn.height, drawn.radius) == pytest.approx((keyed.width * 0.85, keyed.height * 0.85, keyed.radius * 0.85))
     assert drawn.centre == pytest.approx(keyed.centre)
     # Half way out: half its keyed opacity, 30 px below its keyed place, at its keyed scale.
-    keyed, drawn = picture_at(popped.picture, 2.8), overlay_at(popped, 2.8)
+    keyed, drawn = picture_at(popped.picture, 2.8, frame=PORTRAIT.size), overlay_at(popped, 2.8, frame=PORTRAIT.size)
     assert drawn.opacity == pytest.approx(0.25)
     assert drawn.centre == pytest.approx((keyed.centre[0], keyed.centre[1] + 30))
     assert (drawn.width, drawn.height) == pytest.approx((keyed.width, keyed.height))
     # In between, as keyed.
-    assert overlay_at(popped, 2.0) == picture_at(popped.picture, 2.0)
+    assert overlay_at(popped, 2.0, frame=PORTRAIT.size) == picture_at(popped.picture, 2.0, frame=PORTRAIT.size)
     # A keyed opacity of 0.5 fading in reaches 0.5, not 1.
     faded = event_of(keys=keys, animation_in="fade", animation_ms=500)
-    assert overlay_at(faded, 1.0).opacity == 0
-    assert overlay_at(faded, 1.25).opacity == pytest.approx(0.25)
-    assert overlay_at(faded, 1.5).opacity == pytest.approx(0.5)
+    assert overlay_at(faded, 1.0, frame=PORTRAIT.size).opacity == 0
+    assert overlay_at(faded, 1.25, frame=PORTRAIT.size).opacity == pytest.approx(0.25)
+    assert overlay_at(faded, 1.5, frame=PORTRAIT.size).opacity == pytest.approx(0.5)
 
 
 def test_each_end_of_an_overlays_animation_is_at_most_half_its_length():
     # 2000 ms each way on a 1 s Overlay: in over its first half, out over its second.
     short = event_of(secs=1.0, animation_in="pop", animation_out="pop", animation_ms=2000)
-    assert overlay_at(short, 1.25).opacity == pytest.approx(0.5)
-    assert overlay_at(short, 1.5).opacity == pytest.approx(1.0)
-    assert overlay_at(short, 1.75).opacity == pytest.approx(0.5)
+    assert overlay_at(short, 1.25, frame=PORTRAIT.size).opacity == pytest.approx(0.5)
+    assert overlay_at(short, 1.5, frame=PORTRAIT.size).opacity == pytest.approx(1.0)
+    assert overlay_at(short, 1.75, frame=PORTRAIT.size).opacity == pytest.approx(0.5)
 
 
 # Seam A: the real ffmpeg

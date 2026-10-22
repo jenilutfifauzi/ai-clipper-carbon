@@ -17,6 +17,7 @@ from app.candidates import BackgroundRemoval, Candidate, Framing, Overlay, Segme
 from app.config import CameraTuning
 from app.matte import Mattes
 from app.media import MediaKind
+from app.canvas import PORTRAIT
 from app.planner import MatteRead, MediaInfo, SegmentInput, plan_render
 from app.rendering import candidate_plan, matte_wanted
 from app.styles import PresetStore
@@ -46,7 +47,7 @@ def test_an_overlays_background_removal_reaches_its_event_with_the_feather_times
         Overlay("i", IMAGE, 0.5, 1.0, transform=Transform(scale=2.0, stretch_x=1.5), background_removal=CUT, behind=True),
         Overlay("p", VIDEO, 0.5, 1.0),
     ]
-    planned = plan_render(10, 14, SOURCE, overlays=overlays, media_info=ITEMS)
+    planned = plan_render(10, 14, SOURCE, overlays=overlays, media_info=ITEMS, canvas=PORTRAIT)
     video, plain = planned.overlays
     [image] = planned.behind
     assert video.background_removal == BackgroundRemoval(feather=3.0)
@@ -62,7 +63,7 @@ def test_a_media_segments_background_removal_reaches_its_plan_its_background_its
     planned = plan_render(10, 31, SOURCE, main_track=[
         SegmentInput(0, 2, media=VIDEO, width=320, height=180, framing=framing, background_removal=CUT),
         SegmentInput(20, 23, background_removal=CUT),
-    ])
+    ], canvas=PORTRAIT)
     media, source = planned.segments
     assert media.background_removal == BackgroundRemoval(feather=3.0)
     # Its Background is its Scene's, its Framing's; its pieces are its item's.

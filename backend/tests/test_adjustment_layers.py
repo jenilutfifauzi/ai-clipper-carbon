@@ -15,6 +15,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from app.candidates import Adjust, AdjustmentLayer, Candidate, Grade, manual_candidate
+from app.canvas import PORTRAIT
 from app.config import CameraTuning
 from app.planner import AdjustmentEvent, SegmentInput, plan_render
 from app.rendering import candidate_plan
@@ -40,12 +41,12 @@ def test_adjustment_events_carry_their_times_grade_strength_and_fades():
         AdjustmentLayer("a", 1.0, 2.0, GREY, strength=60, fade_in=0.5, fade_out=1.0),
         AdjustmentLayer("b", 0.0, 4.0, Grade(Adjust(temperature=9000))),
     ]
-    planned = plan_render(10, 23, SOURCE, adjustment_layers=layers)
+    planned = plan_render(10, 23, SOURCE, adjustment_layers=layers, canvas=PORTRAIT)
     assert planned.adjustment_layers == [
         AdjustmentEvent("a", 1.0, 3.0, GREY, 60, 0.5, 1.0),
         AdjustmentEvent("b", 0.0, 4.0, Grade(Adjust(temperature=9000)), 100, 0.0, 0.0),
     ]
-    assert plan_render(10, 23, SOURCE).adjustment_layers == []
+    assert plan_render(10, 23, SOURCE, canvas=PORTRAIT).adjustment_layers == []
 
 
 def test_an_adjustment_layer_past_the_clips_end_is_cut_there_and_one_wholly_past_it_is_dropped():
@@ -55,7 +56,7 @@ def test_an_adjustment_layer_past_the_clips_end_is_cut_there_and_one_wholly_past
         AdjustmentLayer("at_end", 5.0, 1.0, GREY),
     ]
     # Two Segments of 2 s and 3 s: the Clip lasts 5 s.
-    planned = plan_render(10, 23, SOURCE, main_track=[SegmentInput(10, 12), SegmentInput(20, 23)], adjustment_layers=layers)
+    planned = plan_render(10, 23, SOURCE, main_track=[SegmentInput(10, 12), SegmentInput(20, 23)], adjustment_layers=layers, canvas=PORTRAIT)
     [cut] = planned.adjustment_layers
     # Cut at 5 s: 1 s long, its fades each held to half of what is left.
     assert (cut.id, cut.start, cut.end, cut.fade_in, cut.fade_out) == ("cut", 4.0, 5.0, 0.5, 0.5)
@@ -190,13 +191,14 @@ _MEASURE = """
 import resource, sys, time
 from pathlib import Path
 from app.candidates import Adjust, AdjustmentLayer, Grade
+from app.canvas import PORTRAIT
 from app.config import RenderTuning, load_settings
 from app.planner import plan_render
 from app.renderer import Renderer
 from app.video_source import SourceMetadata
 source, folder, secs, start = Path(sys.argv[1]), Path(sys.argv[2]), float(sys.argv[3]), sys.argv[4]
 layers = [] if start == "none" else [AdjustmentLayer("a", float(start), 1.0, Grade(Adjust(saturation=-100)), strength=60, fade_in=0.25, fade_out=0.25)]
-plan = plan_render(0, secs, SourceMetadata(duration=secs, fps=10.0, width=640, height=360, codec="h264"), adjustment_layers=layers)
+plan = plan_render(0, secs, SourceMetadata(duration=secs, fps=10.0, width=640, height=360, codec="h264"), adjustment_layers=layers, canvas=PORTRAIT)
 began = time.monotonic()
 Renderer(load_settings().ffmpeg_bin, RenderTuning()).render(source, plan, folder / "clip.mp4", folder / "poster.jpg")
 print(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss, time.monotonic() - began)

@@ -7,6 +7,7 @@ import { resetCueTiming, type CueScene } from "./cueEdits";
 import { placeCue, placedCaptions, resetCuePosition } from "./cuePlace";
 import type { AdvancedEdits } from "./edits";
 import { stageIdsOf, stageItem, type Pick } from "./pick";
+import { PORTRAIT } from "../editor/canvas";
 
 const cue = (start: number, end: number, at: number): Cue => ({
   start,
@@ -28,6 +29,7 @@ const cue = (start: number, end: number, at: number): Cue => ({
 
 // "halo semua" from 1.0 to 2.3 s and "apa kabar" from 3.0 to 3.9 s of a Clip from 100 s, captioned at size 110.
 const PLAN = {
+  ...PORTRAIT,
   start: 100,
   end: 105,
   captions: [cue(1.0, 2.3, 101.2), cue(3.0, 3.9, 103.1)],

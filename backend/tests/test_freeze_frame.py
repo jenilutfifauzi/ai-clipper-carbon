@@ -15,7 +15,8 @@ from app.candidates import Framing, Keyframe, KeyProperty, Layout, LayoutOverrid
 from app.config import AnalysisTuning, CameraTuning
 from app.media import MediaItem, MediaKind
 from app.pictures import cover_scale
-from app.planner import FRAME, FrameFaces, Scene, SceneLayout, SegmentPlan, _first_framing, picture_at
+from app.canvas import PORTRAIT
+from app.planner import FrameFaces, Scene, SceneLayout, SegmentPlan, _first_framing, picture_at
 from app.rendering import HELD_REACH_SECS, analysed_range, candidate_plan
 from app.styles import PresetStore
 from app.transcript import Word
@@ -75,7 +76,7 @@ def test_a_held_source_segment_is_one_still_scene_framed_as_the_scene_holding_it
     moved = crop_at(first.panels[0].path, 3)
     assert moved > first.panels[0].path[0].x
     assert [(point.at, point.x) for point in panel.path] == [(3, moved)]
-    assert held.framing == _first_framing(SceneLayout.TRACK, held.panels, SOURCE)
+    assert held.framing == _first_framing(SceneLayout.TRACK, held.panels, SOURCE, PORTRAIT)
     # No captions while it holds: "salah" (heard around its frame) isn't shown.
     assert [caption.text for caption in planned.captions] == ["HALO", "SEMUA"]
     assert all(caption.end <= 3 or caption.start >= 4.5 for caption in planned.captions)
@@ -121,7 +122,7 @@ def test_a_freeze_frame_of_a_keyed_manual_scene_shows_its_picture_as_at_its_fram
     assert held.layout is SceneLayout.MANUAL and not held.picture.motion
     assert held.framing.transform == Transform(x=500, scale=2)
     # The picture the head shows as it reaches the frame, held (to the pixel a still picture's size is rounded to).
-    shown = picture_at(first.picture, 3 / speed)
+    shown = picture_at(first.picture, 3 / speed, frame=PORTRAIT.size)
     assert held.picture.centre == shown.centre
     assert (held.picture.width, held.picture.height) == pytest.approx((shown.width, shown.height), abs=1)
 
@@ -284,7 +285,7 @@ def test_a_held_media_segment_renders_its_frame_in_silence_with_transitions_eith
     job = reviewed(client)
     candidate = add(client, job, "halo", "kabar")
     words = {word["text"]: word for word in job["transcript"]["words"]}
-    cover = {"transform": {"scale": cover_scale(640, 360, FRAME)}}
+    cover = {"transform": {"scale": cover_scale(640, 360, PORTRAIT.size)}}
     candidate = patch(client, job, candidate, segments=[
         {"id": "a", "start": words["halo"]["start"], "end": words["kabar"]["end"]},
         {"id": "still", "start": 6, "end": 6, "hold": 2, "media": item["id"], "framing": cover},

@@ -19,6 +19,7 @@ from app.config import CameraTuning, load_settings
 from app.main import create_app
 from app.matte import MATTES_DIR, MatteRunner, Mattes, RvmMatter, matte_pieces
 from app.person_model import PERSON_MODEL_FILE, PersonModel, fixed_copy
+from app.canvas import PORTRAIT
 from app.planner import MatteRead, SceneLayout, SegmentInput, plan_render
 from app.ports import Ports
 from app.renderer import Renderer
@@ -47,7 +48,7 @@ def test_a_source_segments_background_removal_reaches_its_plan_with_the_pieces_i
         SegmentInput(8, 12, background_removal=BackgroundRemoval(feather=6)),
         SegmentInput(20, 23),
         SegmentInput(25, 25, hold=1.0, background_removal=CUT),
-    ])
+    ], canvas=PORTRAIT)
     cut, plain, held = planned.segments
     assert cut.background_removal == BackgroundRemoval(feather=6) and cut.background == Background()
     # 8..12 s reads the pieces from 0 and 10; a Freeze frame the one holding its frame.
@@ -59,7 +60,7 @@ def test_the_feather_grows_with_a_manual_pictures_scale_and_with_the_output():
     framing = Framing(Transform(scale=2.0))
     planned = plan_render(10, 12, SOURCE, layout=Layout.MANUAL, framing=framing, main_track=[
         SegmentInput(10, 12, background_removal=BackgroundRemoval(feather=6)),
-    ])
+    ], canvas=PORTRAIT)
     assert planned.segments[0].background_removal.feather == 12
     # At 720p, two thirds.
     assert scaled_plan(planned, (720, 1280)).segments[0].background_removal.feather == 8
@@ -71,12 +72,12 @@ def test_the_feather_is_scaled_by_the_framing_of_the_scene_that_shows_it():
     removal = BackgroundRemoval(feather=6)
     overridden = plan_render(10, 12, SOURCE, layout=Layout.TRACK, main_track=[
         SegmentInput(10, 12, background_removal=removal, layout_overrides=[LayoutOverride(1.0, Layout.MANUAL, Framing(Transform(scale=1.5)))]),
-    ])
+    ], canvas=PORTRAIT)
     assert overridden.scenes[0].layout is SceneLayout.MANUAL and overridden.segments[0].background_removal.feather == 9
     for layout in (Layout.TRACK, Layout.SPLIT):
         tracked = plan_render(10, 12, SOURCE, layout=Layout.MANUAL, framing=Framing(Transform(scale=2.0)), main_track=[
             SegmentInput(10, 12, background_removal=removal, layout_overrides=[LayoutOverride(1.0, layout)]),
-        ])
+        ], canvas=PORTRAIT)
         assert tracked.scenes[0].layout is not SceneLayout.MANUAL and tracked.segments[0].background_removal.feather == 6, layout
 
 
@@ -210,8 +211,8 @@ def test_the_matte_keeps_a_moving_subject_whole_across_two_pieces(tmp_path, sett
     runner = MatteRunner(person_model, matter_kind(), settings.ffmpeg_bin)
     renderer = Renderer(settings.ffmpeg_bin, settings.render)
     # 8.3..12.3 s of the Source reads the pieces from 0 and 10.
-    plain = plan_render(8.3, 12.3, source, layout=Layout.TRACK, main_track=[SegmentInput(8.3, 12.3)])
-    cut = plan_render(8.3, 12.3, source, layout=Layout.TRACK, main_track=[SegmentInput(8.3, 12.3, background_removal=BackgroundRemoval(feather=0))])
+    plain = plan_render(8.3, 12.3, source, layout=Layout.TRACK, main_track=[SegmentInput(8.3, 12.3)], canvas=PORTRAIT)
+    cut = plan_render(8.3, 12.3, source, layout=Layout.TRACK, main_track=[SegmentInput(8.3, 12.3, background_removal=BackgroundRemoval(feather=0))], canvas=PORTRAIT)
     cut, files = matted(cut, mattes, runner)
     assert cut.segments[0].matte.pieces == [0, 10] and sorted(path.name for path in files.values()) == ["person-fake-1-0.mp4", "person-fake-1-10.mp4"]
     for at in (0.52, 1.0, 1.72, 2.36, 3.1):

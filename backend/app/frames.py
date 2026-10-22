@@ -52,7 +52,7 @@ import cv2
 import numpy as np
 
 from app.candidates import Border, Shadow
-from app.planner import FRAME, Picture, picture_at
+from app.planner import Picture, picture_at
 from app.segment_time import SegmentTime
 from app.video_effects import Clock, VideoEffect, scaled_effects, video_effect_chain
 
@@ -75,7 +75,7 @@ def shadow_room(shadow: Shadow) -> int:
 
 class PictureFrames:
     """The frames of one keyed `picture`, each drawn into one reused frame of the Clip's size `frame`
-    (the plan's own by default; the renderer gives the size it draws the plan at), of an item whose
+    (the 9:16 Canvas's by default; the renderer gives the size it draws the plan at), of an item whose
     pixels are `image` (RGBA, its whole size), or of a video's frames, each cropped and flipped
     already (and maybe scaled), `show`n before it is drawn. The picture at a time is `sampled` from
     it: by its motion (`picture_at`) unless another rule is given (a picture layer's animations,
@@ -85,11 +85,12 @@ class PictureFrames:
         self,
         picture: Picture,
         image: np.ndarray | None = None,
-        frame: tuple[int, int] = FRAME,
+        *,
+        frame: tuple[int, int],
         sampled: Callable[[float], Picture] | None = None,
     ) -> None:
         self.picture = picture
-        self.sampled = sampled or (lambda time: picture_at(picture, time))
+        self.sampled = sampled or (lambda time: picture_at(picture, time, frame))
         self.canvas = np.zeros((frame[1], frame[0], 4), np.uint8)
         # Where the frame before drew, cleared before the next is drawn.
         self.drawn: tuple[int, int, int, int] | None = None
@@ -293,24 +294,31 @@ def read_image(path: os.PathLike | str) -> np.ndarray:
     return cv2.cvtColor(pixels, cv2.COLOR_BGRA2RGBA)
 
 
-def _effects_at(picture: Picture, effects: list[VideoEffect], size: tuple[int, int], clock: Clock = Clock()) -> list[str]:
+def _effects_at(
+    picture: Picture, effects: list[VideoEffect], size: tuple[int, int], clock: Clock = Clock(), *, frame: tuple[int, int]
+) -> list[str]:
     """The filters of `effects` (an Overlay's, their sizes as `picture` is drawn at its constants) on
-    its pixels at `size` (width, height), its time by `clock`: their sizes times the pixels per drawn
+    its pixels at `size` (width, height) on `frame` (the plan's Canvas, at its own size), its time by `clock`: their sizes times the pixels per drawn
     pixel along its more stretched axis (the fewer), the one an unkeyed picture's sizes come from
     (`overlay_scale`), so that a stretched picture's effect is as wide along it as unkeyed. Along the
     other axis it is narrower, stretched with the picture: unkeyed, it isn't."""
     per_pixel = min(size[0] / picture.width, size[1] / picture.height)
-    return video_effect_chain(scaled_effects(effects, per_pixel), size, clock=clock) if effects else []
+    return video_effect_chain(scaled_effects(effects, per_pixel), size, clock=clock, frame=frame) if effects else []
 
 
-def graded_image(ffmpeg: Path, image: np.ndarray, picture: Picture, graded: str, effects: list[VideoEffect] | None = None) -> np.ndarray:
+def graded_image(
+    ffmpeg: Path, image: np.ndarray, picture: Picture, graded: str, effects: list[VideoEffect] | None = None,
+    *,
+    frame: tuple[int, int],
+) -> np.ndarray:
     """`image` (RGBA, its whole size) with the part `picture`'s crop keeps graded by the ffmpeg filters
     `graded` (an Overlay's Grade, keeping its alpha: app/grading.py), as the still chain grades it
-    after its crop, then drawn through its Video Effects `effects` at the item's own pixels; the rest,
+    after its crop, then drawn through its Video Effects `effects` at the item's own pixels (on the
+    plan's `frame`, its Canvas at its own size); the rest,
     which isn't drawn, as it was."""
     crop = picture.crop
     cut = np.ascontiguousarray(image[crop.y : crop.y + crop.height, crop.x : crop.x + crop.width])
-    filters = ",".join([*filter(None, [graded]), *_effects_at(picture, effects or [], (crop.width, crop.height))])
+    filters = ",".join([*filter(None, [graded]), *_effects_at(picture, effects or [], (crop.width, crop.height), frame=frame)])
     command = [
         str(ffmpeg), "-hide_banner", "-nostdin", "-nostats", "-v", "error",
         "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{crop.width}x{crop.height}", "-i", "pipe:0",
@@ -367,7 +375,8 @@ class VideoDecode:
     `_overlay`). When the video ends early, its last frame is held, and a held `shown` (a Freeze
     frame's) is its first frame throughout. Each is graded by the ffmpeg filters `graded` (an
     Overlay's Grade, app/grading.py), after it is scaled and flipped, as the still chain grades it,
-    then drawn through its Video Effects `effects` (docs/adr/0014) at the size it is sent at, before
+    then drawn through its Video Effects `effects` (docs/adr/0014) at the size it is sent at (on the
+    plan's `frame`, its Canvas at its own size), before
     the sampled scale, their time from the Overlay's start. With `looped`, `video` is an image, read
     as a stream of its one picture over the whole span (`shown` unused), so that an effect that
     changes with time moves on it. With `matte` (a cut-out one's, docs/adr/0015), each frame is cut by
@@ -376,16 +385,18 @@ class VideoDecode:
 
     def __init__(
         self, ffmpeg: Path, video: Path, picture: Picture, start: float, end: float, shown: SegmentTime, fps: float, graded: str = "",
-        effects: list[VideoEffect] | None = None, looped: bool = False, matte: KeyedMatte | None = None,
+        effects: list[VideoEffect] | None = None, looped: bool = False, matte: KeyedMatte | None = None, *,
+        frame: tuple[int, int],
     ) -> None:
         self.ffmpeg, self.video, self.picture, self.graded, self.effects = ffmpeg, video, picture, graded, effects or []
+        self.frame = frame
         self.looped = looped
         self.matte = matte
         self.start, self.end, self.shown, self.fps = start, end, shown, fps
         self.numbers = frame_numbers(start, end, fps)
         # As large as the picture is drawn at its largest, or its crop when it's drawn no smaller:
         # what is sent is no more than what is drawn.
-        drawn = [picture_at(picture, number / fps) for number in self.numbers] or [picture]
+        drawn = [picture_at(picture, number / fps, self.frame) for number in self.numbers] or [picture]
         crop = picture.crop
         self.size = (min(crop.width, math.ceil(max(at.width for at in drawn))), min(crop.height, math.ceil(max(at.height for at in drawn))))
         self._process: subprocess.Popen[bytes] | None = None
@@ -407,7 +418,7 @@ class VideoDecode:
         ]
         finished = [
             *([self.graded] if self.graded else []),
-            *_effects_at(self.picture, self.effects, self.size, Clock(self.start)),
+            *_effects_at(self.picture, self.effects, self.size, Clock(self.start), frame=self.frame),
             "format=rgba",
         ]
         if self.looped:

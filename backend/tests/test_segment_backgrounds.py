@@ -12,6 +12,7 @@ from mcp import Client
 
 from app.candidates import Background, BackgroundKind, BackgroundRemoval, Framing, Layout, Segment, Transform, manual_candidate
 from app.config import CameraTuning
+from app.canvas import PORTRAIT
 from app.planner import SegmentInput, plan_render
 from app.rendering import candidate_plan
 from app.styles import PresetStore
@@ -39,7 +40,7 @@ def test_the_background_in_force_is_the_segments_own_only_while_it_is_cut_out():
         SegmentInput(8, 12, background_removal=CUT, background=TEAL),
         SegmentInput(14, 16, background_removal=CUT),
         SegmentInput(20, 23, background=TEAL),
-    ])
+    ], canvas=PORTRAIT)
     own, blurred, off = planned.segments
     assert own.background == TEAL
     # None of its own: the picture blurred.
@@ -50,16 +51,16 @@ def test_the_background_in_force_is_the_segments_own_only_while_it_is_cut_out():
 
 def test_an_image_background_replaces_blurs_fill_in_the_plan():
     image = Background(BackgroundKind.IMAGE, image=IMAGE)
-    planned = plan_render(10, 12, SOURCE, layout=Layout.BLUR, main_track=[SegmentInput(10, 12, background_removal=CUT, background=image)])
+    planned = plan_render(10, 12, SOURCE, layout=Layout.BLUR, main_track=[SegmentInput(10, 12, background_removal=CUT, background=image)], canvas=PORTRAIT)
     assert planned.segments[0].background == image
 
 
 def test_a_framings_image_background_is_its_scenes_image_and_no_blurred_panel():
     framing = Framing(Transform(scale=0.5), background=Background(BackgroundKind.IMAGE, image=IMAGE))
-    [scene] = plan_render(10, 12, SOURCE, layout=Layout.MANUAL, framing=framing).scenes
+    [scene] = plan_render(10, 12, SOURCE, layout=Layout.MANUAL, framing=framing, canvas=PORTRAIT).scenes
     assert scene.image == IMAGE and scene.panels == [] and scene.colour is None
     # A colour's or a blur's Scene has none.
-    [blurred] = plan_render(10, 12, SOURCE, layout=Layout.MANUAL, framing=replace(framing, background=Background())).scenes
+    [blurred] = plan_render(10, 12, SOURCE, layout=Layout.MANUAL, framing=replace(framing, background=Background()), canvas=PORTRAIT).scenes
     assert blurred.image is None and blurred.panels
 
 

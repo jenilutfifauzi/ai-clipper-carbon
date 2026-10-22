@@ -51,7 +51,7 @@ export function stagePictures(
       onTransform: behind.onTransform,
       crop: picture && behind.crop,
       onCrop: behind.onCrop,
-      through: (point) => (reached.length ? reachedBehind(reached, point, under.now(), under.shows) : null),
+      through: (point) => (reached.length ? reachedBehind(reached, point, under.now(), under.shows, plan) : null),
     });
   }
   const segment = behind && shown ? behindId(scene) : null;

@@ -6,8 +6,10 @@ import { Hint } from "../../../components/InfoTip";
 import { Slider } from "../../../components/Slider";
 import { formatPrecise } from "../../../format";
 import { TranscriptPicker } from "../TranscriptPicker";
-import { FITTED } from "../editor/manual";
-import { IDENTITY, mediaSize } from "../editor/picture";
+import { useCanvas } from "../editor/canvas";
+import { fitted } from "../editor/manual";
+import { identity, mediaSize } from "../editor/picture";
+import type { Size } from "../editor/pictureGestures";
 import type { Playback, PlayedSegment } from "../editor/playback";
 import type { RetimedAsk } from "../editor/retimedCopy";
 import { rangeOf, segmentLength, sourceAt, type SegmentRange } from "../editor/segmentTime";
@@ -96,9 +98,9 @@ const VIDEO_MAX_SECS = 180;
  */
 export const longestClip = (maxSecs: number) => Math.max(180, maxSecs);
 
-/** A video from the Media Library as a Segment, from its start, as long as it is (and as fits), fitted over its blur. */
-export function newMediaSegment(item: MediaItem, id: string): ClipSegment {
-  return { id, start: 0, end: round(Math.min(item.duration ?? 1, VIDEO_MAX_SECS)), media: item.id, framing: FITTED, volume: 1 };
+/** A video from the Media Library as a Segment, from its start, as long as it is (and as fits), fitted over its blur on the Canvas `frame`. */
+export function newMediaSegment(item: MediaItem, id: string, frame: Size): ClipSegment {
+  return { id, start: 0, end: round(Math.min(item.duration ?? 1, VIDEO_MAX_SECS)), media: item.id, framing: fitted(frame), volume: 1 };
 }
 
 /**
@@ -385,6 +387,7 @@ export function FramingFields({
   onChange: (segment: ClipSegment, group: string) => void;
   onCropMode?: () => void;
 }) {
+  const canvas = useCanvas();
   const fields = useKeyedTransform({
     item: { kind: "segment", id: segment.id },
     span,
@@ -402,7 +405,7 @@ export function FramingFields({
         {...fields}
         crop={framing.crop}
         size={mediaSize(item)}
-        defaults={IDENTITY}
+        defaults={identity(canvas)}
         onCrop={(crop, field, transform) =>
           onChange(transform ? resetFraming(segment, transform) : { ...segment, framing: { ...framing, crop } }, `segment:${segment.id}:crop.${field}`)
         }

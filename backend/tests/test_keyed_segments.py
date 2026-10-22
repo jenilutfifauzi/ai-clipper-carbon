@@ -9,7 +9,8 @@ import pytest
 from app.candidates import Background, BackgroundKind, Framing, Keyframe, KeyProperty, Transform
 from app.keyframes import value_at
 from app.pictures import cover_scale
-from app.planner import FRAME, SceneLayout, SegmentInput, plan_render
+from app.canvas import PORTRAIT
+from app.planner import SceneLayout, SegmentInput, plan_render
 from test_keyframes import clip_of
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
 from test_mcp import reviewed as reviewed_by_mcp
@@ -24,7 +25,7 @@ from test_segments import ramp_video  # noqa: F401
 
 VIDEO = "ab" * 16
 # A 1280x720 video covers the frame at this scale.
-COVER = cover_scale(1280, 720, FRAME)
+COVER = cover_scale(1280, 720, PORTRAIT.size)
 RED = np.array([255, 0, 0])
 
 
@@ -42,7 +43,7 @@ def test_a_keyed_media_segment_moves_in_timeline_time_and_gets_its_background_un
     # After 2 s of the episode, so that its Keyframes are at 2 s plus their `at`.
     planned = plan_render(
         10, 12, SOURCE,
-        main_track=[SegmentInput(10, 12), keyed_segment(zoom_out), keyed_segment(covered), keyed_segment(louder)],
+        main_track=[SegmentInput(10, 12), keyed_segment(zoom_out), keyed_segment(covered), keyed_segment(louder)], canvas=PORTRAIT,
     )
     [_, zooming, filled, heard] = planned.scenes
     assert zooming.layout is SceneLayout.MEDIA
@@ -58,7 +59,7 @@ def test_a_keyed_media_segment_moves_in_timeline_time_and_gets_its_background_un
     # A colour Background is left out as well; a sound's Keyframes don't move its picture.
     over_colour = plan_render(
         10, 12, SOURCE,
-        main_track=[SegmentInput(10, 12), keyed_segment(covered, Framing(background=Background(BackgroundKind.COLOUR, "#123456")))],
+        main_track=[SegmentInput(10, 12), keyed_segment(covered, Framing(background=Background(BackgroundKind.COLOUR, "#123456")))], canvas=PORTRAIT,
     )
     assert (over_colour.scenes[1].panels, over_colour.scenes[1].colour) == ([], None)
     assert not heard.picture.motion and heard.panels
@@ -79,7 +80,7 @@ def test_a_picture_turned_or_faded_doesnt_cover_the_frame():
             keyed_segment(turned, Framing(Transform(scale=COVER))),
             keyed_segment(faded, Framing(Transform(scale=COVER))),
             keyed_segment(held),
-        ],
+        ], canvas=PORTRAIT,
     )
     [_, tilted, fading, large] = planned.scenes
     assert tilted.panels and fading.panels and not large.panels
@@ -162,7 +163,7 @@ def test_a_keyed_media_segment_is_drawn_at_its_sampled_size_and_its_background_s
     # 640x360 fits as 1080x607.5: from half that wide to all of it, over blue; and zooming out from
     # cover to scale 1 over its blurred self.
     grow = {"scale": [{"at": 0, "value": 0.5}, {"at": 2, "value": 1}]}
-    cover = cover_scale(640, 360, FRAME)
+    cover = cover_scale(640, 360, PORTRAIT.size)
     zoom_out = {"scale": [{"at": 0, "value": cover}, {"at": 1.5, "value": 1}]}
     candidate = patch(client, job, candidate, segments=[
         {"id": "grow", "start": 0, "end": 2, "media": red["id"], "framing": over_blue, "keys": grow},

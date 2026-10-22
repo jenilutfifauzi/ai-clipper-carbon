@@ -1,5 +1,6 @@
 import type { Ease, Keyframe, KeyProperty, Keys, Transform } from "../../../api";
-import { axis, EASE_IN, EASE_IN_OUT, EASE_OUT, KEY_RANGES, LINEAR, parameterAt, PICTURE_KEYS, slopeOf, valueAt } from "../editor/keyframes";
+import type { Size } from "../editor/pictureGestures";
+import { axis, EASE_IN, EASE_IN_OUT, EASE_OUT, keyRange, LINEAR, parameterAt, PICTURE_KEYS, slopeOf, valueAt } from "../editor/keyframes";
 
 /**
  * The editor's Keyframe actions (ADR 0004, ADR 0008): pure functions beside the other actions
@@ -27,8 +28,9 @@ export const tooManyKeys = (prop: KeyProperty) => `At most ${MAX_KEYS} Keyframes
 // A turn's constant is kept within this, as the Transform's is; a Keyframe may hold more.
 const TURN_RANGE = [-360, 360] as const;
 
-/** The range a field of `prop` takes: a Keyframe's (KEY_RANGES) once it is `keyed`, but a constant turn's within ±360°. */
-export const keyedRange = (prop: KeyProperty, keyed: boolean): readonly [number, number] => (prop === "rotation" && !keyed ? TURN_RANGE : KEY_RANGES[prop]);
+/** The range a field of `prop` takes on the Canvas `frame`: a Keyframe's (keyRange) once it is `keyed`, but a constant turn's within ±360°. */
+export const keyedRange = (prop: KeyProperty, keyed: boolean, frame: Size): readonly [number, number] =>
+  prop === "rotation" && !keyed ? TURN_RANGE : keyRange(prop, frame);
 
 /** `value` to a millionth: re-anchored and Timeline times to a microsecond, so that sums leave no float dust in them. */
 export const toMillionth = (value: number) => Math.round(value * 1e6) / 1e6;
@@ -57,20 +59,20 @@ export function keyState(keys: readonly Keyframe[], at: number): "here" | "elsew
 }
 
 /**
- * `keys` of `prop` with a Keyframe of `value` (held to its range) at `at` (to the millisecond). It
+ * `keys` of `prop` with a Keyframe of `value` (held to its range on the Canvas `frame`) at `at` (to the millisecond). It
  * replaces those closer than a frame, which the Candidate would refuse, so the one within half a
  * frame, and keeps the nearest one's Ease; else it takes the Ease of the one before it, or Linear as
  * the first, so that a run of Keyframes laid down keeps one shape. A 101st isn't added: `keys` come
  * back as they are (the edits that set one refuse it first: see isFull).
  */
-export function setKey(keys: readonly Keyframe[], prop: KeyProperty, at: number, value: number): Keyframe[] {
+export function setKey(keys: readonly Keyframe[], prop: KeyProperty, at: number, value: number, frame: Size): Keyframe[] {
   const time = toMillisecond(Math.max(at, 0));
   if (isFull(keys, at)) return keys as Keyframe[];
   const crowded = crowdedAt(time);
   const kept = keys.filter((key) => !crowded(key));
   const replaced = keys.filter(crowded).sort((a, b) => Math.abs(a.at - time) - Math.abs(b.at - time))[0];
   const ease = replaced?.ease ?? kept.filter((key) => key.at < time).at(-1)?.ease ?? LINEAR;
-  const [low, high] = KEY_RANGES[prop];
+  const [low, high] = keyRange(prop, frame);
   const key = { at: time, value: Math.min(Math.max(value, low), high), ease };
   return [...kept, key].sort((a, b) => a.at - b.at);
 }
@@ -103,10 +105,10 @@ function withList(keys: Keys, prop: KeyProperty, list: Keyframe[]): Keys {
  * Removing the last one leaves the constant at the value there, so that nothing jumps. Adding a
  * 101st is refused: everything as it was, and `full` the property.
  */
-export function toggleKey(keys: Keys, prop: KeyProperty, at: number, constant: number): Written {
+export function toggleKey(keys: Keys, prop: KeyProperty, at: number, constant: number, frame: Size): Written {
   const list = keys[prop] ?? [];
   if (keyAt(list, at) < 0 && isFull(list, at)) return { keys, constant, full: prop };
-  if (keyAt(list, at) < 0) return { keys: withList(keys, prop, setKey(list, prop, at, valueAt(list, at, constant))), constant };
+  if (keyAt(list, at) < 0) return { keys: withList(keys, prop, setKey(list, prop, at, valueAt(list, at, constant), frame)), constant };
   const left = removeKey(list, at);
   return { keys: withList(keys, prop, left), constant: left.length ? constant : valueAt(list, at, constant) };
 }
@@ -115,11 +117,11 @@ export function toggleKey(keys: Keys, prop: KeyProperty, at: number, constant: n
  * `prop` of an item changed to `value` with the playhead at `at` (auto-key): a Keyframe written there
  * once the property has Keyframes, else its constant. A 101st is refused, as toggleKey refuses it.
  */
-export function writeKey(keys: Keys, prop: KeyProperty, at: number, value: number, constant: number): Written {
+export function writeKey(keys: Keys, prop: KeyProperty, at: number, value: number, constant: number, frame: Size): Written {
   const list = keys[prop] ?? [];
   if (!list.length) return { keys, constant: value };
   if (isFull(list, at)) return { keys, constant, full: prop };
-  return { keys: withList(keys, prop, setKey(list, prop, at, value)), constant };
+  return { keys: withList(keys, prop, setKey(list, prop, at, value, frame)), constant };
 }
 
 /** A property's Keyframes and constant after an edit; `full`, the property, when the edit was refused for a 101st Keyframe. */
@@ -233,29 +235,29 @@ function onGrid(to: number, low: number, high: number, { fps, start }: KeyGrid):
  * `keys` with the one at `index` dragged to `to` (its item's seconds), keeping its Ease: onto the
  * nearest of the Clip's frames, and never past a neighbour or out of its item (a frame short of a
  * neighbour at the most, on a frame where there is one). With `value`, the Curves' drag, its value
- * changes too, held to its property's range. To the millisecond.
+ * changes too, held to its property's range on the Canvas `value.frame`. To the millisecond.
  */
-export function moveKey(keys: readonly Keyframe[], index: number, to: number, grid: KeyGrid, value?: { prop: KeyProperty; value: number }): Keyframe[] {
+export function moveKey(keys: readonly Keyframe[], index: number, to: number, grid: KeyGrid, value?: { prop: KeyProperty; value: number; frame: Size }): Keyframe[] {
   const key = keys[index];
   if (!key) return keys as Keyframe[];
   const low = index > 0 ? keys[index - 1].at + KEY_GAP_SECS : 0;
   const high = index < keys.length - 1 ? keys[index + 1].at - KEY_GAP_SECS : grid.secs;
   const moved = { ...key, at: toMillisecond(onGrid(to, low, high, grid)) };
   if (value) {
-    const [lowest, highest] = KEY_RANGES[value.prop];
+    const [lowest, highest] = keyRange(value.prop, value.frame);
     moved.value = Math.min(Math.max(value.value, lowest), highest);
   }
   return keys.map((other, i) => (i === index ? moved : other));
 }
 
 /** `transform` as shown at `at`: its keyed fields at their Keyframes' values there, held to their ranges. */
-export function shownTransform(transform: Transform, keys: Keys, at: number): Transform {
+export function shownTransform(transform: Transform, keys: Keys, at: number, frame: Size): Transform {
   const keyed = PICTURE_KEYS.filter((prop) => keys[prop]?.length);
   if (!keyed.length) return transform;
   const shown = { ...transform };
   for (const prop of keyed) {
     const value = valueAt(keys[prop]!, at, transform[prop]);
-    const [low, high] = KEY_RANGES[prop];
+    const [low, high] = keyRange(prop, frame);
     shown[prop] = prop === "rotation" ? value : Math.min(Math.max(value, low), high);
   }
   return shown;
@@ -273,7 +275,8 @@ export function writtenTransform(
   keys: Keys,
   next: Transform,
   at: number | null,
-  shown: Transform = shownTransform(transform, keys, at ?? 0),
+  frame: Size,
+  shown: Transform = shownTransform(transform, keys, at ?? 0, frame),
 ): { transform: Transform; keys: Keys; full?: KeyProperty } {
   let written = keys;
   const constants = { ...next };
@@ -281,7 +284,7 @@ export function writtenTransform(
     if (!keys[prop]?.length) continue;
     constants[prop] = transform[prop];
     if (at === null || next[prop] === shown[prop]) continue;
-    const { keys: after, full } = writeKey(written, prop, at, next[prop], transform[prop]);
+    const { keys: after, full } = writeKey(written, prop, at, next[prop], transform[prop], frame);
     if (full) return { transform, keys, full };
     written = after;
   }

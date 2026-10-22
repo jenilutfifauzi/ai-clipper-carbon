@@ -9,7 +9,7 @@ import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { isAnimated, movesOf, type Moves } from "../editor/animation";
 import { FacePicker } from "../editor/FacePicker";
-import { FRAME } from "../editor/picture";
+import { useCanvas } from "../editor/canvas";
 import { Group, Mixed } from "../editor/StyleFields";
 import { shared } from "./actions";
 import { newId, newTiming } from "./edits";
@@ -66,6 +66,7 @@ export function TextLayerFields({
   onDelete: () => void;
 }) {
   const id = useId();
+  const canvas = useCanvas();
   const set = <K extends keyof TextLayer>(field: K, value: TextLayer[K]) => onChange({ ...layer, [field]: value }, `text:${layer.id}:${field}`);
   const setStyle = <K extends keyof TextStyle>(field: K, value: TextStyle[K]) =>
     onChange({ ...layer, style: styled(layer.style, field, value) }, `text:${layer.id}:style.${field}`);
@@ -118,8 +119,8 @@ export function TextLayerFields({
       <PlateGroup style={access} />
       <SpacingGroup style={access} />
       <Group title="Box">
-        <BoxField label="Wrap width" value={style.wrap_width} most={FRAME.width} onChange={(width) => setStyle("wrap_width", width)} />
-        <BoxField label="Fixed height" value={style.fixed_height} most={FRAME.height} onChange={(height) => setStyle("fixed_height", height)} />
+        <BoxField label="Wrap width" value={style.wrap_width} most={canvas.width} onChange={(width) => setStyle("wrap_width", width)} />
+        <BoxField label="Fixed height" value={style.fixed_height} most={canvas.height} onChange={(height) => setStyle("fixed_height", height)} />
       </Group>
       <TextTransformFields layer={layer} onChange={onChange} />
       <MotionFields item={layer} kind="text" onChange={onChange} />

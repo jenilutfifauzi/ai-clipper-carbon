@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from app.candidates import Candidate, Layout, LayoutOverride, Segment, WordEdit, manual_candidate
+from app.canvas import PORTRAIT
 from app.config import CameraTuning, load_settings
 from app.planner import SegmentInput, SceneLayout, SegmentPlan, plan_render
 from app.rendering import candidate_plan
@@ -32,7 +33,7 @@ def test_each_segment_is_framed_on_its_own_and_joined_back_to_back():
         main_track=[
             SegmentInput(10, 12, layout_overrides=[LayoutOverride(0.5, Layout.SPLIT)], words=[Word("satu", 1.5, 1.9)]),
             SegmentInput(20, 23, words=[Word("dua", 0.05, 0.4)]),
-        ],
+        ], canvas=PORTRAIT,
     )
     assert planned.duration == 5
     assert planned.segments == [SegmentPlan(0, 2, 10, 12), SegmentPlan(2, 5, 20, 23)]
@@ -47,7 +48,7 @@ def test_each_segment_is_framed_on_its_own_and_joined_back_to_back():
 
 
 def test_one_segment_plans_as_a_clip_did():
-    before = plan_render(10, 12, SOURCE, words=[Word("satu", 0.5, 0.9)])
+    before = plan_render(10, 12, SOURCE, words=[Word("satu", 0.5, 0.9)], canvas=PORTRAIT)
     assert before.segments == [] and before.duration == 2
 
 

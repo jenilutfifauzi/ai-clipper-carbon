@@ -3,7 +3,7 @@
 Status: accepted
 Date: 2026-10-22
 
-Builds on 0002 (Segments), 0006 (two decks), 0007 (Framing and Background), 0009 (Retimed copies), 0013 (the Grade), 0014 (Video Effects) and 0019 (a model downloaded on first use).
+Builds on 0002 (Segments), 0006 (two decks), 0007 (Framing and Background), 0009 (Retimed copies), 0013 (the Grade), 0014 (Video Effects) and 0019 (a model downloaded on first use). Drawn on the Candidate's Canvas (0022), whatever its aspect.
 
 ## Context
 
@@ -51,7 +51,7 @@ The `background-removal` feature (roadmap #13, `.scratch/advanced-edit-v2/roadma
   - **A Segment shows its Background, in any Layout.**
     - For a media Segment or a Manual Scene this is the Framing's Background.
     - A Source Segment in Track, Split or Blur gets one Background of its own, by default its own picture blurred. In Blur it replaces the Layout's blur, so there is one backdrop.
-    - Background gains an Image kind: a Media Library image filling the frame (cover, centred), with no Transform.
+    - Background gains an Image kind: a Media Library image filling the Candidate's Canvas (cover, centred, whatever its aspect, 0022), with no Transform. The picture blurred covers the Canvas too, at its shape.
   - **An Overlay can be Behind the Main Track** (`behind`).
     - It is drawn over the Segment's Background and under its picture, so it shows only where the picture doesn't cover the frame or is taken away.
     - It stays in Timeline time, apart from the Segments' cuts. During a Transition each side crossfades with the Behind Overlays already in it.

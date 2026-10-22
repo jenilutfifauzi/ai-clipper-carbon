@@ -94,7 +94,7 @@ Recorded in ADR 0015 (`docs/adr/0015-background-removal-reads-a-cached-matte.md`
   - Values out of range, or an unknown subject, are refused on save.
   - A cut-out Segment whose picture has Keyframes (a video's own, or a keyed Manual Layout Override's in its range) is refused on save and in a draft, naming it: the render can't cut a keyed picture yet, so the preview mustn't either (ticket 10).
 - **`Background`** gains the kind `image` with a Media Library image id.
-  - It fills 1080×1920 (cover, centred), with no Transform and no Keyframes.
+  - It fills the Candidate's Canvas (cover, centred; ADR 0022's 1080×1920, 1080×1350, 1080×1080 or 1920×1080), with no Transform and no Keyframes.
   - A Media Library image a Background uses counts as used: it can't be deleted.
 - **A Source Segment gains an optional `background`** (a `Background`).
   - It is used only while the Segment has Background removal, in any Layout.

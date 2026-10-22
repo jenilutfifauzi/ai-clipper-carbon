@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import { isColourSetting, type BlendMode, type Picture, type RenderPlan, type Transform, type VideoEffect, type VideoEffectKind } from "../../../api";
+import { PORTRAIT } from "./canvas";
 import { NEUTRAL_GRADE } from "./grading";
-import { FRAME } from "./picture";
 
 /*
  * The preview's Video Effects (ADR 0014): the planner's size rule, so that a slider drag shows before
@@ -199,9 +199,11 @@ const BLOOM_SIGMA = 12;
 const GRAIN_RATE = 30;
 
 // A Gaussian of `sigma` output pixels at the fitted size, grown with the element's box as the
-// render's grows with the picture's drawn size (its scale: the larger of its sides over the frame's).
-const lightBlur = (sigma: number, box: Box, result: string): Primitive => {
-  const drawn = sigma * Math.max(box.width / FRAME.width, box.height / FRAME.height);
+// render's grows with the picture's drawn size (its scale: the larger of its sides over those of the
+// Canvas `frame` it fits, as video_effects.py's _screened), so that a full-frame picture's is `sigma`
+// on every aspect.
+const lightBlur = (sigma: number, box: Box, frame: Box, result: string): Primitive => {
+  const drawn = sigma * Math.max(box.width / frame.width, box.height / frame.height);
   return { element: "feGaussianBlur", attributes: { stdDeviation: `${number(drawn / box.width)} ${number(drawn / box.height)}`, result } };
 };
 
@@ -263,10 +265,11 @@ const keyedBy = (input: string, keep: string, colours: string): Primitive[] => [
 
 /**
  * Each effect's imitation, by id, from its planned settings (sizes as drawn, in output pixels; a
- * colour setting's `#RRGGBB` in `colours`) and the element's `box`, in the filter's units (fractions
- * of the element's box, primitiveUnits objectBoundingBox), so that it holds at any size of the stage.
+ * colour setting's `#RRGGBB` in `colours`), the element's `box` and the Canvas `frame` it is drawn on
+ * (in output pixels), in the filter's units (fractions of the element's box, primitiveUnits
+ * objectBoundingBox), so that it holds at any size of the stage.
  */
-export const IMITATIONS: Record<string, (params: Record<string, number>, box: Box, colours: Record<string, string>) => Primitive[]> = {
+export const IMITATIONS: Record<string, (params: Record<string, number>, box: Box, colours: Record<string, string>, frame?: Box) => Primitive[]> = {
   // Exact but for the picture's edges, which ffmpeg extends and an SVG blur fades out.
   "gaussian-blur": ({ radius }, box) => [{ element: "feGaussianBlur", attributes: { stdDeviation: `${number(radius / box.width)} ${number(radius / box.height)}` } }],
   // Along an axis, the render's Gaussian along the line exactly. Otherwise near: nine samples along
@@ -350,10 +353,10 @@ export const IMITATIONS: Record<string, (params: Record<string, number>, box: Bo
     return [kept("vfx-fisheye"), ...displaced("vfx-fisheye", fisheyeOffset(strength, box), box, 1)];
   },
   // Near: the render blurs at a quarter of the picture's size; the box here is its whole item.
-  glow: ({ amount }, box) => [kept("vfx-glow"), lightBlur(GLOW_SIGMA, box, "vfx-glow-light"), ...screenedBy("vfx-glow", "vfx-glow-light", amount / 100)],
+  glow: ({ amount }, box, _, frame = PORTRAIT) => [kept("vfx-glow"), lightBlur(GLOW_SIGMA, box, frame, "vfx-glow-light"), ...screenedBy("vfx-glow", "vfx-glow-light", amount / 100)],
   // Near: the highlights by a table of the luma, blurred and screened; its strength breathes with
   // the time shown (`timed`), still while paused.
-  "bloom-pulse": ({ amount, speed }, box) => {
+  "bloom-pulse": ({ amount, speed }, box, _, frame = PORTRAIT) => {
     const weights = Array.from({ length: 33 }, (_, i) => number(highlight(i / 32))).join(" ");
     const func = (element: "feFuncR" | "feFuncG" | "feFuncB"): Primitive => ({ element, attributes: { type: "table", tableValues: weights } });
     const luma = "0.2126 0.7152 0.0722 0 0";
@@ -367,7 +370,7 @@ export const IMITATIONS: Record<string, (params: Record<string, number>, box: Bo
       { element: "feColorMatrix", attributes: { type: "matrix", values: `${luma} ${luma} ${luma} 0 0 0 1 0` } },
       { element: "feComponentTransfer", attributes: { result: "vfx-bloom-weight" }, children: [func("feFuncR"), func("feFuncG"), func("feFuncB")] },
       { element: "feComposite", attributes: { in: "vfx-bloom", in2: "vfx-bloom-weight", operator: "arithmetic", k1: "1", k2: "0", k3: "0", k4: "0" } },
-      lightBlur(BLOOM_SIGMA, box, "vfx-bloom-light"),
+      lightBlur(BLOOM_SIGMA, box, frame, "vfx-bloom-light"),
       screen,
       { ...mixed, timed: at },
     ];
@@ -467,19 +470,25 @@ const BUILT_MAX = 256;
 // The enabled entries of `effects` that have an imitation: what a filter of them draws.
 const drawnOf = (effects: VideoEffect[] | undefined): VideoEffect[] => (effects ?? []).filter((effect) => effect.enabled && IMITATIONS[effect.id]);
 
-// Its effects and the box, which the primitives follow from (a map's data URL is too long for an id).
-const stackKey = (drawn: VideoEffect[], box: Box): (string | number)[] => [...drawn.flatMap(({ id, params }) => [id, ...Object.entries(params).flat()]), box.width, box.height];
+// Its effects, the box and the Canvas, which the primitives follow from (a map's data URL is too long for an id).
+const stackKey = (drawn: VideoEffect[], box: Box, frame: Box): (string | number)[] => [
+  ...drawn.flatMap(({ id, params }) => [id, ...Object.entries(params).flat()]),
+  box.width,
+  box.height,
+  frame.width,
+  frame.height,
+];
 
-/** The primitives `effects` (planned: enabled, sizes as drawn) are imitated by, in order; an effect without an imitation draws nothing. Built once per stack and box. */
-export function effectPrimitives(effects: VideoEffect[], box: Box): Primitive[] {
+/** The primitives `effects` (planned: enabled, sizes as drawn) are imitated by on an element of `box` on the Canvas `frame`, in order; an effect without an imitation draws nothing. Built once per stack, box and Canvas. */
+export function effectPrimitives(effects: VideoEffect[], box: Box, frame: Box = PORTRAIT): Primitive[] {
   const drawn = drawnOf(effects);
-  const key = JSON.stringify(stackKey(drawn, box));
+  const key = JSON.stringify(stackKey(drawn, box, frame));
   const known = built.get(key);
   if (known) return known;
   const primitives = drawn.flatMap((effect) => {
     const of = <T extends number | string>(kind: string) =>
       Object.fromEntries(Object.entries(effect.params).filter(([, value]) => typeof value === kind)) as Record<string, T>;
-    return IMITATIONS[effect.id](of<number>("number"), box, of<string>("string"));
+    return IMITATIONS[effect.id](of<number>("number"), box, of<string>("string"), frame);
   });
   if (built.size >= BUILT_MAX) built.clear();
   built.set(key, primitives);
@@ -497,23 +506,23 @@ export const changesWithTime = (primitives: Primitive[]): boolean =>
   primitives.some((primitive) => !!primitive.timed || changesWithTime(primitive.children ?? []));
 
 /**
- * The id of the SVG filter that imitates `effects` on an element of `box` (EffectFilters defines one
- * per distinct pair), or null when they draw nothing. One that changes with time is its item's own:
- * its time counts from the item's `start` on the Timeline.
+ * The id of the SVG filter that imitates `effects` on an element of `box` on the Canvas `frame` (9:16's
+ * unless given; EffectFilters defines one per distinct stack, box and Canvas), or null when they draw nothing. One
+ * that changes with time is its item's own: its time counts from the item's `start` on the Timeline.
  */
-export function effectsFilterId(effects: VideoEffect[] | undefined, box: Box, start = 0): string | null {
+export function effectsFilterId(effects: VideoEffect[] | undefined, box: Box, start = 0, frame: Box = PORTRAIT): string | null {
   // Every imitation draws something: no primitives are built to tell an empty stack.
   const drawn = drawnOf(effects);
   if (!drawn.length) return null;
-  const timed = changesWithTime(effectPrimitives(drawn, box)) ? ["at", start] : [];
-  return `vfx-${[...stackKey(drawn, box), ...timed].join("-").replace(/[^0-9a-z]/gi, "_")}`;
+  const timed = changesWithTime(effectPrimitives(drawn, box, frame)) ? ["at", start] : [];
+  return `vfx-${[...stackKey(drawn, box, frame), ...timed].join("-").replace(/[^0-9a-z]/gi, "_")}`;
 }
 
-/** The CSS `filter` that imitates `effects` on an element of `box` (of an item from `start`), or undefined when they draw nothing. */
-export function effectsFilter(effects: VideoEffect[] | undefined, box: Box, start = 0): string | undefined {
-  const id = effectsFilterId(effects, box, start);
+/** The CSS `filter` that imitates `effects` on an element of `box` on the Canvas `frame` (of an item from `start`), or undefined when they draw nothing. */
+export function effectsFilter(effects: VideoEffect[] | undefined, box: Box, start = 0, frame: Box = PORTRAIT): string | undefined {
+  const id = effectsFilterId(effects, box, start, frame);
   return id ? `url(#${id})` : undefined;
 }
 
-/** The CSS `filter` that imitates a Segment's `effects` over its whole frame (1080x1920, scale 1), from its `start`, or undefined when they draw nothing. */
-export const frameEffectsFilter = (effects: VideoEffect[] | undefined, start = 0): string | undefined => effectsFilter(effects, FRAME, start);
+/** The CSS `filter` that imitates a Segment's `effects` over its whole frame (the Canvas `frame`, scale 1), from its `start`, or undefined when they draw nothing. */
+export const frameEffectsFilter = (effects: VideoEffect[] | undefined, frame: Box, start = 0): string | undefined => effectsFilter(effects, frame, start, frame);

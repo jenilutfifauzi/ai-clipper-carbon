@@ -17,7 +17,8 @@ from pydantic import TypeAdapter, ValidationError
 from app.candidates import Border, Crop, Overlay, Shadow, Transform
 from app.migration import migrated_candidate, migrated_overlay
 from app.pictures import cover_scale, drawn_size
-from app.planner import FRAME, OUTPUT_WIDTH, MediaInfo, overlay_events
+from app.canvas import PORTRAIT
+from app.planner import MediaInfo, overlay_events
 from test_media_library import make, upload
 from test_render import add, full_frame, preview, render, rendered, reviewed
 # The Sources Seam A renders from (from_render_video makes render_video every test's).
@@ -43,7 +44,7 @@ def overlay(**fields) -> Overlay:
 
 
 def drawn(transform: Transform, media: str = CLIP, crop: Crop = Crop()):
-    [event] = overlay_events([overlay(media=media, transform=transform, crop=crop)], 10, ITEMS)
+    [event] = overlay_events([overlay(media=media, transform=transform, crop=crop)], 10, ITEMS, canvas=PORTRAIT)
     return event.picture
 
 
@@ -53,14 +54,14 @@ def box(bounds) -> tuple[int, int, int, int]:
 
 def test_a_picture_is_its_fitted_size_times_its_scale_and_stretch_and_a_cover_scale_fills_the_frame():
     # A 16:9 picture fits the frame's width: 1080 x 607.5, kept even.
-    assert drawn_size(1920, 1080, Transform(), FRAME) == (1080, 608)
-    assert drawn_size(1920, 1080, Transform(scale=0.5), FRAME) == (540, 304)
-    assert cover_scale(1920, 1080, FRAME) == pytest.approx(1920 / 607.5)
+    assert drawn_size(1920, 1080, Transform(), PORTRAIT.size) == (1080, 608)
+    assert drawn_size(1920, 1080, Transform(scale=0.5), PORTRAIT.size) == (540, 304)
+    assert cover_scale(1920, 1080, PORTRAIT.size) == pytest.approx(1920 / 607.5)
     # A 9:16 one fits it exactly, and covers it at 1.
-    assert drawn_size(540, 960, Transform(), FRAME) == (1080, 1920) and cover_scale(540, 960, FRAME) == pytest.approx(1)
+    assert drawn_size(540, 960, Transform(), PORTRAIT.size) == (1080, 1920) and cover_scale(540, 960, PORTRAIT.size) == pytest.approx(1)
     # Stretch is on top of the scale, on its own axis.
-    assert drawn_size(1920, 1080, Transform(scale=0.5, stretch_x=2), FRAME) == (1080, 304)
-    assert drawn_size(1920, 1080, Transform(scale=0.5, stretch_y=0.5), FRAME) == (540, 152)
+    assert drawn_size(1920, 1080, Transform(scale=0.5, stretch_x=2), PORTRAIT.size) == (1080, 304)
+    assert drawn_size(1920, 1080, Transform(scale=0.5, stretch_y=0.5), PORTRAIT.size) == (540, 152)
 
 
 def test_an_overlay_is_drawn_at_its_transform_and_kept_in_the_clip_and_its_video():
@@ -70,16 +71,16 @@ def test_an_overlay_is_drawn_at_its_transform_and_kept_in_the_clip_and_its_video
     assert box(picture.crop) == (0, 0, 640, 360)
     assert (picture.opacity, picture.flip_h, picture.flip_v, picture.rotation) == (0.4, True, False, 0)
     assert box(picture.bounds) == (30, 248, 540, 304)
-    [event] = overlay_events([overlay()], 10, ITEMS)
+    [event] = overlay_events([overlay()], 10, ITEMS, canvas=PORTRAIT)
     assert (event.start, event.end, event.offset, event.image) == (1.0, 3.0, 0.0, False)
     # A new Overlay is half its fitted size at the frame's centre: 540 px wide for a wide item.
     assert box(event.picture.bounds) == (270, 808, 540, 304)
     # Cut where the Clip or its video ends.
-    assert overlay_events([overlay(start=9.0)], 10, ITEMS)[0].end == 10
-    assert overlay_events([overlay(offset=3.0)], 10, ITEMS)[0].end == 2.0
+    assert overlay_events([overlay(start=9.0)], 10, ITEMS, canvas=PORTRAIT)[0].end == 10
+    assert overlay_events([overlay(offset=3.0)], 10, ITEMS, canvas=PORTRAIT)[0].end == 2.0
     # An image lasts as long as it is given; a missing item shows nothing.
-    assert overlay_events([overlay(media=STILL, secs=8.0)], 10, ITEMS)[0].end == 9.0
-    assert overlay_events([overlay(media="00" * 16)], 10, ITEMS) == []
+    assert overlay_events([overlay(media=STILL, secs=8.0)], 10, ITEMS, canvas=PORTRAIT)[0].end == 9.0
+    assert overlay_events([overlay(media="00" * 16)], 10, ITEMS, canvas=PORTRAIT) == []
 
 
 def test_a_turned_picture_is_bounded_by_its_turned_box_about_the_same_centre():
@@ -95,15 +96,16 @@ def test_a_turned_picture_is_bounded_by_its_turned_box_about_the_same_centre():
 
 def test_the_centre_is_kept_on_the_frame_and_the_picture_may_go_past_its_edges():
     picture = drawn(Transform(x=1300, y=-40, scale=2))
-    assert picture.centre == (OUTPUT_WIDTH, 0)
+    assert picture.centre == (PORTRAIT.width, 0)
     assert (picture.width, picture.height) == (2160, 1216)
     assert box(picture.bounds) == (0, -608, 2160, 1216)
 
 
 def test_a_centre_given_off_the_frame_is_clamped_onto_it_and_a_non_finite_one_is_refused():
     given = TypeAdapter(Transform)
-    clamped = given.validate_python({"x": 1200, "y": -5, "scale": 2})
-    assert (clamped.x, clamped.y, clamped.scale) == (OUTPUT_WIDTH, 0, 2)
+    # Onto the largest Canvas, 1920 on either side; its Candidate brings it onto its own (test_aspects.py).
+    clamped = given.validate_python({"x": 2000, "y": -5, "scale": 2})
+    assert (clamped.x, clamped.y, clamped.scale) == (1920, 0, 2)
     assert (given.validate_python({"y": 2500}).x, given.validate_python({"y": 2500}).y) == (540, 1920)
     for bad in (float("inf"), float("nan"), "x"):
         with pytest.raises(ValidationError):
@@ -128,17 +130,17 @@ def test_a_crop_that_would_leave_less_than_a_tenth_is_pulled_back_by_its_second_
 
 def test_corners_are_a_share_of_the_drawn_pictures_shorter_side_and_border_and_shadow_keep_their_pixels():
     # 540x304 at 0.5: a quarter of its shorter side is 76 px.
-    [event] = overlay_events([overlay(radius=0.25)], 10, ITEMS)
+    [event] = overlay_events([overlay(radius=0.25)], 10, ITEMS, canvas=PORTRAIT)
     assert event.picture.radius == 76
     # It scales with the picture: twice as large, twice the radius. A tall 100x200 one at 0.5 is round.
-    [large] = overlay_events([overlay(radius=0.25, transform=Transform(scale=1))], 10, ITEMS)
+    [large] = overlay_events([overlay(radius=0.25, transform=Transform(scale=1))], 10, ITEMS, canvas=PORTRAIT)
     assert large.picture.radius == 152
-    [tall] = overlay_events([overlay(media=TALL, radius=0.5, transform=Transform(scale=100 / 960))], 10, ITEMS)
+    [tall] = overlay_events([overlay(media=TALL, radius=0.5, transform=Transform(scale=100 / 960))], 10, ITEMS, canvas=PORTRAIT)
     assert tall.picture.radius == 50
     # The border and shadow are in output pixels, the same at any scale.
     border, shadow = Border(width=10, colour="#ff0000"), Shadow(blur=30, x=20, y=20, opacity=0.6)
     for scale in (0.2, 2):
-        [decorated] = overlay_events([overlay(border=border, shadow=shadow, transform=Transform(scale=scale))], 10, ITEMS)
+        [decorated] = overlay_events([overlay(border=border, shadow=shadow, transform=Transform(scale=scale))], 10, ITEMS, canvas=PORTRAIT)
         assert (decorated.picture.border, decorated.picture.shadow) == (border, shadow)
     # Undecorated by default.
     assert (event.picture.border, event.picture.shadow, drawn(Transform()).radius) == (None, None, 0)
