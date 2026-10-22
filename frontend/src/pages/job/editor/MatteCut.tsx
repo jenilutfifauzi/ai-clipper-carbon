@@ -509,7 +509,8 @@ export function useItemMatte(
 /**
  * A picture's video (`children`, a Media Library video's in a PicturePanel, `videoRef`) cut by
  * `matte` (`useItemMatte`) on a canvas in its place while the cut is shown (`CutGroup`), its edge
- * blurred by `feather` output pixels; as it is without one.
+ * blurred by `feather` output pixels; as it is without one. Its elements stay the same either way, so
+ * that switching Background removal never remounts the video its Matte follows.
  */
 export function CutVideo({
   matte,
@@ -532,9 +533,8 @@ export function CutVideo({
     if (!matte || !picture || !canvas.current) return;
     return cutSlot(matte, picture, canvas.current, () => softness.current);
   }, [matte, videoRef]);
-  if (!matte) return <>{children}</>;
   return (
-    <CutGroup mattes={[matte]} playback={playback} cutNow={() => true} shownMatte={() => matte}>
+    <CutGroup mattes={matte ? [matte] : []} playback={playback} cutNow={() => !!matte} shownMatte={() => matte ?? undefined}>
       <div className="absolute inset-0 group-data-[cut]/cut:opacity-0">{children}</div>
       <canvas ref={canvas} aria-hidden className="absolute inset-0 size-full opacity-0 group-data-[cut]/cut:opacity-100" />
     </CutGroup>
@@ -581,11 +581,11 @@ export function CutImage({ src, matte, feather, children }: { src: string; matte
       window.clearTimeout(timer);
     };
   }, [src, matte, feather]);
-  if (!matte) return <>{children}</>;
+  const shown = ready && !!matte;
   return (
     <div className="absolute inset-0">
-      <div className={cx("absolute inset-0", ready && "opacity-0")}>{children}</div>
-      <canvas ref={canvas} aria-hidden className={cx("absolute inset-0 size-full", !ready && "opacity-0")} />
+      <div className={cx("absolute inset-0", shown && "opacity-0")}>{children}</div>
+      <canvas ref={canvas} aria-hidden className={cx("absolute inset-0 size-full", !shown && "opacity-0")} />
     </div>
   );
 }
