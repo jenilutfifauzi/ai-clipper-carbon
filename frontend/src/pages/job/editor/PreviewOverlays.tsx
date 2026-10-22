@@ -3,7 +3,7 @@ import { mediaItemUrl, mediaProxyUrl, type OverlayEvent, type Picture, type Rend
 import { cx } from "../../../format";
 import { isAnimated, overlayLook, type Look } from "./animation";
 import { follow } from "./follow";
-import { CutImage, CutVideo, useImageMatte, useItemMatte } from "./MatteCut";
+import { MaskedImage, MaskedVideo, useImageMatte, useItemMatte } from "./MatteMask";
 import { PicturePanel } from "./PicturePanel";
 import { useShown, type Playback } from "./playback";
 import { copyProgress, eventCopy, eventPlay, useRetimedCopy } from "./retimedCopy";
@@ -21,7 +21,7 @@ import { copyProgress, eventCopy, eventPlay, useRetimedCopy } from "./retimedCop
  * A selected one is shown whole while paused in its time, as a picked Text Layer is, so that it can
  * be seen while it is edited on a frame its animation hasn't reached. Its media element names its
  * Overlay (`data-overlay-media`), for Chroma key's eyedropper to read (EyedropperLayer). With
- * Background removal (ADR 0015), its picture is cut by its item's Matte (MatteCut.tsx) under its
+ * Background removal (ADR 0015), its picture is cut by its item's Matte (MatteMask.tsx) under its
  * Grade, effects, corners, border, shadow and Blend Mode, as the render orders them.
  */
 export function PreviewOverlays({
@@ -49,7 +49,7 @@ export function PreviewOverlays({
 /**
  * The plan's Overlays Behind the Main Track (ADR 0015), drawn as PreviewOverlays draws the others, in
  * the Clip's time, over a Segment's Background and under its picture: where it is cut out (inside
- * CutGroup, `className` showing them only with the cut), or where its picture doesn't cover the frame.
+ * MaskGroup, `className` showing them only with the cut), or where its picture doesn't cover the frame.
  * None without any (or while the Behind Track is hidden, which leaves them out of the plan).
  */
 export function BehindOverlays({ plan, playback, className }: { plan: RenderPlan; playback: Playback; className?: string }) {
@@ -149,13 +149,13 @@ function OverlayView({
         start={start}
         media={
           image ? (
-            <CutImage src={mediaItemUrl(media)} matte={imageMatte} feather={feather}>
+            <MaskedImage src={mediaItemUrl(media)} matte={imageMatte} feather={feather}>
               <img src={mediaItemUrl(media)} alt="" draggable={false} className="size-full object-fill" data-overlay-media={event.id} />
-            </CutImage>
+            </MaskedImage>
           ) : (
-            <CutVideo matte={matte} feather={feather} videoRef={video} playback={playback}>
+            <MaskedVideo matte={matte} feather={feather} videoRef={video} playback={playback}>
               <video ref={video} src={src} muted playsInline preload="auto" className="size-full object-fill" data-overlay-media={event.id} />
-            </CutVideo>
+            </MaskedVideo>
           )
         }
       />

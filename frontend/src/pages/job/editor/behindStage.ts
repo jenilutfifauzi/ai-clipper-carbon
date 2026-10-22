@@ -2,7 +2,7 @@
 // under the Segment's picture, so a press reaches one only where that picture doesn't show: outside
 // it (a Manual or media picture that doesn't cover the frame, a Split's gap), or where it is cut out
 // and its Matte has taken it away. Worked out from the plan's numbers, but for how much of the cut
-// picture is left at a spot, which the preview's cut canvas says (`cutAlpha`).
+// picture is left at a spot, which the preview's cut canvas says (`maskAlpha`).
 import type { Picture, ScenePlan } from "../../../api";
 import { pictureAt } from "./picture";
 import { offsetOnPicture, type Point, type Size } from "./pictureGestures";
@@ -90,14 +90,14 @@ export function segmentShows(scene: ScenePlan | undefined, point: Point, time: n
 }
 
 /**
- * How much of the cut picture `name` (a cut canvas's `data-cut-picture`: "source" for the Source's,
+ * How much of the cut picture `name` (a cut canvas's `data-mask-picture`: "source" for the Source's,
  * "segment:<id>" for a media Segment's) is kept at `spot`, read off its canvas on `stage` that is
- * shown now (under a `data-cut` group, not hidden); null where none is, as when it is shown whole.
+ * shown now (under a `data-masked` group, not hidden); null where none is, as when it is shown whole.
  * A canvas draws its item's whole frame, so the spot is a share of it.
  */
-export function cutAlpha(stage: HTMLElement | null, name: string, spot: Spot): number | null {
-  for (const canvas of stage?.querySelectorAll<HTMLCanvasElement>(`canvas[data-cut-picture="${name}"]`) ?? []) {
-    if (!canvas.width || !canvas.height || !canvas.closest("[data-cut]")) continue;
+export function maskAlpha(stage: HTMLElement | null, name: string, spot: Spot): number | null {
+  for (const canvas of stage?.querySelectorAll<HTMLCanvasElement>(`canvas[data-mask-picture="${name}"]`) ?? []) {
+    if (!canvas.width || !canvas.height || !canvas.closest("[data-masked]")) continue;
     if (
       canvas.checkVisibility &&
       !canvas.checkVisibility({

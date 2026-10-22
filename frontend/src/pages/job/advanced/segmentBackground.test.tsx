@@ -6,7 +6,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test, vi } from "vitest";
 import type { Background, ClipSegment, MediaItem, PersonModelInfo, RenderPlan, ScenePlan } from "../../../api";
-import { backdropView } from "../editor/MatteCut";
+import { backdropView } from "../editor/MatteMask";
 import { filledStyle, slotView } from "../editor/picture";
 import { sameBackground, segmentBackground, setSegmentBackground } from "./actions";
 import type { AdvancedEdits } from "./edits";

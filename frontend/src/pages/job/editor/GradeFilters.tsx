@@ -244,7 +244,7 @@ export function DecksGraded({
   grade: Grade | undefined;
   effects?: VideoEffect[];
   start?: number;
-  // Its own classes (a cut-out Segment's panels drop the black for their Background, MatteCut.tsx).
+  // Its own classes (a cut-out Segment's panels drop the black for their Background, MatteMask.tsx).
   className?: string;
   children: ReactNode;
 }) {

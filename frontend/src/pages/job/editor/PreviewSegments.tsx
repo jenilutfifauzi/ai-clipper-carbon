@@ -13,7 +13,7 @@ import { followCurve, setVolume } from "./PreviewMusic";
 import { firstSceneOf, sceneAt } from "./ScenesTrack";
 import { crossedBy } from "./transitionSound";
 import { silencedForCopy } from "./effectedCopy";
-import { backdropView, CutBackdrop, CutGroup, CutVideo, DeckMatte, useItemMatte } from "./MatteCut";
+import { backdropView, MaskBackdrop, MaskGroup, MaskedVideo, DeckMatte, useItemMatte } from "./MatteMask";
 import { copyClock, matteCopyOf } from "./matteTime";
 import { rangeOf } from "./segmentTime";
 
@@ -169,9 +169,9 @@ export function MediaSegment({
               frame={FRAME}
               playback={playback}
               media={
-                <CutVideo matte={matte} feather={removal?.feather ?? 0} videoRef={main} playback={playback} name={`segment:${segment.id}`}>
+                <MaskedVideo matte={matte} feather={removal?.feather ?? 0} videoRef={main} playback={playback} name={`segment:${segment.id}`}>
                   <video ref={main} src={src} playsInline preload="auto" className="size-full object-fill" />
-                </CutVideo>
+                </MaskedVideo>
               }
             />
           </div>
@@ -265,9 +265,9 @@ export function CopiedSourceSegment({
   return (
     <div ref={box} className="absolute inset-0 overflow-hidden" style={{ visibility: "hidden" }}>
       {/* Cut out (ADR 0015), its picture over its Background while its Matte cuts it. */}
-      <CutGroup mattes={removal ? [matte] : []} playback={playback} cutNow={() => !!removal} shownMatte={() => matte}>
+      <MaskGroup mattes={removal ? [matte] : []} playback={playback} maskNow={() => !!removal} shownMatte={() => matte}>
         {removal && (
-          <CutBackdrop
+          <MaskBackdrop
             plan={plan}
             view={backdropView(plan, scene?.layout === "manual" ? slotView(scene, 0) : null, segment.background)}
             masters={masters}
@@ -276,9 +276,9 @@ export function CopiedSourceSegment({
           />
         )}
         {/* The Overlays Behind the Main Track (ADR 0015): over the Background, under the cut picture. */}
-        {removal && <BehindOverlays plan={plan} playback={playback} className="invisible group-data-[cut]/cut:visible" />}
+        {removal && <BehindOverlays plan={plan} playback={playback} className="invisible group-data-[masked]/mask:visible" />}
         {/* Its Grade and Video Effects over its whole frame (ADR 0013, 0014), its vignette over it. */}
-        <div className="absolute inset-0 bg-black group-data-[cut]/cut:!bg-transparent" style={{ filter }}>
+        <div className="absolute inset-0 bg-black group-data-[masked]/mask:!bg-transparent" style={{ filter }}>
           {[master, follower].map((ref, slot) => (
             <PanelView
               key={slot}
@@ -288,11 +288,11 @@ export function CopiedSourceSegment({
               {...slotView(scene, slot)}
               playback={playback}
               muted={slot > 0}
-              cut={removal ? { matte, feather: removal.feather } : null}
+              mask={removal ? { matte, feather: removal.feather } : null}
             />
           ))}
         </div>
-      </CutGroup>
+      </MaskGroup>
       <GradeVignette grade={segment.grade} />
       <CopyProgress range={range} copy={copy} what="Segment" />
     </div>

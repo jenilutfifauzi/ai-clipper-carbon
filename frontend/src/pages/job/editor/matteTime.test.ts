@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import cases from "../../../../../backend/tests/fixtures/matte_frames.json";
 import type { MatteCopy, MattePiece } from "../../../api";
-import { DeckMatte } from "./MatteCut";
+import { DeckMatte } from "./MatteMask";
 import { copyClock, copyFrame, itemPieces, matteAt, matteCopyOf, matteFrame, matteSeek, segmentMatte, SOURCE_CLOCK } from "./matteTime";
 import type { SegmentRange } from "./segmentTime";
 

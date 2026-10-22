@@ -31,19 +31,19 @@ import type { Playback } from "./playback";
 import type { SegmentRange } from "./segmentTime";
 
 /*
- * The preview's cut (docs/adr/0015-background-removal-reads-a-cached-matte.md): a cut-out Segment of the
+ * The preview's Background removal (docs/adr/0015-background-removal-reads-a-cached-matte.md): a cut-out Segment of the
  * Source is drawn on a canvas in place of each of its pictures' videos, the picture masked by its
  * Matte, over its Background. The Matte's pieces (the Preview Plan's `mattes`) play on hidden videos
  * that follow a deck's master (`DeckMatte`); on each frame of a picture's video, its canvas draws the
  * picture, turns the Matte frame of the same Source frame (matteTime.ts) from luminance into alpha,
- * blurs it by the feather and masks the picture with it (`cutSlot`). The canvas stands where the video
+ * blurs it by the feather and masks the picture with it (`maskSlot`). The canvas stands where the video
  * stood, styled as it is, so it is cropped, scaled and placed as the video is in every Layout, and the
  * Grade's and Video Effects' SVG filters on the frame still apply to it. Where no piece is served yet,
- * the picture shows whole, and the cut appears once it is. The cut is shown by a flag on `CutGroup`
- * (`data-cut`), which the videos, canvases, fills and the Background read.
+ * the picture shows whole, and the cut appears once it is. The cut is shown by a flag on `MaskGroup`
+ * (`data-masked`), which the videos, canvases, fills and the Background read.
  *
  * A picture of a Media Library item (a video's Segment, an Overlay) is cut alike by its item's Matte
- * (`useItemMatte`, `CutVideo`), an image by its one PNG (`CutImage`), on a canvas in place of its
+ * (`useItemMatte`, `MaskedVideo`), an image by its one PNG (`MaskedImage`), on a canvas in place of its
  * media inside its PicturePanel: so under its Grade, Video Effects, corners, border, shadow and
  * Blend Mode, as the render draws them.
  */
@@ -167,7 +167,7 @@ export class DeckMatte {
     return copyFrame(at, this.fps);
   }
 
-  get cutting(): boolean {
+  get masking(): boolean {
     return this.pieces.size > 0;
   }
 
@@ -358,12 +358,12 @@ function MatteVideo({ matte, piece, src }: { matte: DeckMatte; piece: number; sr
  * Cuts `video` (a deck's or ghost's slot) onto `canvas` by `matte`, on each frame of either, its
  * edge blurred by `feather()` output pixels; returns what stops it.
  */
-export function cutSlot(matte: DeckMatte, video: HTMLVideoElement, canvas: HTMLCanvasElement, feather: () => number): () => void {
+export function maskSlot(matte: DeckMatte, video: HTMLVideoElement, canvas: HTMLCanvasElement, feather: () => number): () => void {
   const mask = document.createElement("canvas");
   let pictureTime: number | null = null;
   let last = "";
   const draw = () => {
-    if (!matte.cutting || video.readyState < 2) return;
+    if (!matte.masking || video.readyState < 2) return;
     // The picture's Source frame on show, by its start.
     const source = pictureTime ?? frameStart(video.currentTime, matte.fps);
     const shown = matte.frameFor(source, !video.paused);
@@ -373,7 +373,7 @@ export function cutSlot(matte: DeckMatte, video: HTMLVideoElement, canvas: HTMLC
       return matte.setGood(false);
     }
     const drawn = `${source}:${shown.video.currentSrc}:${shown.frame}`;
-    if (drawn !== last && cut(video, shown.video, [shown.video.videoWidth, shown.video.videoHeight], canvas, mask, feather())) last = drawn;
+    if (drawn !== last && drawMasked(video, shown.video, [shown.video.videoWidth, shown.video.videoHeight], canvas, mask, feather())) last = drawn;
     matte.setGood(true);
   };
   const stopPicture = eachFrame(video, (time) => {
@@ -393,7 +393,7 @@ export function cutSlot(matte: DeckMatte, video: HTMLVideoElement, canvas: HTMLC
  * `matte` is light: its luminance made alpha on `mask`, blurred by `feather` output pixels, masks it
  * (an image's own transparency kept within it). False when it can't yet.
  */
-function cut(
+function drawMasked(
   picture: CanvasImageSource,
   matte: CanvasImageSource,
   size: [number, number],
@@ -430,38 +430,38 @@ function cut(
 
 /**
  * Where the cut is shown: its children (a deck's panels or a ghost's, and the Background under them)
- * read its `data-cut` flag, set while the Segment shown (`cutNow`) is cut out and its deck's pictures
+ * read its `data-masked` flag, set while the Segment shown (`maskNow`) is cut out and its deck's pictures
  * (`shownMatte`) are cut, not shown whole. Its Matte videos are kept inside it, hidden.
  */
-export function CutGroup({
+export function MaskGroup({
   mattes,
   playback,
-  cutNow,
+  maskNow,
   shownMatte,
   children,
 }: {
   mattes: DeckMatte[];
   playback: Playback;
-  cutNow: () => boolean;
+  maskNow: () => boolean;
   shownMatte: () => DeckMatte | undefined;
   children: ReactNode;
 }) {
   const group = useRef<HTMLDivElement>(null);
-  const read = useRef({ cutNow, shownMatte });
-  read.current = { cutNow, shownMatte };
+  const read = useRef({ maskNow, shownMatte });
+  read.current = { maskNow, shownMatte };
   useLayoutEffect(() => {
     const update = () => {
       const element = group.current;
       if (!element) return;
-      const on = read.current.cutNow() && !!read.current.shownMatte()?.good;
-      if (on !== element.hasAttribute("data-cut")) element.toggleAttribute("data-cut", on);
+      const on = read.current.maskNow() && !!read.current.shownMatte()?.good;
+      if (on !== element.hasAttribute("data-masked")) element.toggleAttribute("data-masked", on);
     };
     update();
     const stops = [playback.subscribe(update), ...mattes.map((matte) => matte.onGood(update))];
     return () => stops.forEach((stop) => stop());
   });
   return (
-    <div ref={group} className="group/cut absolute inset-0">
+    <div ref={group} className="group/mask absolute inset-0">
       {children}
       {mattes.map((matte, i) => (
         <MatteVideos key={i} matte={matte} />
@@ -491,26 +491,26 @@ export function useItemMatte(
   const at = copy?.url ? copy.at : null;
   const { start, end, speed, reverse } = played;
   const matteCopy = matteCopyOf(copies, { start, end }, media);
-  const cut = !!removal && !!media;
+  const removed = !!removal && !!media;
   useEffect(() => {
-    matte.setPieces(cut ? own : undefined);
-    matte.setClock(!cut ? null : range ? copyClock({ start, end, speed, reverse }, range, at, matteCopy) : SOURCE_CLOCK);
-  }, [matte, cut, own, range, start, end, speed, reverse, at, matteCopy]);
+    matte.setPieces(removed ? own : undefined);
+    matte.setClock(!removed ? null : range ? copyClock({ start, end, speed, reverse }, range, at, matteCopy) : SOURCE_CLOCK);
+  }, [matte, removed, own, range, start, end, speed, reverse, at, matteCopy]);
   useEffect(() => {
     matte.attachMaster(video.current);
     return () => matte.dispose();
   }, [matte, video]);
-  return cut ? matte : null;
+  return removed ? matte : null;
 }
 
 /**
  * A picture's video (`children`, a Media Library video's in a PicturePanel, `videoRef`) cut by
- * `matte` (`useItemMatte`) on a canvas in its place while the cut is shown (`CutGroup`), its edge
+ * `matte` (`useItemMatte`) on a canvas in its place while the cut is shown (`MaskGroup`), its edge
  * blurred by `feather` output pixels; as it is without one. Its elements stay the same either way, so
  * that switching Background removal never remounts the video its Matte follows. A `name` marks its
- * canvas for a press on the stage to read (behindStage.ts' cutAlpha).
+ * canvas for a press on the stage to read (behindStage.ts' maskAlpha).
  */
-export function CutVideo({
+export function MaskedVideo({
   matte,
   feather,
   videoRef,
@@ -531,14 +531,14 @@ export function CutVideo({
   useEffect(() => {
     const picture = videoRef.current;
     if (!matte || !picture || !canvas.current) return;
-    return cutSlot(matte, picture, canvas.current, () => softness.current);
+    return maskSlot(matte, picture, canvas.current, () => softness.current);
   }, [matte, videoRef]);
   return (
-    <CutGroup mattes={matte ? [matte] : []} playback={playback} cutNow={() => !!matte} shownMatte={() => matte ?? undefined}>
+    <MaskGroup mattes={matte ? [matte] : []} playback={playback} maskNow={() => !!matte} shownMatte={() => matte ?? undefined}>
       {/* By its own group's flag alone (its direct children): a Behind Overlay's is inside a cut-out Segment's group too. */}
-      <div className="absolute inset-0 [[data-cut]>&]:opacity-0">{children}</div>
-      <canvas ref={canvas} aria-hidden data-cut-picture={name} className="absolute inset-0 size-full opacity-0 [[data-cut]>&]:opacity-100" />
-    </CutGroup>
+      <div className="absolute inset-0 [[data-masked]>&]:opacity-0">{children}</div>
+      <canvas ref={canvas} aria-hidden data-mask-picture={name} className="absolute inset-0 size-full opacity-0 [[data-masked]>&]:opacity-100" />
+    </MaskGroup>
   );
 }
 
@@ -548,7 +548,7 @@ export function CutVideo({
  * blurred by `feather` output pixels; the image whole until its Matte is served (asked for again
  * every RETRY_MS), and without one.
  */
-export function CutImage({ src, matte, feather, children }: { src: string; matte: string | null; feather: number; children: ReactNode }) {
+export function MaskedImage({ src, matte, feather, children }: { src: string; matte: string | null; feather: number; children: ReactNode }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [ready, setReady] = useState(false);
   useEffect(() => {
@@ -563,7 +563,7 @@ export function CutImage({ src, matte, feather, children }: { src: string; matte
     const mask = document.createElement("canvas");
     const draw = () => {
       if (stopped || !picture.naturalWidth || !alpha.naturalWidth) return;
-      if (cut(picture, alpha, [alpha.naturalWidth, alpha.naturalHeight], element, mask, feather)) setReady(true);
+      if (drawMasked(picture, alpha, [alpha.naturalWidth, alpha.naturalHeight], element, mask, feather)) setReady(true);
     };
     const load = () => void (alpha.src = tries ? `${matte}?try=${tries}` : matte);
     picture.onload = draw;
@@ -637,12 +637,12 @@ function filledPanel(plan: RenderPlan): Panel {
 }
 
 /**
- * The Background under a cut-out Segment's picture, shown with the cut (`CutGroup`): its colour, its
+ * The Background under a cut-out Segment's picture, shown with the cut (`MaskGroup`): its colour, its
  * image covering the frame, or its crop of the picture drawn from the shown deck's master
  * (`master()`) on each of its frames,
  * shrunk and blurred as Blur's fill is.
  */
-export function CutBackdrop({
+export function MaskBackdrop({
   plan,
   view,
   masters,
@@ -686,7 +686,7 @@ export function CutBackdrop({
       }
     : { inset: 0 };
   return (
-    <div aria-hidden className="invisible absolute inset-0 overflow-hidden group-data-[cut]/cut:visible" style={filledStyle(view.colour, view.image)}>
+    <div aria-hidden className="invisible absolute inset-0 overflow-hidden group-data-[masked]/mask:visible" style={filledStyle(view.colour, view.image)}>
       {panel && (
         <canvas
           ref={canvas}

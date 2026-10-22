@@ -2,7 +2,7 @@ import { useContext, useEffect, useMemo, useRef, type RefObject } from "react";
 import type { MattePiece, RenderPlan, TransitionEvent } from "../../../api";
 import { PanelView } from "./ClipPreview";
 import { DecksGraded } from "./GradeFilters";
-import { backdropView, CutBackdrop, CutGroup, DeckMatte, PreviewMattes } from "./MatteCut";
+import { backdropView, MaskBackdrop, MaskGroup, DeckMatte, PreviewMattes } from "./MatteMask";
 import { BehindOverlays, coversFrame } from "./PreviewOverlays";
 import { MAX_DRIFT_SECS } from "./follow";
 import { slotView } from "./picture";
@@ -28,7 +28,7 @@ const UNSTYLED: TransitionLook = { outgoing: {}, incoming: {}, veil: {} };
  * under it and a veil over both; the ghost's sound (times its own fades) gives way to the incoming
  * one's along the Transition's sound (transitionSound.ts, the incoming side's in PreviewMusic and
  * PreviewSegments). Near the render's look, not the same. A cut-out Segment's ghost is cut by its own
- * Matte (`mattes`, the Preview Plan's pieces of the Source; MatteCut.tsx), over its own Background; a
+ * Matte (`mattes`, the Preview Plan's pieces of the Source; MatteMask.tsx), over its own Background; a
  * reversed one's by its reversed Matte copy, and a video's by its item's (`PreviewMattes`).
  */
 export function PreviewTransitions({
@@ -175,7 +175,7 @@ function Ghost({
       {...slotView(scene, slot)}
       playback={ghost}
       muted={slot > 0}
-      cut={removal ? { matte, feather: removal.feather } : null}
+      mask={removal ? { matte, feather: removal.feather } : null}
     />
   );
 
@@ -200,9 +200,9 @@ function Ghost({
         ) : (
           // In its Segment's Grade and Video Effects, as the decks draw it (MediaSegment and CopiedSourceSegment
           // draw their own); cut out, over its Background.
-          <CutGroup mattes={removal ? [matte] : []} playback={ghost} cutNow={() => !!removal} shownMatte={() => matte}>
+          <MaskGroup mattes={removal ? [matte] : []} playback={ghost} maskNow={() => !!removal} shownMatte={() => matte}>
             {removal && scene && (
-              <CutBackdrop
+              <MaskBackdrop
                 plan={plan}
                 view={backdropView(plan, scene.layout === "manual" ? slotView(scene, 0) : null, segment.background)}
                 masters={masters}
@@ -211,16 +211,16 @@ function Ghost({
               />
             )}
             {/* The Behind Overlays (ADR 0015), in the Clip's time: the ghost crossfades with them. */}
-            {removal && <BehindOverlays plan={plan} playback={playback} className="invisible group-data-[cut]/cut:visible" />}
-            <DecksGraded grade={segment.grade} effects={segment.video_effects} start={segment.start} className="group-data-[cut]/cut:!bg-transparent">
+            {removal && <BehindOverlays plan={plan} playback={playback} className="invisible group-data-[masked]/mask:visible" />}
+            <DecksGraded grade={segment.grade} effects={segment.video_effects} start={segment.start} className="group-data-[masked]/mask:!bg-transparent">
               {ghostPanel(master, 0)}
               {/* Over a Manual Scene's Background its picture doesn't cover, under its picture. */}
               {scene?.layout === "manual" && !coversFrame(scene.picture, plan) && (
-                <BehindOverlays plan={plan} playback={playback} className="group-data-[cut]/cut:invisible" />
+                <BehindOverlays plan={plan} playback={playback} className="group-data-[masked]/mask:invisible" />
               )}
               {ghostPanel(follower, 1)}
             </DecksGraded>
-          </CutGroup>
+          </MaskGroup>
         )}
       </div>
       <div ref={veil} aria-hidden className="pointer-events-none absolute inset-0" style={{ opacity: 0 }} />
