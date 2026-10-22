@@ -139,6 +139,37 @@ def test_an_image_of_another_aspect_covers_the_frame_behind_a_cut_out_segment(cl
     assert red[0] > 200 and red[1] < 40, red
 
 
+def test_a_cut_out_segments_colour_and_image_fill_a_canvas_of_another_aspect(client, settings, backdrops):
+    # On a 16:9 and a 1:1 Canvas (ADR 0022), the Background fills the Canvas, not a 1080x1920 frame.
+    image = uploaded(client, backdrops["halves"], "halves.png")
+    job = reviewed(client)
+    first, second = ranges(job, ("halo", "kabar"), ("kita", "soal"))
+
+    # 16:9 in Track: the 16:9 Source whole, 3x (the disc's radius 210 about 960, 540); teal outside it.
+    wide = add(client, job, "halo", "ya")
+    teal = {"kind": "colour", "colour": "#008080"}
+    saved = patch(client, job, wide, aspect="16:9", layout="track", segments=[cut_out(first) | {"background": teal}, second])
+    settled(client, job, saved)
+    frame = pixels_of(settings, Path(saved_frame(client, job, saved, at=0.5)["path"]))
+    assert frame.shape[:2] == (1080, 1920)
+    red = patch_mean(frame, 520, 940)
+    assert red[0] > 200 and red[1] < 40, red
+    for y, x in ((20, 20), (20, 1860), (1020, 20), (1020, 1860), (520, 1500)):
+        assert close(patch_mean(frame, y, x), (0, 128, 128)), (y, x, patch_mean(frame, y, x))
+
+    # 1:1 in Track: 400x200 covers 1080x1080 at 5.4x, centred: blue on the left half, lime on the
+    # right, top to bottom; the disc (radius 210 about 540, 540) over it.
+    square = add(client, job, "halo", "ya")
+    saved = patch(client, job, square, aspect="1:1", layout="track", segments=[cut_out(first) | {"background": {"kind": "image", "image": image["id"]}}, second])
+    settled(client, job, saved)
+    frame = pixels_of(settings, Path(saved_frame(client, job, saved, at=0.5)["path"]))
+    assert frame.shape[:2] == (1080, 1080)
+    for y in (20, 1020):
+        assert close(patch_mean(frame, y, 20), (0, 0, 255)) and close(patch_mean(frame, y, 1020), (0, 255, 0)), (patch_mean(frame, y, 20), patch_mean(frame, y, 1020))
+    red = patch_mean(frame, 520, 520)
+    assert red[0] > 200 and red[1] < 40, red
+
+
 def test_a_manual_framings_image_background_shows_where_the_picture_doesnt_cover(client, settings, backdrops):
     image = uploaded(client, backdrops["halves"], "halves.png")
     job = reviewed(client)

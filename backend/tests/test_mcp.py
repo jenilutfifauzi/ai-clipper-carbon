@@ -815,7 +815,7 @@ async def test_a_video_segments_framing_is_merged_field_by_field(mcp, tmp_path):
     merged = await call(mcp, "merge_candidate_items", **ids, segments=[{"id": "v", "framing": {"background": {"kind": "colour", "colour": "#112233"}}}])
     framing = merged["segments"][1]["framing"]
     assert (framing["transform"]["scale"], framing["transform"]["rotation"]) == (0.5, 90)
-    assert framing["background"] == {"kind": "colour", "colour": "#112233"}
+    assert framing["background"] == {"kind": "colour", "colour": "#112233", "image": None}
     assert "framing" in await fails(mcp, "merge_candidate_items", **ids, segments=[{"id": "e", "framing": {"transform": {"scale": 2}}}])
 
     # The dry run gives the video's Scene its picture as resolved, as an Overlay's: 540x304 turned a quarter.
