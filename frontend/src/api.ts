@@ -36,6 +36,15 @@ export interface TemplateInfo {
   default: boolean;
 }
 
+// What applying a Template made of one Candidate (backend/app/api.py's AppliedTemplate): its Revision
+// (the one it is at, on a dry run), its edits, and what the owner is told.
+export interface AppliedTemplate {
+  candidate_id: string;
+  revision: number;
+  edits: CandidateChange;
+  notices: string[];
+}
+
 export interface JobWarning {
   stage: JobStatus;
   message: string;
@@ -1834,6 +1843,10 @@ export const api = {
   // Make a Template the default for new Jobs, or with null, have none.
   useTemplateAsDefault: (templateId: string | null) =>
     request<{ template_id: string | null }>("/templates/default", { method: "PUT", body: JSON.stringify({ template_id: templateId }) }),
+  // Applies a Template (null: "No Template", taking Template items off) to these Candidates, all of
+  // them or none (409 unless the Job is in review or rendering); with dry_run, nothing is saved.
+  applyTemplate: (jobId: string, body: { template_id: string | null; candidate_ids: string[]; dry_run: boolean }) =>
+    request<{ candidates: AppliedTemplate[] }>(`/jobs/${jobId}/templates/apply`, { method: "POST", body: JSON.stringify(body) }),
   // Every Audio Effect an item's stack can name, by group and order.
   listAudioEffects: () => request<AudioEffectKind[]>("/audio-effects"),
   listVideoEffects: () => request<VideoEffectKind[]>("/video-effects"),
