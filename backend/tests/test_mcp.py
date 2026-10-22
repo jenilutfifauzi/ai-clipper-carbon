@@ -68,7 +68,9 @@ KITA_SOAL = (1.6, 2.6)
 # Raised from 89_000 for Background removal (background-removal/02): `segments[].background_removal` in
 # edit_candidate's and merge_candidate_items' schemas, and wait_for_matte (90_592); what it does is in
 # the server's instructions.
-TOOLS_BUDGET_BYTES = 91_000
+# Raised from 91_000 for a Segment's Background (background-removal/04): `segments[].background` and
+# the image kind of every Background in edit_candidate's and merge_candidate_items' schemas (91_504).
+TOOLS_BUDGET_BYTES = 92_000
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

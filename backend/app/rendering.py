@@ -389,7 +389,7 @@ def candidate_plan(
             id=segment.id,
             speed=played.speed, reverse=played.reverse, hold=played.hold, pitch=segment.pitch,
             fade_in=segment.fade_in, fade_out=segment.fade_out, muted=segment.muted, grade=segment.grade, audio_effects=segment.audio_effects,
-            video_effects=segment.video_effects, background_removal=segment.background_removal,
+            video_effects=segment.video_effects, background_removal=segment.background_removal, background=segment.background,
             analysed=(start, end),
         ))
     return plan_render(candidate.start, candidate.end, source, main_track=inputs, **common)
@@ -413,13 +413,15 @@ def played_files(
     ffmpeg: Path,
     progress: Callable[[int], Callable[[float], None]] = lambda count: lambda done: None,
 ) -> tuple[RenderPlan, dict[str, Path]]:
-    """The plan as the renderer reads it and the files of the Media Library items it plays, by id: a
+    """The plan as the renderer reads it and the files of the Media Library items it plays (and the
+    images its Backgrounds show), by id: a
     reversed Segment or Overlay reads its full-size Retimed copy (`read_from_copies`), made now if it
     isn't there, with the progress `progress` gives for one of the plan's `count` copies."""
     used = (
         {event.media for event in plan.audio if event.media}
         | {segment.media for segment in plan.segments if segment.media}
         | {overlay.media for overlay in plan.overlays}
+        | backdrop_images(plan)
     )
     files = {media_id: media.file(media_id) for media_id in used}
     count = sum(1 for segment in plan.segments if segment.reverse and segment.hold is None) + sum(
@@ -428,6 +430,14 @@ def played_files(
     return read_from_copies(plan, files, lambda media_id, played: (
         media.retimed(media_id) if media_id is not None else source_copies(job_dir, source)
     ).make(ffmpeg, CopySize.FULL, Retime(played.start, played.end), progress(count)))
+
+
+def backdrop_images(plan: RenderPlan) -> set[str]:
+    """The Media Library images the plan's Backgrounds show (docs/adr/0015): its Scenes' (a Framing's)
+    and its cut-out Segments'."""
+    return {scene.image for scene in plan.scenes if scene.image} | {
+        segment.background.image for segment in plan.segments if segment.background is not None and segment.background.image
+    }
 
 
 class MediaFinder(Protocol):

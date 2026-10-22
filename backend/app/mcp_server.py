@@ -373,6 +373,9 @@ Edits:
   keeps only the speaker, over their own picture blurred, in any Layout (null: off). Its Matte is
   made in the background (the person model first: download_person_model); a render makes what is
   missing, and fails on a failed one. wait_for_matte follows it. The dry run lists it, feather as drawn.
+  Its `background` {{kind "blur"|"colour"|"image", colour, image (a Media Library image id)}} shows
+  behind it while cut out (null: its picture blurred; in Blur it replaces the fill); listed so too.
+  A Framing's `background` takes the image kind too, covering the frame. A used image can't be deleted.
 - An Adjustment Layer's `video_effects`: the same stack over what its Grade covers, after it, mixed
   by its strength and fades (its grade may be neutral); sizes as a Segment's. Merged and listed as
   a Segment's. A keyed Overlay shows the effects it would unkeyed at the same scale.
@@ -1305,6 +1308,7 @@ def _plan_view(
                 "copy": ("ready" if copied(segment) else "made by the render") if segment["reverse"] else None,
                 "grade": _grade_view(segment["grade"]), "video_effects": _effects_view(segment.get("video_effects", [])),
                 "background_removal": segment.get("background_removal"),
+                "background": _background_view(segment.get("background")),
                 "words_status": preview["words_status"].get(segment["id"]), "words_error": preview["words_errors"].get(segment["id"]),
             })
             for segment in plan["segments"]
@@ -1375,6 +1379,13 @@ def _effects_view(stack: list[dict]) -> list[dict] | None:
     """An item's planned Audio or Video Effects as an agent reads them, in order, each its id and
     settings (the plan's are the enabled ones, a Video Effect's sizes as drawn); None for none."""
     return [{"id": applied["id"], "params": applied["params"]} for applied in stack] or None
+
+
+def _background_view(background: dict | None) -> dict | None:
+    """A cut-out Segment's Background in force, as the dry run lists it: its kind and what it shows."""
+    if background is None:
+        return None
+    return {"kind": background["kind"], **({"colour": background["colour"]} if background["kind"] == "colour" else {}), **_compact({"image": background.get("image")})}
 
 
 def _grade_view(grade: dict) -> dict | None:

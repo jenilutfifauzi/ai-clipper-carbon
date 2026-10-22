@@ -209,7 +209,8 @@ def update(
         episode.check_length(segments, transitions)
         # The hull of the Source they play, snapped to Words; one Segment of it played as it was
         # filmed is a plain range (one at a Speed, faded, Muted, graded, with Audio or Video Effects
-        # (even all off, which are kept), cut out, or at a volume or Keyframes of its own, is kept as its Segment).
+        # (even all off, which are kept), cut out or with a Background, or at a volume or Keyframes of
+        # its own, is kept as its Segment).
         shown = [segment for segment in segments if segment.media is None and segment.hold is None]
         start, end = min(s.start for s in shown), max(s.end for s in shown)
         [first, *more] = segments
@@ -217,6 +218,7 @@ def update(
         plain = (
             first.volume == 1 and not first.keys and not (first.fade_in or first.fade_out) and not first.muted and first.grade.neutral
             and not first.audio_effects and not first.video_effects and first.background_removal is None
+            and first.background is None
         )
         if not more and as_filmed and plain:
             segments = []

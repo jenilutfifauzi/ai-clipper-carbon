@@ -329,8 +329,10 @@ class SegmentInput:
     audio_effects: list[AudioEffect] = field(default_factory=list)
     # Its frame's Video Effects (docs/adr/0014), checked, in order; the plan keeps the enabled ones.
     video_effects: list[VideoEffect] = field(default_factory=list)
-    # Its Background removal (docs/adr/0015), as given: its feather at the picture's fitted size.
+    # Its Background removal (docs/adr/0015), as given: its feather at the picture's fitted size; and
+    # a Source Segment's own Background, used only with it (None: the picture blurred).
     background_removal: BackgroundRemoval | None = None
+    background: Background | None = None
 
     @property
     def time(self) -> SegmentTime:
@@ -430,11 +432,13 @@ class ScenePlan:
     # none for a colour.
     panels: list[Panel]
     # A media Segment's or a Manual Scene's: its one picture, drawn over its panels, or over `colour`
-    # without any.
+    # without any, or over `image` (a Media Library image's id, covering the frame, docs/adr/0015).
     picture: "Picture | None" = None
     colour: str | None = None
     # The Framing that draws its first frame (`_first_framing`): what a switch to Manual starts from.
     framing: Framing | None = None
+    # A Framing's image Background (docs/adr/0015): the Media Library image's id, covering the frame.
+    image: str | None = None
     # A Manual Scene of a Layout Override's: where its Keyframes count from (`_keyed_manual`), in
     # seconds into the Clip (before the Scene, where it is shown from part way into its shot), and
     # those of them past its shot's end, which it never reaches, in seconds into the Clip too.
@@ -1215,8 +1219,8 @@ def plan_render(
 def _cut_out(given: SegmentInput, framing: Framing | None, duration: float) -> dict:
     """A Source Segment's Background removal as its SegmentPlan carries it (docs/adr/0015): its
     feather times its picture's scale (`overlay_scale`: a Manual Candidate's Framing's; 1 in Track,
-    Split and Blur, whose pictures fill their panels), the Background in force (the picture blurred)
-    and the pieces of the Source's Matte (`duration` long) its range reads. Nothing without one, and
+    Split and Blur, whose pictures fill their panels), the Background in force (its own, else the
+    picture blurred) and the pieces of the Source's Matte (`duration` long) its range reads. Nothing without one, and
     for now nothing for a media Segment's."""
     removal = given.background_removal
     if removal is None or given.media is not None:
@@ -1225,7 +1229,7 @@ def _cut_out(given: SegmentInput, framing: Framing | None, duration: float) -> d
     end = given.start if given.hold is not None else given.end
     return {
         "background_removal": replace(removal, feather=round(removal.feather * scale, 3)),
-        "background": Background(),
+        "background": given.background or Background(),
         "matte": matte_pieces(given.start, end, duration),
     }
 
@@ -1555,10 +1559,13 @@ def framed_scene(start: float, end: float, layout: SceneLayout, width: int, heig
     """A Scene from `start` to `end` of a `width` x `height` picture (a media Segment's video, or the
     Source in a Manual Scene) placed by its `framing`, which it carries: the
     picture (`picture_of`) over its Background, which is the largest 9:16 crop from the middle of what
-    its Crop keeps, blurred, filling the frame (as Blur's background is), or its colour."""
+    its Crop keeps, blurred, filling the frame (as Blur's background is), its colour, or its image
+    covering the frame."""
     picture = picture_of(width, height, framing.transform, framing.crop)
     if framing.background.kind is BackgroundKind.COLOUR:
         return ScenePlan(start, end, layout, [], picture, framing.background.colour, framing)
+    if framing.background.kind is BackgroundKind.IMAGE:
+        return ScenePlan(start, end, layout, [], picture, framing=framing, image=framing.background.image)
     cropped, cover = picture.crop, _filled(picture.crop.width, picture.crop.height, start)
     point = replace(cover.path[0], x=cover.path[0].x + cropped.x, y=cover.path[0].y + cropped.y)
     return ScenePlan(start, end, layout, [replace(cover, path=[point], blur=True)], picture, framing=framing)
@@ -1576,7 +1583,7 @@ def keyed_scene(scene: ScenePlan, transform: Transform, keys: Keys, start: float
         return scene
     count = math.ceil((scene.end - scene.start) * fps - 1e-6)
     if all(covers(picture_at(picture, scene.start + n / fps)) for n in range(count)):
-        return replace(scene, picture=picture, panels=[], colour=None)
+        return replace(scene, picture=picture, panels=[], colour=None, image=None)
     return replace(scene, picture=picture)
 
 

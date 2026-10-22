@@ -46,9 +46,10 @@ area at its opacity and laid over the joined frames before the captions are burn
 A Clip cut into several Segments (docs/adr/0002-segments-and-timeline-time.md) reads each Segment
 as its own input, cut from the Source like a one-range Clip (or from its Media Library video); each
 is drawn as above, in its own Scenes, and the Segments' frames and sounds are joined back to back
-(concat). A video's Segment is one Scene of one picture: its Background (the blurred cover panel, or
-its colour) and then its Picture over it, as Overlays are drawn, only the part on the frame of it
-scaled (so a video zoomed in is never scaled past the frame). A Manual Scene of the Source is drawn
+(concat). A video's Segment is one Scene of one picture: its Background (the blurred cover panel, its
+colour, or its image read by a `movie` source and covering the frame) and then its Picture over it,
+as Overlays are drawn, only the part on the frame of it scaled (so a video zoomed in is never scaled
+past the frame). A Manual Scene of the Source is drawn
 the same way from its own frames. With videos among them (or a Segment's own volume, or fades),
 each Segment's sound is set to its volume (a Source Segment's also at the Clip's own) and faded in
 and out (linear `afade`s from its start on the Timeline, a Transition's overlap included, which the
@@ -76,8 +77,8 @@ reads, after every other input (`_matte_inputs`). Its picture is drawn in its Sc
 Segment's; its Matte is drawn through the same Scenes (the same crops, scales, flips and placing, at
 the Source's size, Blur's fill left out), feathered by a blur and joined to the picture as its alpha;
 that is graded and drawn through its Video Effects, so they touch only what is kept, and laid over
-its Background (the picture blurred over the whole frame; a Manual Scene's Framing's Background), all
-before the joins (`_cut_out`). Without one, the command is as it was.
+its Background (its own colour or image, else the picture blurred over the whole frame; a Manual
+Scene's Framing's Background), all before the joins (`_cut_out`). Without one, the command is as it was.
 
 Overlays are more inputs (a video read from its offset for as long as it shows, or an image), each
 drawn as its Picture (`_picture`: cropped, scaled, flipped, rounded and bordered, turned with a
@@ -137,7 +138,7 @@ from typing import Literal, NamedTuple
 
 import numpy as np
 
-from app.ass import ass_alpha, ass_filter, ass_text, ass_time, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
+from app.ass import ass_alpha, ass_filter, ass_text, filter_value, ass_time, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
 from app.audio_effects import MEASURED_GAIN, NORMALIZE, effect_chain, normalize_gain
 from app.config import FONTS_DIR, RenderTuning
 from app.encoding import AUDIO_KBPS, Codec, ExportSettings, encoder_args, output_size
@@ -542,7 +543,7 @@ class Renderer:
         picture_inputs, written = _layer_inputs(plan, pictures or {}, before_music + songs + len(layered) + len(drawn), feeds)
         given = [*sources, *([] if logo is None else ["-i", str(logo)]), *inputs, *layers, *scene_inputs, *picture_inputs]
         matte_inputs, matted = _matte_inputs(plan, mattes or {}, given.count("-i"))
-        frame = _segmented(plan, tuning, drawn, matted) if plan.segments else _scenes(plan, tuning, keyed=drawn)
+        frame = _segmented(plan, tuning, drawn, matted, files or {}) if plan.segments else _scenes(plan, tuning, keyed=drawn, images=files or {})
         poster_at = min(tuning.poster_secs, plan.duration / 2)
         joined = "[frame]"
         if graded := grade_filters(plan.grade):
@@ -918,11 +919,14 @@ def _crossed(plan: RenderPlan, transition: TransitionEvent, outgoing: str, incom
     return chains
 
 
-def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | None = None, matted: dict[int, int] | None = None) -> str:
+def _segmented(
+    plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | None = None, matted: dict[int, int] | None = None,
+    images: dict[str, Path] | None = None,
+) -> str:
     """The filtergraph that draws a Clip of several Segments into [frame]: each Segment from its own
     input, its Scenes drawn as _scenes draws a Clip's (in seconds into the Segment; a Freeze frame's
-    from its first frame, held), then graded (docs/adr/0013) and drawn through its Video Effects
-    (docs/adr/0014), and the Segments joined back to back.
+    from its first frame, held; an image Background from its file in `images`), then graded
+    (docs/adr/0013) and drawn through its Video Effects (docs/adr/0014), and the Segments joined back to back.
     A keyed Scene's picture is the input `drawn` gives by its place among the plan's Scenes, from
     its frame process. A cut-out Segment (docs/adr/0015) is drawn by `_cut_out`, its Matte from the
     input `matted` gives by its place among the plan's Segments."""
@@ -945,7 +949,7 @@ def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | N
             offset, span = _matte_read(plan, segment)
             # Its frames from the same time of the Source as the picture's, at the same times.
             read = f"[{matte}:v]trim=start={max(0.0, offset - 1e-4):.6f}:duration={span:.3f},setpts=PTS-{offset:.6f}/TB,"
-            chains += _cut_out(plan, tuning, segment, scenes, given, f"{read}{timing}", f"g{i}", keyed)
+            chains += _cut_out(plan, tuning, segment, scenes, given, f"{read}{timing}", f"g{i}", keyed, images or {})
             continue
         # Its Grade, then its Video Effects (docs/adr/0014), over its whole frame, before the joins,
         # so that a Transition blends pictures that carry them.
@@ -953,7 +957,7 @@ def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | N
             *filter(None, [grade_filters(segment.grade)]), *video_effect_chain(segment.video_effects, (plan.width, plan.height), label=f"g{i}fx"),
         ])
         drawn_to = f"[g{i}u]" if graded else f"[g{i}]"
-        chains.append(_scenes(plan, tuning, scenes, given, drawn_to, f"g{i}s", segment.start, keyed))
+        chains.append(_scenes(plan, tuning, scenes, given, drawn_to, f"g{i}s", segment.start, keyed, images=images))
         if graded:
             chains.append(f"{drawn_to}{graded}[g{i}]")
     count = len(plan.segments)
@@ -974,7 +978,7 @@ def _segmented(plan: RenderPlan, tuning: RenderTuning, drawn: dict[int, int] | N
 
 def _cut_out(
     plan: RenderPlan, tuning: RenderTuning, segment: SegmentPlan, scenes: list[ScenePlan], given: str, matte: str, name: str,
-    keyed: dict[int, int],
+    keyed: dict[int, int], images: dict[str, Path],
 ) -> list[str]:
     """Filters that draw a cut-out Segment (docs/adr/0015) into [`name`] from its frames `given` and its
     Matte's `matte` (each a link label, then the filters that time it, the same for both): its picture,
@@ -997,39 +1001,66 @@ def _cut_out(
         ),
         f"[{name}t]{','.join(['format=gray', *feather])}[{name}m]",
         f"[{name}p][{name}m]{','.join(['alphamerge', *filter(None, [graded]), *effects])}[{name}c]",
-        _scenes(plan, tuning, scenes, f"[{name}w]", f"[{name}b]", f"{name}u", segment.start, draw=partial(_backdrop_scene, background=segment.background)),
+        _scenes(
+            plan, tuning, scenes, f"[{name}w]", f"[{name}b]", f"{name}u", segment.start, images=images,
+            draw=partial(_backdrop_scene, background=segment.background),
+        ),
         f"[{name}b][{name}c]overlay=0:0[{name}]",
     ]
 
 
-def _matte_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, keyed: int | None = None) -> str:
+def _matte_scene(
+    plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, keyed: int | None = None,
+    images: dict[str, Path] | None = None,
+) -> str:
     """Filters that draw a Scene's Matte from the Matte's frames `given` (at the Source's size) into
     `out`, as `_scene` draws its picture: the same panels, crops and scales, Blur's blurred fill left
     out; a Scene of one picture placed as it is, over black. Black where the picture isn't."""
     if scene.picture is not None:
-        return _scene(plan, replace(scene, panels=[], colour="#000000"), name, given, out, tuning)
+        return _scene(plan, replace(scene, panels=[], colour="#000000", image=None), name, given, out, tuning)
     return _scene(plan, replace(scene, panels=[panel for panel in scene.panels if not panel.blur]), name, given, out, tuning)
 
 
 def _backdrop_scene(
     plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, keyed: int | None = None,
-    background: Background | None = None,
+    images: dict[str, Path] | None = None, background: Background | None = None,
 ) -> str:
     """Filters that draw what shows where a cut-out Scene's Matte takes the picture away, from its
     frames `given` into `out`: a Scene of one picture (a Manual one's) its Framing's Background (its
-    blurred cover panel, or its colour); any other the Segment's `background`, the picture blurred
-    over the whole frame (a colour, of its colour), which in Blur replaces the Layout's fill."""
+    blurred cover panel, its colour or its image); any other the Segment's `background`, the picture
+    blurred over the whole frame (a colour, of its colour; an image, its file in `images` covering
+    the frame), which in Blur replaces the Layout's fill."""
+    image = None
     if scene.picture is not None:
-        panels, colour = scene.panels[:1], scene.colour
+        panels, colour, image = scene.panels[:1], scene.colour, scene.image
     elif background is not None and background.kind is BackgroundKind.COLOUR:
         panels, colour = [], background.colour
+    elif background is not None and background.kind is BackgroundKind.IMAGE:
+        panels, colour, image = [], None, background.image
     else:
         cover = filled(plan.source_width, plan.source_height, scene.start)
         panels, colour = [replace(cover, area=Box(0, 0, plan.width, plan.height), blur=True)], None
     if panels:
         return f"{given}{_panel(plan, scene, f'{name}p0', panels[0], tuning)}{_pad(plan, panels[0])}{out}"
+    return _plain(plan, given, out, name, colour, (images or {}).get(image) if image else None)
+
+
+def _plain(plan: RenderPlan, given: str, out: str, name: str, colour: str | None, image: Path | None = None) -> str:
+    """Filters that make a frame of `colour` (black when None) for each of the frames `given`, so that
+    it has their times, into `out`; with `image` (an image Background's file, docs/adr/0015), that
+    image over it, scaled to cover the frame and centred (its one frame repeated). Drawn in RGB:
+    drawbox writes a YUV colour as limited range whatever the frames' range, and a Clip's frames are
+    full range (its poster is a JPEG), so black would show as grey."""
     rgb = (colour or "#000000").removeprefix("#")
-    return f"{given}crop=2:2:0:0,format=rgb24,drawbox=c=0x{rgb}:t=fill,scale={plan.width}:{plan.height},setsar=1{out}"
+    frame = f"{given}crop=2:2:0:0,format=rgb24,drawbox=c=0x{rgb}:t=fill,scale={plan.width}:{plan.height},setsar=1"
+    if image is None:
+        return f"{frame}{out}"
+    size = f"{plan.width}:{plan.height}"
+    return (
+        f"{frame}[{name}k];movie={filter_value(str(image))},"
+        f"scale={size}:force_original_aspect_ratio=increase,crop={size},setsar=1[{name}i];"
+        f"[{name}k][{name}i]overlay=0:0:eof_action=repeat{out}"
+    )
 
 
 def _matte_inputs(plan: RenderPlan, mattes: dict[int, Path], first: int) -> tuple[list[str], dict[int, int]]:
@@ -1077,20 +1108,21 @@ def _scenes(
     offset: float = 0.0,
     keyed: dict[int, int] | None = None,
     draw: "Callable[..., str] | None" = None,
+    images: dict[str, Path] | None = None,
 ) -> str:
     """The filtergraph that draws the plan's Scenes (or `scenes`, starting `offset` seconds into the
     Clip) from `given` (by default [0:v]) into `out` (by default [frame]), its filters named from
     `prefix`. With several, the video is split into a branch per Scene, trimmed to it from half a
     frame before its first frame (so that rounding can't move a frame across a cut) and restarted at
     0 s, and the branches are concatenated. A Scene `keyed` (by its place among them) has its
-    picture drawn by the frame process whose frames are that input. Each Scene is drawn by `draw`
-    (`_scene`'s arguments; by default `_scene`): a cut-out Segment's Matte and Background are drawn
-    through its Scenes so."""
+    picture drawn by the frame process whose frames are that input; an image Background's file is
+    in `images`, by its id. Each Scene is drawn by `draw` (`_scene`'s arguments; by default `_scene`):
+    a cut-out Segment's Matte and Background are drawn through its Scenes so."""
     scenes = plan.scenes if scenes is None else scenes
     keyed = keyed or {}
     draw = draw or _scene
     if len(scenes) == 1:
-        return draw(plan, scenes[0], f"{prefix}0", given, out, tuning, keyed.get(0))
+        return draw(plan, scenes[0], f"{prefix}0", given, out, tuning, keyed.get(0), images=images)
     count = len(scenes)
     chains = [f"{given}split={count}" + "".join(f"[{prefix}{i}]" for i in range(count))]
     for i, scene in enumerate(scenes):
@@ -1102,22 +1134,25 @@ def _scenes(
         chains.append(
             draw(
                 plan, scene, f"{prefix}{i}", f"[{prefix}{i}]trim={':'.join(bounds)},setpts=PTS-STARTPTS,", f"[{prefix}v{i}]", tuning,
-                keyed.get(i),
+                keyed.get(i), images=images,
             )
         )
     chains.append("".join(f"[{prefix}v{i}]" for i in range(count)) + f"concat=n={count}:v=1:a=0{out}")
     return ";".join(chains)
 
 
-def _scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, keyed: int | None = None) -> str:
+def _scene(
+    plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, keyed: int | None = None,
+    images: dict[str, Path] | None = None,
+) -> str:
     """Filters that draw `scene` from the frames `given` (a link label, then any filters to start
     with) into the link `out`: its first panel, padded to the frame unless it fills it, then each
     other panel laid over it in its area; or, for a Scene of one picture, as `_framed_scene` draws it
     (a keyed one's picture from input `keyed`, as `_keyed_scene` does)."""
     if scene.picture is not None and keyed is not None:
-        return _keyed_scene(plan, scene, name, given, out, tuning, keyed)
+        return _keyed_scene(plan, scene, name, given, out, tuning, keyed, images)
     if scene.picture is not None:
-        return _framed_scene(plan, scene, name, given, out, tuning)
+        return _framed_scene(plan, scene, name, given, out, tuning, images)
     panels = scene.panels
     if len(panels) == 1:
         chains = [f"{given}{_panel(plan, scene, f'{name}p0', panels[0], tuning)}{_pad(plan, panels[0])}{out}"]
@@ -1134,11 +1169,13 @@ def _scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, 
     return ";".join(chains)
 
 
-def _framed_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning) -> str:
+def _framed_scene(
+    plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, images: dict[str, Path] | None = None,
+) -> str:
     """Filters that draw a Scene of one picture (a media Segment's, or a Manual Scene's of the Source)
     from the frames `given` into `out`: its Background, the blurred cover panel or a frame of its
-    colour (made from the frames themselves, so that it has their times), then the part of its
-    Picture on the frame over it. A picture that covers the frame hides its Background, which is
+    colour or its image (its file in `images`; `_plain`, made from the frames themselves, so that it
+    has their times), then the part of its Picture on the frame over it. A picture that covers the frame hides its Background, which is
     then not blurred."""
     assert scene.picture is not None
     picture = on_frame(scene.picture, (plan.width, plan.height))
@@ -1148,15 +1185,14 @@ def _framed_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out
         panel = scene.panels[0]
         chains.append(f"[{name}b]{_panel(plan, scene, f'{name}p0', panel, tuning)}{_pad(plan, panel)}[{name}l]")
     else:
-        colour = (scene.colour or "#000000").removeprefix("#")
-        # Drawn in RGB: drawbox writes a YUV colour as limited range whatever the frames' range,
-        # and a Clip's frames are full range (its poster is a JPEG), so black would show as grey.
-        chains.append(f"[{name}b]crop=2:2:0:0,format=rgb24,drawbox=c=0x{colour}:t=fill,scale={plan.width}:{plan.height},setsar=1[{name}l]")
+        chains.append(_plain(plan, f"[{name}b]", f"[{name}l]", name, scene.colour, _image(scene, images) if not covers else None))
     chains.append(_picture(picture, f"[{name}f]", f"[{name}l]", out, f"{name}q"))
     return ";".join(chains)
 
 
-def _keyed_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, index: int) -> str:
+def _keyed_scene(
+    plan: RenderPlan, scene: ScenePlan, name: str, given: str, out: str, tuning: RenderTuning, index: int, images: dict[str, Path] | None = None,
+) -> str:
     """Filters that draw a Scene of one keyed picture (a video Segment's or a Manual Scene's) from the frames `given`
     into `out`: its Background as `_framed_scene` draws it (none at all when the plan has left it
     out: the picture covers the frame throughout), from the frames brought to the Clip's frame rate
@@ -1167,10 +1203,14 @@ def _keyed_scene(plan: RenderPlan, scene: ScenePlan, name: str, given: str, out:
         panel = scene.panels[0]
         chains = [f"{timed}{_panel(plan, scene, f'{name}p0', panel, tuning)}{_pad(plan, panel)}[{name}l]"]
     else:
-        colour = (scene.colour or "#000000").removeprefix("#")
-        chains = [f"{timed}crop=2:2:0:0,format=rgb24,drawbox=c=0x{colour}:t=fill,scale={plan.width}:{plan.height},setsar=1[{name}l]"]
+        chains = [_plain(plan, timed, f"[{name}l]", name, scene.colour, _image(scene, images))]
     chains.append(f"[{index}:v]setpts=PTS-STARTPTS[{name}q];[{name}l][{name}q]overlay=0:0{out}")
     return ";".join(chains)
+
+
+def _image(scene: ScenePlan, images: dict[str, Path] | None) -> Path | None:
+    """The file of a Scene's image Background (docs/adr/0015) in `images`, if it has one."""
+    return (images or {}).get(scene.image) if scene.image else None
 
 
 def _panel(plan: RenderPlan, scene: ScenePlan, name: str, panel: Panel, tuning: RenderTuning) -> str:

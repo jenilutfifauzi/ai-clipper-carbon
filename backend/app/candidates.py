@@ -763,19 +763,30 @@ class AdjustmentLayer:
 
 class BackgroundKind(StrEnum):
     """What shows behind a Framing's picture: the picture itself, covering the frame, blurred and
-    darkened (as the Blur Layout's background is), or a colour."""
+    darkened (as the Blur Layout's background is), a colour, or an image of the Media Library filling
+    the frame (docs/adr/0015)."""
 
     BLUR = "blur"
     COLOUR = "colour"
+    IMAGE = "image"
 
 
 @dataclass(frozen=True)
 class Background:
     """What shows wherever a Framing's picture doesn't cover the frame, and behind it below its full
-    opacity: its `kind`, and its `colour` when that is a colour."""
+    opacity (or where Background removal takes it away): its `kind`, its `colour` when that is a
+    colour, and its `image` (a Media Library image's id) when that is an image, which covers the
+    1080x1920 frame, centred, with no Transform. The colour is kept when the kind changes, so that
+    changing back restores it; an image given at all is used (it can't be deleted), so the editor
+    drops it with its kind."""
 
     kind: BackgroundKind = BackgroundKind.BLUR
     colour: Colour = "#000000"
+    image: MediaId | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind is BackgroundKind.IMAGE and self.image is None:
+            raise ValueError("An image Background needs its image: the id of an image in the Media Library")
 
 
 class Subject(StrEnum):
@@ -890,8 +901,14 @@ class Segment:
     # Its Background removal (docs/adr/0015): only its subject kept by its Matte, after its crop, scale
     # and flips and before its Grade and Video Effects, over its Background. None (off) in one saved before it.
     background_removal: BackgroundRemoval | None = None
+    # A Segment of the Source's own Background (docs/adr/0015), shown where its Background removal
+    # takes the picture away, in any Layout (in Blur in place of its fill); unused while that is off.
+    # None: the picture blurred. A video's Segment has its Framing's.
+    background: Background | None = None
 
     def __post_init__(self) -> None:
+        if self.media is not None and self.background is not None:
+            raise ValueError(f"Segment {self.id} shows a video, whose Background is its framing's: only a Segment of the episode has its own")
         if self.media is None and (framed := next((name for name, keys in self.keys.items() if keys and name not in SOUND_KEYS), None)):
             raise ValueError(f"Segment {self.id} shows the episode, whose Layouts frame it: it has no {framed} Keyframes, only volume ones")
         if self.media is None and self.captions is not None:
@@ -1044,12 +1061,18 @@ class Candidate:
         return timeline_length(self.main_track(), self.transitions)
 
     def media_ids(self) -> set[str]:
-        """The Media Library items it uses."""
+        """The Media Library items it uses, its Backgrounds' images among them."""
         return (
             {clip.media for clip in self.music if clip.media}
             | {segment.media for segment in self.segments if segment.media}
             | {overlay.media for overlay in self.overlays}
+            | {image for _, background in self.backgrounds() if (image := background.image)}
         )
+
+    def backgrounds(self) -> Iterator[tuple[str, Background]]:
+        """Each Background it has (docs/adr/0007, 0015), with the part it is: its Framing's, its Layout
+        Overrides' and its Segments' (a video's Framing's, or the Source's own)."""
+        return backgrounds_of(self.framing, self.layout_overrides, self.segments)
 
     def grades(self) -> Iterator[tuple[str, Grade]]:
         """Each of its Grades, with the part it is."""
@@ -1093,6 +1116,22 @@ def grades_of(
         yield f"Overlay {overlay.id}", overlay.grade
     for layer in adjustment_layers:
         yield f"Adjustment Layer {layer.id}", layer.grade
+
+
+def backgrounds_of(
+    framing: Framing | None, overrides: Iterable[LayoutOverride], segments: Iterable[Segment]
+) -> Iterator[tuple[str, Background]]:
+    """Each Background of these parts of a Candidate (its own `framing`'s when given), with the part it is."""
+    if framing is not None:
+        yield "Its framing's background", framing.background
+    for override in overrides:
+        if override.framing is not None:
+            yield f"The Layout Override at {override.at:g} s's background", override.framing.background
+    for segment in segments:
+        if segment.framing is not None:
+            yield f"Segment {segment.id}'s framing's background", segment.framing.background
+        if segment.background is not None:
+            yield f"Segment {segment.id}'s background", segment.background
 
 
 def manual_candidate(id: str, start: float, end: float) -> Candidate:

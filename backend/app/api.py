@@ -50,6 +50,7 @@ from app.candidates import (
     Transition,
     Volume,
     WordEdit,
+    backgrounds_of,
     grades_of,
 )
 from app.caption_files import CaptionFormat, caption_file
@@ -2265,7 +2266,7 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
     """422 for an edit naming Media Library items that aren't there, or can't be used so: music must
     be a song or a video with sound, within its length at its Speed, a Segment a video, within its
     length, and an Overlay within its video's at its Speed, an image's having no Speed, Reverse nor
-    Audio Effects.
+    Audio Effects; a Background's image (docs/adr/0015) must be an image, even one not shown.
     (Music of the Source is kept within it by `review.update`.)"""
     for clip in body.music or []:
         if clip.media is None:
@@ -2298,6 +2299,12 @@ def _check_media_of(library: MediaStore, body: CandidateUpdate) -> None:
             raise HTTPException(422, f"Overlay {overlay.id} is an image: it has no Speed, pitch or Reverse")
         if overlay.audio_effects and item.kind is not MediaKind.VIDEO:
             raise HTTPException(422, f"Overlay {overlay.id} is an image, which has no sound: it has no audio effects")
+    for what, background in backgrounds_of(body.framing, body.layout_overrides or [], body.segments or []):
+        if background.image is None:
+            continue
+        item = library.find(background.image)
+        if item is None or item.kind is not MediaKind.IMAGE:
+            raise HTTPException(422, f"{what}: no image {background.image} in the Media Library")
 
 
 def _check_looks_of(body: CandidateUpdate) -> None:

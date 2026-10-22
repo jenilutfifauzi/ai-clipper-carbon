@@ -167,7 +167,7 @@ def test_media_segments_are_validated(client, clips):
     assert saved["segments"][0]["framing"] == {
         "transform": {"x": 540, "y": 960, "scale": 2, "stretch_x": 1, "stretch_y": 1, "rotation": 0, "flip_h": False, "flip_v": False, "opacity": 1},
         "crop": {"left": 0, "top": 0, "right": 0, "bottom": 0},
-        "background": {"kind": "colour", "colour": "#12ABEF"},
+        "background": {"kind": "colour", "colour": "#12ABEF", "image": None},
     }
     assert saved["segments"][1]["framing"] is None
     assert (saved["start"], saved["end"]) == (saved["segments"][1]["start"], saved["segments"][1]["end"])
