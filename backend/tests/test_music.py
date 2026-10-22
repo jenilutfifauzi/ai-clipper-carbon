@@ -97,7 +97,10 @@ def test_music_is_saved_validated_and_mixed_into_the_render(client, settings, vi
     # The song can't be deleted while the Candidate uses it.
     refused = client.delete(f"/api/media/{item['id']}")
     assert refused.status_code == 409
-    assert refused.json()["detail"]["uses"] == [{"job_id": job["id"], "candidate_id": candidate["id"], "title": candidate["title"] or f"Clip {candidate['id']}"}]
+    assert refused.json()["detail"]["uses"] == [{
+        "kind": "candidate", "job_id": job["id"], "candidate_id": candidate["id"], "template_id": None,
+        "title": candidate["title"] or f"Clip {candidate['id']}",
+    }]
 
     render(client, job)
     [output] = rendered(client, job)["clips"]

@@ -73,7 +73,12 @@ KITA_SOAL = (1.6, 2.6)
 # the server's instructions.
 # Raised for a Segment's Background (background-removal/04): `segments[].background` and
 # the image kind of every Background in edit_candidate's and merge_candidate_items' schemas (92_962 with all).
-TOOLS_BUDGET_BYTES = 93_500
+# Raised for Templates (templates/01, 03, 08): the Template mark (`template`) on every layer, Segment,
+# Transition, Word Edit and Cue Edit in edit_candidate's and merge_candidate_items' schemas, kind
+# "template" and a Template's {name, job_id, candidate_id, anchors} in the presets tools,
+# apply_template, and JobOptions' `template` in both create_job tools; the rest is in the instructions.
+# 97_949 with Canvas Aspects, Background removal and Templates all in (merged).
+TOOLS_BUDGET_BYTES = 98_500
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -1150,7 +1155,7 @@ async def test_every_transition_kind_is_taken_and_the_dry_run_lists_the_transiti
         [event] = plan["transitions"]
         assert event == {"after": "a", "kind": kind, "start": event["start"], "end": pytest.approx(event["start"] + 0.2), "sound": "linear", "strength": None, "colour": None} and event["start"] > 0, event
     edited = await call(mcp, "merge_candidate_items", **ids, segments=segments, transitions=[{"after": "a", "kind": "coverleft", "secs": 3}])
-    assert edited["transitions"] == [{"after": "a", "kind": "coverleft", "secs": 3, "sound": "linear", "strength": None, "colour": None}]
+    assert edited["transitions"] == [{"after": "a", "kind": "coverleft", "secs": 3, "sound": "linear", "strength": None, "colour": None, "template": None}]
     assert "less than or equal to 3" in await fails(mcp, "merge_candidate_items", **ids, transitions=[{"after": "a", "secs": 3.5}])
 
     # The instructions name each group with its kinds, and how long a Transition can be.

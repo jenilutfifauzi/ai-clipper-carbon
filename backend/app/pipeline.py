@@ -7,7 +7,7 @@ import hashlib
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 
@@ -15,13 +15,15 @@ from app.audio import WINDOW_AUDIO_MIME_TYPE, SileroVad, chunks, window_audio
 from app.candidates import Candidate
 from app.config import LlmChoice, Settings
 from app.fewshot import FEWSHOT_DIR, few_shot_examples
-from app.jobs import TRANSCRIPT_FILE, Job, JobConflict, JobStatus, JobStore, JobWarning, QuotaWait
+from app.jobs import DEFAULT_TEMPLATE, TRANSCRIPT_FILE, Job, JobConflict, JobStatus, JobStore, JobWarning, QuotaWait
 from app.llm import DetailResponse, Llm, LlmRequest, Overloaded, PacedLlm, QuotaExceeded, ScoreResponse
+from app.media import MEDIA_DIR, MediaStore
 from app.ports import Ports
 from app.preview import make_preview, unplayable
 from app.prompts import PROMPT_VERSION
-from app.review import keep_reviewed
+from app.review import Episode, keep_reviewed
 from app.selection import select
+from app.templates import TEMPLATES_FILE, TemplateStore, branded
 from app.transcriber import TranscriptionStalled, Watchdog
 from app.transcript import Transcript, parse_json3
 from app.video_source import Source, UploadVideoSource
@@ -35,10 +37,18 @@ DOWNLOAD_HINT = "If YouTube changed something, updating the downloader may fix i
 
 
 class Pipeline:
-    def __init__(self, store: JobStore, ports: Ports, settings: Settings) -> None:
+    def __init__(
+        self, store: JobStore, ports: Ports, settings: Settings, templates: TemplateStore | None = None,
+        lengths: Callable[[], Mapping[str, float]] | None = None,
+    ) -> None:
+        """`templates`: the owner's Templates, of which each Job's new Candidates get its own (those
+        in the data directory by default); `lengths`: the Media Library's songs' and videos' lengths,
+        which a Template's stop at (the data directory's by default)."""
         self.store = store
         self.ports = ports
         self.settings = settings
+        self.templates = templates or TemplateStore(settings.data_dir / TEMPLATES_FILE)
+        self.lengths = lengths or MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin).lengths
         self.llm = PacedLlm(ports.llm, settings.quota.request_interval_secs)
         # The Video Source of uploaded Jobs. It only reads the stored file, so tests use it as it is.
         self.uploads = UploadVideoSource(settings)
@@ -308,9 +318,26 @@ class Pipeline:
             )
             job = self.store.update(job.id, warnings=[*self.store.get(job.id).warnings, warning])
 
+        # Its new Candidates get the Job's Template before they are first saved; when that was
+        # deleted, they are plain and the Job is told. A Job made outside the API and MCP (the CLI's,
+        # the eval's) still asks for the default: it is resolved now, and kept for its later Candidates.
+        fresh = selection.candidates
+        if job.options.template == DEFAULT_TEMPLATE:
+            job = self.store.update(job.id, options=self.templates.for_new_job(job.options))
+        template, notices = self.templates.for_new_candidates(job.options.template)
+        if template is not None:
+            metadata = job.source.metadata
+            episode = Episode(
+                transcript, metadata.duration, job.options.max_secs, self.settings.selection, job.options.aspect, (metadata.width, metadata.height)
+            )
+            fresh = branded(template, fresh, episode, self.lengths())
+        if notices:
+            told = [JobWarning(JobStatus.ANALYZING, notice) for notice in notices]
+            job = self.store.update(job.id, warnings=[*self.store.get(job.id).warnings, *told])
+
         def keep(_: Job, previous: list[Candidate]) -> tuple[list[Candidate], int]:
             # A Job analyzed again (`make reanalyze`, the eval) keeps the owner's review work.
-            return keep_reviewed(previous, selection.candidates, transcript), sum(c.reviewed for c in previous)
+            return keep_reviewed(previous, fresh, transcript), sum(c.reviewed for c in previous)
 
         kept = self.store.change_candidates(job.id, keep)
         self.store.discard_scores(job.id)

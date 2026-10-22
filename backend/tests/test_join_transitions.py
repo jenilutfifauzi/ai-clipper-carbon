@@ -29,7 +29,8 @@ def test_every_new_join_without_a_transition_gets_the_join_transition_as_the_sha
     join = None if given is None else TypeAdapter(JoinTransition).validate_python(given)
     transitions = TypeAdapter(list[Transition]).validate_python(case["transitions"])
     joined = with_join_transition(case["before"], case["after"], transitions, join)
-    assert [asdict(transition) for transition in joined] == case["expected"]
+    # Made by hand: none is a Template item, whose mark the shared cases leave out.
+    assert [{k: v for k, v in asdict(transition).items() if k != "template"} for transition in joined] == case["expected"]
 
 
 CROSSFADE = {"kind": "dissolve", "secs": 0.8, "sound": "equal_power", "strength": 0.4, "colour": None}
@@ -63,7 +64,7 @@ def test_an_update_changing_segments_fills_new_joins_unless_it_states_transition
     assert candidate["transitions"] == []
     pieces = ranges(job, ("Podcast", "ya"), ("halo", "semua"), ("kita", "soal"))
     cut = patch(client, job, candidate, segments=pieces)
-    assert cut["transitions"] == [{"after": "s0", **CROSSFADE}, {"after": "s1", **CROSSFADE}]
+    assert cut["transitions"] == [{"after": "s0", **CROSSFADE, "template": None}, {"after": "s1", **CROSSFADE, "template": None}]
     # Stated, the Transitions are taken as they are: s2's new join is left a cut.
     stated = patch(client, job, cut, segments=[pieces[0], pieces[2], pieces[1]], transitions=[{"after": "s0", "kind": "fade"}])
     assert [(t["after"], t["kind"]) for t in stated["transitions"]] == [("s0", "fade")]
@@ -72,7 +73,7 @@ def test_an_update_changing_segments_fills_new_joins_unless_it_states_transition
     assert removed["transitions"] == []
     # Moving s1 first: s1–s0 is new (s0–s2 isn't).
     moved = patch(client, job, removed, segments=[pieces[1], pieces[0], pieces[2]])
-    assert moved["transitions"] == [{"after": "s1", **CROSSFADE}]
+    assert moved["transitions"] == [{"after": "s1", **CROSSFADE, "template": None}]
 
 
 def test_changing_a_candidates_preset_leaves_its_transitions_as_they_are(client):
@@ -97,7 +98,7 @@ async def test_the_agent_saves_a_join_transition_and_its_cuts_get_it_unless_it_s
     await call(mcp, "edit_candidate", **ids, changes={"preset_id": saved["id"]})
     pieces = [{"id": "a", "start": HALO_KABAR[0], "end": HALO_KABAR[1]}, {"id": "b", "start": KITA_SOAL[0], "end": KITA_SOAL[1]}]
     cut = await call(mcp, "edit_candidate", **ids, changes={"segments": pieces})
-    assert cut["transitions"] == [{"after": "a", **saved["join_transition"]}]
+    assert cut["transitions"] == [{"after": "a", **saved["join_transition"], "template": None}]
     stated = await call(mcp, "edit_candidate", **ids, changes={"segments": pieces[::-1], "transitions": []})
     assert stated["transitions"] == []
     # The instructions tell the rule, and that a stated list is taken as is.

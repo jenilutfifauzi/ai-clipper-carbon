@@ -23,6 +23,7 @@ from app.rendering import Renders
 from app.starred_effects import STARRED_FILE, StarredStore
 from app.styles import PRESETS_FILE, PresetStore
 from app.text_presets import TEXT_PRESETS_FILE, TextPresetStore
+from app.templates import TEMPLATES_FILE, TemplateStore
 from app.uploads import UPLOADS_DIR
 from app.worker import Worker
 
@@ -43,7 +44,8 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     # One for the app: a Matte piece is made one at a time, for the editor or a render.
     mattes = MatteRunner(ports.person_model, ports.matter, settings.ffmpeg_bin)
     renders = Renders(store, settings, ports.transcriber, media_words, mattes)
-    worker = Worker(store, Pipeline(store, ports, settings), renders)
+    templates = TemplateStore(settings.data_dir / TEMPLATES_FILE)
+    worker = Worker(store, Pipeline(store, ports, settings, templates, media.lengths), renders)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -61,6 +63,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.presets = PresetStore(settings.data_dir / PRESETS_FILE)
     app.state.text_presets = TextPresetStore(settings.data_dir / TEXT_PRESETS_FILE)
     app.state.export_presets = renders.export_presets
+    app.state.templates = templates
     app.state.starred = StarredStore(settings.data_dir / STARRED_FILE)
     app.state.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin)
     app.state.media = media

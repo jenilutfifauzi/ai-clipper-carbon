@@ -114,6 +114,20 @@ export function useMediaLibrary(): MediaLibrary {
   };
 }
 
+/** Why an item can't be deleted: the clips and the Templates that use it, by name. */
+export function inUse(uses: MediaUse[]): string {
+  const clips = uses.filter((use) => use.kind !== "template");
+  const templates = uses.filter((use) => use.kind === "template");
+  const counted = (n: number, one: string, many: string) => (n === 1 ? `a ${one}` : `${n} ${many}`);
+  const users = [
+    clips.length > 0 && counted(clips.length, "clip", "clips"),
+    templates.length > 0 && counted(templates.length, "Template", "Templates"),
+  ].filter(Boolean);
+  const names = [...clips.map((use) => use.title), ...templates.map((use) => `Template “${use.title}”`)];
+  const those = uses.length > 1 ? "them" : clips.length === 1 ? "that clip" : "that Template";
+  return `It is used by ${users.join(" and ")}: ${names.join(", ")}. Remove it from ${those} first.`;
+}
+
 /**
  * The Media tab (videos and images) or the Audio tab (songs, and videos' sound): an upload button,
  * the uploads under way, and the items, each added to the clip by `onAdd` and deletable.
@@ -153,13 +167,7 @@ export function MediaAssets({
     try {
       const uses = await library.remove(item);
       if (uses === null) setDeleting(null);
-      else
-        setDeleteError(
-          <>
-            It is used by {uses.length === 1 ? "a clip" : `${uses.length} clips`}: {uses.map((use) => use.title).join(", ")}. Remove it from{" "}
-            {uses.length === 1 ? "that clip" : "them"} first.
-          </>,
-        );
+      else setDeleteError(<>{inUse(uses)}</>);
     } catch (reason) {
       setDeleteError((reason as Error).message);
     } finally {

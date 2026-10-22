@@ -171,7 +171,7 @@ def test_freeze_frames_are_saved_unsnapped_and_validated(client):
     assert saved["segments"][1] == still | {
         "media": None, "framing": None, "volume": 1, "speed": 1, "pitch": False, "reverse": False, "keys": {}, "fade_in": 0, "fade_out": 0,
         "muted": False, "captions": None, "grade": saved["segments"][0]["grade"], "audio_effects": [],
-        "video_effects": [], "background_removal": None, "background": None,
+        "video_effects": [], "background_removal": None, "background": None, "template": None,
     }
     # The hull is of the Segments that play.
     assert (saved["start"], saved["end"]) == (saved["segments"][0]["start"], saved["segments"][2]["end"])

@@ -41,6 +41,8 @@ CanvasPixels = Annotated[int, Field(ge=0, le=LONGEST)]
 TimelineStart = Annotated[FiniteFloat, Field(ge=0, le=3600)]
 TimelineSecs = Annotated[FiniteFloat, Field(ge=0.1, le=3600)]
 FileOffset = Annotated[FiniteFloat, Field(ge=0, le=3600)]
+# A Template's id (app/templates.py), by which a Template item names the Template that put it there.
+TemplateId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9-]{1,40}$")]
 
 
 @dataclass(frozen=True)
@@ -89,6 +91,9 @@ class WordEdit:
     text: Annotated[str, StringConstraints(strip_whitespace=True, max_length=WORD_EDIT_MAX_CHARS)] | None = None
     break_before: bool = False
     media: MediaId | None = None
+    # The Template that put it there (a Template item: one of an intro's or outro's video); none for
+    # one made by hand. The planner ignores it.
+    template: TemplateId | None = None
 
 
 # A volume, as a factor of the sound's own: 0 mutes it, 2 doubles it.
@@ -134,10 +139,12 @@ class CueEdit:
     y: CanvasPixels | None = None
     scale: CueScale | None = None
     join: bool = False
+    # The Template that put it there (a Template item), as a Word Edit's.
+    template: TemplateId | None = None
 
     def __post_init__(self) -> None:
         if self.join:
-            others = [f.name for f in fields(self) if f.name not in ("at", "media", "join") and getattr(self, f.name) != f.default]
+            others = [f.name for f in fields(self) if f.name not in ("at", "media", "join", "template") and getattr(self, f.name) != f.default]
             if others:
                 raise ValueError(f"A Cue Edit with join sets nothing else: it has {', '.join(others)}")
 
@@ -260,6 +267,9 @@ class TextLayer:
     animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
     # Keys is defined with Keyframes, below.
     keys: "Keys" = field(default_factory=dict)
+    # The Template that put it there, which makes it a Template item (GLOSSARY.md; docs/adr/0023);
+    # None for one made by hand. Edits keep it; the planner ignores it.
+    template: TemplateId | None = None
 
     def __post_init__(self) -> None:
         _check_unstretched(f"Text Layer {self.id}", self.transform, "set its style's size")
@@ -368,6 +378,8 @@ class Shape:
     animation_ms: Annotated[int, Field(ge=100, le=2000)] = 300
     # Keys is defined with Keyframes, below.
     keys: "Keys" = field(default_factory=dict)
+    # The Template that put it there (a Template item), as a Text Layer's.
+    template: TemplateId | None = None
 
     def __post_init__(self) -> None:
         _check_unstretched(f"Shape {self.id}", self.transform, "set its style's width and height")
@@ -624,6 +636,8 @@ class MusicClip:
     # volume (× its duck), fades and delay; each setting filled in once checked. Empty in one saved
     # before them.
     audio_effects: Annotated[list[AudioEffect], Field(max_length=AUDIO_EFFECTS_MAX)] = field(default_factory=list)
+    # The Template that put it there (a Template item), as a Text Layer's.
+    template: TemplateId | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.start, str):
@@ -745,6 +759,8 @@ class Overlay:
     # How it is laid over what is under it, after its opacity (docs/adr/0014). Normal in one saved
     # before Blend Modes.
     blend: BlendMode = BlendMode.NORMAL
+    # The Template that put it there (a Template item), as a Text Layer's.
+    template: TemplateId | None = None
     # Behind the Main Track (docs/adr/0015): on the Behind Track, drawn over each Segment's Background
     # and under its picture, so it shows only where that picture doesn't cover the frame or is cut
     # out. Over the Main Track in one saved before it.
@@ -780,6 +796,8 @@ class AdjustmentLayer:
     # Its Video Effects (docs/adr/0014), in order, after its Grade over the Canvas (scale 1),
     # mixed back with it by its strength and fades. Empty in one saved before them.
     video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
+    # The Template that put it there (a Template item), as a Text Layer's.
+    template: TemplateId | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "video_effects", checked_video_effects(self.video_effects, f"Adjustment Layer {self.id}"))
@@ -930,6 +948,9 @@ class Segment:
     # so that a Transition blends pictures that carry them; sizes at the Canvas's. Empty in
     # one saved before them. A Freeze frame takes them too.
     video_effects: Annotated[list[VideoEffect], Field(max_length=VIDEO_EFFECTS_MAX)] = field(default_factory=list)
+    # The Template that put it there (a Template item: a Segment of its intro or outro); none for one
+    # made by hand, and for every Segment of the Source. The planner ignores it.
+    template: TemplateId | None = None
     # Its Background removal (docs/adr/0015): only its subject kept by its Matte, after its crop, scale
     # and flips and before its Grade and Video Effects, over its Background. None (off) in one saved before it.
     background_removal: BackgroundRemoval | None = None
@@ -983,6 +1004,9 @@ class Transition:
     sound: TransitionSound = TransitionSound.LINEAR
     strength: Annotated[FiniteFloat, Field(ge=0, le=1)] | None = None
     colour: Colour | None = None
+    # The Template that put it there (a Template item: one at a join of its intro or outro); none for
+    # one made by hand. The planner ignores it.
+    template: TemplateId | None = None
 
 
 def timeline_length(segments: list["Segment"], transitions: list[Transition]) -> float:

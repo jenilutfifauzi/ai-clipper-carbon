@@ -18,9 +18,99 @@ export interface JobOptions {
   captions: boolean;
   brief: string | null;
   transcribe_locally: boolean;
+  // The Template its new Candidates get (GLOSSARY.md): "default" asks for the default Template when
+  // the Job is created, which stores its id, or null for none.
+  template: string | null;
   // The Canvas Aspect of its Candidates (docs/adr/0022).
   aspect: Aspect;
 }
+
+// A Job's Template when none is chosen: the default Template, whichever it is then.
+export const DEFAULT_TEMPLATE = "default";
+// "No Template" where a choice among the Templates is a string (a select's value): sent as null.
+export const NO_TEMPLATE = "";
+
+// One of the owner's Templates as listed (backend/app/api.py's TemplateInfo), `default` on the one
+// new Jobs get.
+export interface TemplateInfo {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  default: boolean;
+  // Its intro's and outro's lengths, in seconds (0 for none): what it adds to a Clip. Absent from
+  // a listing made before them.
+  intro?: { secs: number };
+  outro?: { secs: number };
+}
+
+// A kind of a Template's layers, by the list a Candidate holds them in (backend/app/templates.py).
+export type TemplateLayerKind = "text_layers" | "shapes" | "music" | "overlays" | "adjustment_layers";
+// What an edge of a Template's layer hangs from (GLOSSARY.md, Anchor).
+export type AnchorBoundary = "clip_start" | "main_start" | "main_end" | "clip_end";
+// The names an Anchor goes by: Start, End or Span.
+export type AnchorKind = "start" | "end" | "span";
+
+// How a Template's layer keeps its place on a Candidate of another length: by each of its edges, and
+// the name the backend gives it.
+export interface TemplateAnchor {
+  start: { boundary: AnchorBoundary; offset: number };
+  end: { boundary: AnchorBoundary; offset: number };
+  kind: AnchorKind;
+}
+
+// A Template's layer: the item as it was on the Candidate, and its Anchor.
+export interface AnchoredLayer {
+  item: { id: string; start: number; secs: number; text?: string; media?: string | null };
+  anchor: TemplateAnchor;
+}
+
+// What a Template saved from a Candidate would hold (backend/app/templates.py's Captured): its layers
+// with their Anchors, guessed or as chosen, and what the owner is told.
+export interface CapturedTemplate {
+  layers: Record<TemplateLayerKind, AnchoredLayer[]>;
+  notices: string[];
+  intro: { secs: number };
+  outro: { secs: number };
+}
+
+// An Anchor chosen for one of the Candidate's layers, in place of the guess.
+export interface AnchorOverride {
+  kind: TemplateLayerKind;
+  id: string;
+  anchor: AnchorKind;
+}
+
+// A Template saved from a Candidate of a Job: its draft edits (unsaved), the Anchors chosen, and the
+// playhead (Timeline time), whose frame of the draft is its poster.
+export interface TemplateSave {
+  name: string;
+  job_id: string;
+  candidate_id: string;
+  edits?: CandidateChange;
+  anchors?: AnchorOverride[];
+  poster_at?: number;
+}
+
+// One of the owner's Templates (backend/app/templates.py's Template), as renaming gives it.
+export type Template = Omit<TemplateInfo, "default">;
+
+// A Template as saved, and what the owner is told.
+export type SavedTemplate = Template & { notices: string[] };
+
+// What applying a Template made of one Candidate: its Revision, its edits as a PATCH sends them, and
+// what the owner is told.
+export interface AppliedTemplate {
+  candidate_id: string;
+  revision: number;
+  edits: CandidateChange;
+  notices: string[];
+}
+
+// A Template's poster: the frame at the playhead it was saved with, at a card's size. `updated_at`
+// tells a poster drawn again (saved over) from the one cached.
+export const templatePosterUrl = (template: { id: string; updated_at: string }) =>
+  `/api/templates/${template.id}/poster?v=${encodeURIComponent(template.updated_at)}`;
 
 export interface JobWarning {
   stage: JobStatus;
@@ -128,6 +218,9 @@ export interface WordEdit {
   text: string | null;
   break_before: boolean;
   media?: string | null;
+  // The Template that put it there (a Template item: one of an intro's or outro's video), as a Text
+  // Layer's.
+  template?: string | null;
 }
 
 // The owner's change to one Cue (GLOSSARY: Cue Edit), keyed as a Word Edit is: a time in its first
@@ -148,6 +241,8 @@ export interface CueEdit {
   y?: number | null;
   scale?: number | null;
   join: boolean;
+  // The Template that put it there (a Template item), as a Word Edit's.
+  template?: string | null;
 }
 
 // The furthest a Cue Edit moves its Cue or an edge (CUE_SHIFT_MAX_SECS in backend/app/candidates.py).
@@ -395,10 +490,15 @@ export interface MediaWords {
   words: Word[] | null;
 }
 
-// A Candidate that uses a Media Library item, as a refused delete names it.
+// What uses a Media Library item or a Look, as a refused delete names it: a Candidate, or a Template.
 export interface MediaUse {
-  job_id: string;
-  candidate_id: string;
+  kind: "candidate" | "template";
+  // The Candidate's Job and the Candidate; null for a Template.
+  job_id: string | null;
+  candidate_id: string | null;
+  // The Template's; null for a Candidate.
+  template_id: string | null;
+  // The Clip's title, or the Template's name.
   title: string;
 }
 
@@ -623,6 +723,9 @@ export interface TextLayer {
   animation_out: Animation;
   animation_ms: number;
   keys: Keys;
+  // The Template that put it there (a Template item, GLOSSARY.md; docs/adr/0023); none for one made by
+  // hand. Edits keep it; a paste from the Clipboard drops it.
+  template?: string | null;
 }
 
 // The figure a Shape draws (backend/app/candidates.py's ShapeKind, docs/adr/0011): a filled figure
@@ -662,6 +765,8 @@ export interface Shape {
   animation_out: Animation;
   animation_ms: number;
   keys: Keys;
+  // The Template that put it there (a Template item), as a Text Layer's.
+  template?: string | null;
 }
 
 // What a picture layer draws (a Text Layer, a Shape): its id, its Transform and Keyframes, and its
@@ -731,6 +836,8 @@ export interface MusicClip extends Omit<Retiming, "hold"> {
   // Its sound's Audio Effects (ADR 0017), in order, after its Speed and before its volume, duck and
   // fades. Empty when missing.
   audio_effects?: AudioEffect[];
+  // The Template that put it there (a Template item), as a Text Layer's.
+  template?: string | null;
 }
 
 // How an item plays its range (docs/adr/0009): at its Speed (1 by default), its sound's pitch
@@ -889,6 +996,8 @@ export interface Overlay extends Omit<Retiming, "hold">, OverlayAnimation {
   video_effects?: VideoEffect[];
   // How it is laid over what is under it (ADR 0014). Normal when missing.
   blend?: BlendMode;
+  // The Template that put it there (a Template item), as a Text Layer's.
+  template?: string | null;
   // Behind the Main Track (ADR 0015): on the Behind Track, over each Segment's Background and under its
   // picture. Over the Main Track when missing.
   behind?: boolean;
@@ -916,6 +1025,8 @@ export interface AdjustmentLayer {
   // Its Video Effects (ADR 0014), in order, after its Grade and mixed with it; sizes in the
   // Canvas's pixels. Empty when missing.
   video_effects?: VideoEffect[];
+  // The Template that put it there (a Template item), as a Text Layer's.
+  template?: string | null;
 }
 
 // An Adjustment Layer as the plan draws it: from `start` to `end` seconds into the Clip (cut at its
@@ -1049,10 +1160,13 @@ export interface Transition extends TransitionKnobs {
   kind: TransitionKind;
   secs: number;
   sound?: TransitionSound;
+  // The Template that put it there (a Template item: one at a join of its intro or outro), as a Text
+  // Layer's.
+  template?: string | null;
 }
 
 // A Style Preset's Join Transition (GLOSSARY): a Transition without the Segment it follows.
-export type JoinTransition = Omit<Transition, "after">;
+export type JoinTransition = Omit<Transition, "after" | "template">;
 
 // A Transition as drawn, from `start` to `end` seconds into the Clip.
 export interface TransitionEvent extends TransitionKnobs {
@@ -1299,6 +1413,9 @@ export interface ClipSegment extends Retiming {
   // Its whole frame's Video Effects (ADR 0014), in order, after its Grade and before the joins; sizes
   // in the Canvas's pixels. Empty when missing.
   video_effects?: VideoEffect[];
+  // The Template that put it there (a Template item: a Segment of its intro or outro), as a Text
+  // Layer's; never one of the Source.
+  template?: string | null;
   // Its Background removal (ADR 0015): only its subject kept by its Matte, over its Background. Off when missing.
   background_removal?: BackgroundRemoval | null;
   // A Segment of the Source's own Background (ADR 0015), shown while it is cut out (in Blur in place of
@@ -1909,6 +2026,26 @@ export const api = {
     request<StylePreset>(`/presets/${id}`, { method: "PUT", body: JSON.stringify(preset) }),
   deletePreset: (id: string) => request<void>(`/presets/${id}`, { method: "DELETE" }),
   listTextPresets: () => request<TextPreset[]>("/text-presets"),
+  listTemplates: () => request<TemplateInfo[]>("/templates"),
+  // What a Template saved from a Candidate (as its draft edits would make it) would hold, with each
+  // layer's Anchor guessed; nothing saved.
+  captureTemplate: (capture: Omit<TemplateSave, "name" | "poster_at">) =>
+    request<CapturedTemplate>("/templates/capture", { method: "POST", body: JSON.stringify(capture) }),
+  // A new Template; or with `over`, saved over that one, which keeps its id (and its default status).
+  saveTemplate: (template: TemplateSave, over?: string | null) =>
+    over
+      ? request<SavedTemplate>(`/templates/${over}`, { method: "PUT", body: JSON.stringify(template) })
+      : request<SavedTemplate>("/templates", { method: "POST", body: JSON.stringify(template) }),
+  renameTemplate: (id: string, name: string) =>
+    request<Template>(`/templates/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  deleteTemplate: (id: string) => request<void>(`/templates/${id}`, { method: "DELETE" }),
+  // Make a Template the default for new Jobs, or with null, have none.
+  useTemplateAsDefault: (templateId: string | null) =>
+    request<{ template_id: string | null }>("/templates/default", { method: "PUT", body: JSON.stringify({ template_id: templateId }) }),
+  // Applies a Template (null: "No Template", taking Template items off) to these Candidates, all of
+  // them or none (409 unless the Job is in review or rendering); with dry_run, nothing is saved.
+  applyTemplate: (jobId: string, body: { template_id: string | null; candidate_ids: string[]; dry_run: boolean }) =>
+    request<{ candidates: AppliedTemplate[] }>(`/jobs/${jobId}/templates/apply`, { method: "POST", body: JSON.stringify(body) }),
   // Every Audio Effect an item's stack can name, by group and order.
   listAudioEffects: () => request<AudioEffectKind[]>("/audio-effects"),
   listVideoEffects: () => request<VideoEffectKind[]>("/video-effects"),

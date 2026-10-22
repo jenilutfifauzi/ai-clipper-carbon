@@ -82,6 +82,7 @@ from app.retimed import CopySize, Retime
 from app.review import PLACED_BY
 from app.segment_time import SegmentTime
 from app.styles import LINE_LIMITS, StyleOverrides
+from app.templates import AnchorOverride, LayerKind, TemplateNotFound
 from app.transcript import Language
 from app.uploads import UPLOADS_DIR, BadUpload, NotEnoughSpace, stage
 
@@ -242,6 +243,40 @@ Edits:
   save_preset and delete_preset with kind "text"; built-in ones can't change. One is used for new
   titles (save_preset's use_for_new_titles): a new Text Layer given without a style, or without some
   of its fields, takes that Preset's.
+- A Template is a Candidate's layers (Text Layers, Shapes, Music Clips of Media Library items,
+  Overlays and Adjustment Layers), its intro and outro (the media Segments before its first Segment
+  of the episode and after its last, with the Transitions at their joins and their videos' Word
+  Edits and Cue Edits) and its hook's place, saved for reuse: list_presets (with intro_secs and
+  outro_secs), save_preset and delete_preset with kind "template". The Candidate's own Segments are
+  its Main Slot, never saved: media Segments between them are left out, and a Candidate with no
+  Segment of the episode can't be saved. save_preset's preset is {{name, job_id, candidate_id,
+  anchors?}}; with preset_id it saves over that Template, keeping its id, or with {{name}} alone
+  renames it. apply_template copies it onto Candidates, never linked: changing or deleting the
+  Template later leaves them as they are. Applying it puts the intro before each Candidate's own
+  Segments and the outro after them (the joins between its own Segments keep their Transitions),
+  moves the Candidate's own layers and hook by as much as its Segments' start moved, and puts the
+  hook at the Template's distance from that start. Each layer keeps its place by its Anchor: each of
+  its edges keeps its distance (offset) from the Clip's start or end, or the Main Slot's
+  (clip_start, main_start, main_end, clip_end), guessed from the nearest: start when both edges
+  are nearest a start, end when both are nearest an end, else span; one wholly on the intro or
+  outro stays on it. An anchors entry {{kind (its list: text_layers...), id, anchor}} sets one:
+  start (both edges from the start: a lower-third), end (both from the end: a call to action) or
+  span (one from each, stretched with the Clip: a music bed). One past a shorter Clip's end is cut
+  short or left out, and the result says so. What a Template puts on a Candidate is a Template item,
+  its `template` the Template's id (get_candidate's template_items names it): applying a Template
+  again, the same or another, replaces the Template items, even those changed by hand (the notices
+  count them), and keeps the rest; template_id null ("No Template") takes them off. Removing one by
+  hand (remove_candidate_items) is fine; only applying again brings it back. One Template, or none,
+  is the default (save_preset's use_as_default, by preset_id alone too; list_presets marks it): a
+  new Job gets it unless its options.template is another's id or null ("default" when not given),
+  and each of the Job's new Candidates (Selection's and add_candidate's) arrives with the Job's
+  Template applied. A Job whose Template was deleted makes them plain, with a warning.
+  A Template also carries the Candidate's Style Preset (Default once deleted), Style Overrides,
+  Layout (and Manual Framing), grade, source_volume and Kicker, and its first episode Segment's grade,
+  video_effects and audio_effects, which every episode Segment gets (their cuts, speed, volume and
+  fades kept); applying replaces those, the Kicker only when the Template has one, never the hook
+  text; null leaves them. {{title}}, {{hook}} (no * marks) and {{kicker}} in its Text Layers are
+  filled from each Candidate; an empty one leaves nothing, with a notice.
 - The caption and hook styles' shadow is a Text Style's; a Style Override of it sets the fields it
   names ({{"shadow": {{"blur": 8}}}}). The hook's box (block or strips) and the caption highlight box
   have padding_x and padding_y, the highlight box radius too, in output pixels at the style's size;
@@ -524,6 +559,9 @@ def build_mcp(app: FastAPI) -> MCPServer:
             raise ToolError(f"Job {job_id} has no Candidate {candidate_id}")
         return found
 
+    async def template_names() -> dict[str, str]:
+        return {template["id"]: template["name"] for template in await api("GET", "/templates")}
+
     async def save_from_current(job_id: str, candidate_id: str, change: Callable[[dict], dict]) -> dict:
         """Save the body `change` makes of the Candidate as it is, from its Revision. When another
         edit saves first, `change` is made again of the Candidate as that left it."""
@@ -570,7 +608,8 @@ def build_mcp(app: FastAPI) -> MCPServer:
     async def create_job_from_url(url: str, options: JobOptions = JobOptions()) -> dict:
         """Start a Job from a video's URL (YouTube): it is downloaded, transcribed and analyzed into
         Candidates. `options.brief` steers which moments are picked; min_secs and max_secs bound a
-        Candidate's length. Follow it with wait_for_job."""
+        Candidate's length; options.template: see Templates in the instructions. Follow it with
+        wait_for_job."""
         body = {"url": url, "options": _dump(JobOptions, options)}
         return _job_view(await api("POST", "/jobs", json=body))
 
@@ -579,6 +618,10 @@ def build_mcp(app: FastAPI) -> MCPServer:
         """Start a Job from a video file on this Mac, by its path. The file is left where it is (the
         Job keeps a clone or copy of it). Follow it with wait_for_job."""
         settings, store = app.state.settings, app.state.store
+        try:
+            options = app.state.templates.for_new_job(options)
+        except TemplateNotFound as exc:
+            raise ToolError(str(exc)) from None
         file = Path(path).expanduser()
         try:
             staged = await to_thread.run_sync(stage, file, settings.data_dir / UPLOADS_DIR, settings.upload_reserve_bytes)
@@ -685,10 +728,12 @@ def build_mcp(app: FastAPI) -> MCPServer:
     @tool(read_only=True)
     async def get_candidate(job_id: str, candidate_id: str) -> dict:
         """A Candidate whole: its range, hook, titles and descriptions, and every edit made to it; its
-        aspect and its Canvas's size (`canvas`), in whose pixels its positions are."""
+        aspect and its Canvas's size (`canvas`), in whose pixels its positions are; `template_items`
+        lists its Template items and the Template that put each there (its name, or "deleted")."""
         found = await candidate(job_id, candidate_id)
         width, height = canvas_for(found["aspect"]).size
-        return found | {"canvas": {"width": width, "height": height}}
+        marks = _template_items(found, await template_names())
+        return found | {"canvas": {"width": width, "height": height}} | ({"template_items": marks} if marks else {})
 
     @tool()
     async def edit_candidate(
@@ -918,13 +963,40 @@ def build_mcp(app: FastAPI) -> MCPServer:
             return await api("PUT", "/export-presets/default", json={"preset_id": saved["id"] if saved else preset_id})
         return saved
 
+    async def save_template(given: BaseModel | None, preset_id: str | None, use_as_default: bool) -> dict:
+        """A Template saved from a Candidate, or the Template `preset_id` saved over or renamed; then
+        made the default when asked (by `preset_id` alone too)."""
+        if given is None and preset_id is not None and use_as_default:
+            await api("PUT", "/templates/default", json={"template_id": preset_id})
+            return await template_listed(preset_id)
+        body = _validated(TemplateGiven, given)
+        if preset_id is not None and body.keys() == {"name"}:
+            saved = await api("PATCH", f"/templates/{preset_id}", json=body)
+        elif preset_id is None:
+            saved = await api("POST", "/templates", json=body)
+        else:
+            saved = await api("PUT", f"/templates/{preset_id}", json=body)
+        if use_as_default:
+            await api("PUT", "/templates/default", json={"template_id": saved["id"]})
+        return _template_view(saved)
+
+    async def template_listed(template_id: str) -> dict:
+        """One of the Templates as list_presets gives it."""
+        listed = next((template for template in await api("GET", "/templates") if template["id"] == template_id), None)
+        if listed is None:
+            raise ToolError(f"No Template {template_id}")
+        return _template_view(listed)
+
     @tool(read_only=True)
-    async def list_presets(kind: Literal["style", "text", "export"] = "style", include_styles: bool = False) -> dict:
+    async def list_presets(kind: Literal["style", "text", "export", "template"] = "style", include_styles: bool = False) -> dict:
         """The Style Presets, or the Text Presets (`default`: used for new titles): built-in ones,
         then the owner's. With include_styles, their styles (a Style Override replaces their fields).
-        Export Presets: with their settings, the `default` and the codecs `available`."""
+        Export Presets: with their settings, the `default` and the codecs `available`. Templates:
+        with their layers, Anchors and `default`."""
         if kind == "export":
             return await api("GET", "/export-presets")
+        if kind == "template":
+            return {"presets": [_template_view(template) for template in await api("GET", "/templates")]}
         if kind == "text":
             presets = await api("GET", "/text-presets")
             keys = ("id", "name", "category", "builtin", "default", *(("sample", "style") if include_styles else ()))
@@ -936,16 +1008,19 @@ def build_mcp(app: FastAPI) -> MCPServer:
 
     @tool()
     async def save_preset(
-        preset: PresetBody | NamedPresetGiven | None = None,
+        preset: PresetBody | NamedPresetGiven | TemplateGiven | None = None,
         preset_id: str | None = None,
-        kind: Literal["style", "text", "export"] = "style",
+        kind: Literal["style", "text", "export", "template"] = "style",
         use_for_new_titles: bool = False,
         use_as_default: bool = False,
     ) -> dict:
         """Save a new Preset, or replace the owner's Preset `preset_id` (built-in ones can't be). A
         Style Preset's join_transition goes on its Candidates' new joins (see the instructions). A
         Text Preset is {name, style}. use_for_new_titles: new Text Layers copy it (a built-in one's
-        preset_id alone). An Export Preset is {name, settings}, never making a Clip stale; use_as_default: renders use it (likewise)."""
+        preset_id alone). An Export Preset is {name, settings}, never making a Clip stale; use_as_default: renders use it (likewise).
+        A Template is {name, job_id, candidate_id, anchors?} (see the instructions), use_as_default too."""
+        if kind == "template":
+            return await save_template(preset, preset_id, use_as_default)
         if kind == "export":
             return await save_export_preset(preset, preset_id, use_as_default)
         if kind == "style":
@@ -966,11 +1041,26 @@ def build_mcp(app: FastAPI) -> MCPServer:
         return saved
 
     @tool(destructive=True)
-    async def delete_preset(preset_id: str, kind: Literal["style", "text", "export"] = "style") -> dict:
+    async def delete_preset(preset_id: str, kind: Literal["style", "text", "export", "template"] = "style") -> dict:
         """Delete one of the owner's Presets. Candidates using a Style Preset render in Default; Text
-        Layers keep their look; Clips of an Export Preset render again with the default."""
-        await api("DELETE", f"/{ {'text': 'text-presets', 'export': 'export-presets'}.get(kind, 'presets')}/{preset_id}")
+        Layers keep their look; Clips of an Export Preset render again with the default; Candidates
+        keep a Template's items."""
+        routes = {"text": "text-presets", "export": "export-presets", "template": "templates"}
+        await api("DELETE", f"/{routes.get(kind, 'presets')}/{preset_id}")
         return {"deleted": preset_id}
+
+    @tool()
+    async def apply_template(job_id: str, candidate_ids: list[str], template_id: str | None, dry_run: bool = False) -> dict:
+        """Apply a Template to Candidates of a Job, all of them or none, replacing their Template
+        items; template_id null is "No Template", taking them off. Each changed one gets a new
+        revision. Per Candidate: its `revision`, the `edits` made (lists replaced whole, as
+        edit_candidate's), the `template_items` they leave (as get_candidate's) and `notices` (Template
+        items replaced that were changed by hand or whose Template was deleted, layers cut short or
+        left out). With dry_run, nothing is saved."""
+        body = {"template_id": template_id, "candidate_ids": candidate_ids, "dry_run": dry_run}
+        result = await api("POST", f"/jobs/{job_id}/templates/apply", json=body)
+        names = await template_names()
+        return {"candidates": [entry | {"template_items": _template_items(entry["edits"], names)} for entry in result["candidates"]]}
 
     @tool(read_only=True)
     async def list_assets(
@@ -1136,6 +1226,17 @@ class NamedPresetGiven(BaseModel):
     settings: dict[str, Any] | None = None
 
 
+class TemplateGiven(BaseModel):
+    """A Template: its name, the Candidate it is saved from, and the Anchors chosen for its layers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    job_id: str | None = None
+    candidate_id: str | None = None
+    anchors: list[AnchorOverride] | None = None
+
+
 class StaleCandidate(ToolError):
     """An edit made from a Revision the Candidate has moved past; `candidate` is it as it is now."""
 
@@ -1211,6 +1312,50 @@ def _times(item: dict, *keys: str) -> dict:
 
 def _compact(view: dict) -> dict:
     return {key: value for key, value in view.items() if value is not None and value != []}
+
+
+def _template_view(template: dict) -> dict:
+    """A Template as the tools list it: each layer by its list, id, times as saved and Anchor, with
+    the edges it is made of; a Text Layer's text too, its Template Fields as typed; and its Style
+    Preset, Layout and Kicker."""
+    layers = [
+        {
+            "kind": kind, "id": layer["item"]["id"], **({"text": layer["item"]["text"]} if "text" in layer["item"] else {}),
+            "start": layer["item"]["start"], "secs": layer["item"]["secs"],
+            "anchor": layer["anchor"]["kind"], "edges": [layer["anchor"]["start"], layer["anchor"]["end"]],
+        }
+        for kind, listed in template["layers"].items()
+        for layer in listed
+    ]
+    view = {key: template[key] for key in ("id", "name", "created_at", "updated_at")}
+    view |= {"intro_secs": template["intro"]["secs"], "outro_secs": template["outro"]["secs"], "layers": layers}
+    view |= {key: template[key] for key in ("preset_id", "layout", "kicker")}
+    view |= {"default": template["default"]} if "default" in template else {}
+    return view | ({"notices": template["notices"]} if template.get("notices") else {})
+
+
+
+def _template_items(candidate: dict, names: dict[str, str]) -> list[dict]:
+    """A Candidate's Template items (of its lists in `candidate`): each by its list and id (a
+    Transition by the Segment it follows, a Word Edit or Cue Edit by its time and video), with the
+    Template that put it there, by its id and name (`names`), or "deleted"."""
+    lists = [*(kind.value for kind in LayerKind), "segments", "transitions", "word_edits", "cue_edits"]
+    return [
+        {"kind": kind, **_item_key(item), "template_id": item["template"], "template": names.get(item["template"], "deleted")}
+        for kind in lists
+        for item in candidate.get(kind) or []
+        if item.get("template")
+    ]
+
+
+def _item_key(item: dict) -> dict:
+    """What names an item of a Candidate's lists: its id, the Segment a Transition follows, or a Word
+    Edit's or Cue Edit's time and video."""
+    if "id" in item:
+        return {"id": item["id"]}
+    if "after" in item:
+        return {"after": item["after"]}
+    return {"at": item["at"], "media": item["media"]}
 
 
 def _job_view(job: dict) -> dict:
