@@ -17,6 +17,7 @@ import { Button } from "../../../components/Button";
 import { cx, formatClock } from "../../../format";
 import type { LoopRegion } from "../editor/loop";
 import { usePlayback, type Playback } from "../editor/playback";
+import { ToolDivider } from "./Chrome";
 import { onFrame, revealScroll, type LoopMarks } from "./playhead";
 import { setSkim, setSkimSound, useSkim, useSkimSound } from "./skim";
 import { MAX_ZOOM, zoomAboutPlayhead, type ZoomedView } from "./timelineView";
@@ -86,6 +87,7 @@ export function AdvancedTimeline({
   playback,
   fps,
   snapPoints,
+  history,
   tools,
   onBand,
   onClear,
@@ -104,6 +106,8 @@ export function AdvancedTimeline({
   fps: number;
   // Edges items snap to, besides the playhead and the Clip's ends.
   snapPoints: number[];
+  // The bar's first group, undo and redo, set off from the rest by a divider.
+  history?: ReactNode;
   // Buttons for the bar above the tracks (split, delete, ...).
   tools?: ReactNode;
   onBand?: (items: (Area & { key: string })[], band: Area, add: boolean) => void;
@@ -321,7 +325,11 @@ export function AdvancedTimeline({
     >
       <div className="flex min-h-11 items-center justify-between gap-2 px-2">
         {/* On a phone the tools scroll sideways, so that the zoom's buttons always show. */}
-        <div className="flex min-w-0 items-center gap-1 overflow-x-auto">{tools}</div>
+        <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+          {history}
+          {history && tools && <ToolDivider />}
+          {tools}
+        </div>
         {skimmable && (
           <div className="ml-auto flex shrink-0 items-center gap-1" role="group" aria-label="Skim">
             <Button

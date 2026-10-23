@@ -102,10 +102,22 @@ export function AssetTabs({ value, onChange }: { value: AssetTab; onChange: (tab
   );
 }
 
+// A thin rule between groups of buttons, in the top bar and the timeline's toolbar.
+export function ToolDivider() {
+  return <span aria-hidden className="mx-1 h-6 w-px shrink-0 bg-border" />;
+}
+
+/**
+ * The Advanced Edit's top bar, as Concat's: Back on the left; the Candidate's title and its save
+ * status centred (on a phone, beside Back); on the right its groups, each set off by a divider — the
+ * Workspace's `layout` controls and the shortcuts sheet, the document `actions` (Downloads, Save Frame,
+ * Revision History, Save as Template), then the `primary` action, Export. Undo and redo are the
+ * timeline toolbar's.
+ */
 export function TopBar({
   title,
   status,
-  history,
+  layout,
   actions,
   primary,
   onShortcuts,
@@ -113,42 +125,48 @@ export function TopBar({
 }: {
   title: string;
   status: ReactNode;
-  history: EditHistory<AdvancedEdits>;
-  // Beside undo and redo, such as the Revision History.
+  // The Workspace's collapses and reset: a desktop's.
+  layout?: ReactNode;
+  // Document actions, such as the Revision History.
   actions?: ReactNode;
-  // The editor's main action, such as Export: last, after undo and redo, set off by a divider.
+  // The editor's main action, such as Export: last, set off by a divider.
   primary?: ReactNode;
   // Opens the shortcuts sheet: on a desktop only.
   onShortcuts?: () => void;
   onClose: () => void;
 }) {
-  return (
-    <header className="flex min-h-14 items-center gap-2 px-2 pt-[env(safe-area-inset-top)] sm:px-3">
-      <Button variant="ghost" size="icon" onClick={onClose} aria-label="Back to the clip editor">
-        <ArrowLeft aria-hidden size={18} />
-      </Button>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <h1 className="truncate text-sm font-semibold sm:text-base">{title}</h1>
-        <div className="truncate text-xs text-muted">{status}</div>
-      </div>
-      {actions}
+  const view = (layout || onShortcuts) && (
+    <>
+      {layout}
       {onShortcuts && (
         <Button variant="ghost" size="icon" onClick={onShortcuts} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
           <Keyboard aria-hidden size={18} />
         </Button>
       )}
-      <Button variant="ghost" size="icon" onClick={history.undo} disabled={!history.canUndo} aria-label="Undo">
-        <Undo2 aria-hidden size={18} />
-      </Button>
-      <Button variant="ghost" size="icon" onClick={history.redo} disabled={!history.canRedo} aria-label="Redo">
-        <Redo2 aria-hidden size={18} />
-      </Button>
-      {primary && (
-        <>
-          <span aria-hidden className="mx-1 h-6 w-px shrink-0 bg-border" />
-          {primary}
-        </>
-      )}
+    </>
+  );
+  return (
+    <header className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b border-border px-2 pt-[env(safe-area-inset-top)] sm:grid-cols-[minmax(0,1fr)_minmax(0,auto)_minmax(0,1fr)] sm:px-3">
+      <div className="flex min-w-0 items-center">
+        <Button variant="ghost" size="icon" onClick={onClose} aria-label="Back to the clip editor" title="Back to the clip editor">
+          <ArrowLeft aria-hidden size={18} />
+        </Button>
+      </div>
+      <div className="flex min-w-0 flex-col sm:items-center sm:text-center">
+        <h1 className="max-w-full truncate text-sm font-semibold sm:text-base">{title}</h1>
+        <div className="max-w-full truncate text-xs text-muted">{status}</div>
+      </div>
+      <div className="flex min-w-0 items-center justify-end gap-1">
+        {view}
+        {view && actions && <ToolDivider />}
+        {actions}
+        {primary && (
+          <>
+            {(view || actions) && <ToolDivider />}
+            {primary}
+          </>
+        )}
+      </div>
     </header>
   );
 }
@@ -449,6 +467,28 @@ export function ShortcutsSheet({ open, onClose }: { open: boolean; onClose: () =
         ))}
       </div>
     </dialog>
+  );
+}
+
+// The timeline toolbar's first group: undo and redo, next to the edits they take back.
+export function HistoryTools({ history }: { history: EditHistory<AdvancedEdits> }) {
+  const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
+  return (
+    <>
+      <Button variant="ghost" size="icon" onClick={history.undo} disabled={!history.canUndo} aria-label="Undo" title={`Undo (${shortcut}Z)`}>
+        <Undo2 aria-hidden size={17} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={history.redo}
+        disabled={!history.canRedo}
+        aria-label="Redo"
+        title={`Redo (${shortcut === "⌘" ? "⇧⌘Z" : "Ctrl+Y"})`}
+      >
+        <Redo2 aria-hidden size={17} />
+      </Button>
+    </>
   );
 }
 

@@ -10,6 +10,12 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Tests for the feature pass (`npx vitest run` on the touched test files only), `npx tsc --noEmit` clean.
+- [x] Tests for the feature pass (`npx vitest run` on the touched test files only), `npx tsc --noEmit` clean.
+
+## Comments
+
+- `TopBar` (`advanced/Chrome.tsx`) is a 3-column grid (on a phone: Back | title, left-aligned | actions). New props `layout` (Workspace toggles + the shortcuts button) and `actions`, split from Export by a new exported `ToolDivider`; the `history` prop is gone.
+- Undo/Redo moved to a new `HistoryTools` (Chrome.tsx, titles with ⌘Z / ⇧⌘Z or Ctrl+Z / Ctrl+Y), passed to `AdvancedTimeline`'s new `history` slot, so both desktop and phone keep them (ticket 06 finishes the grouping).
+- `exportButton.test.tsx` updated: order and dividers of the groups, no Undo/Redo in the top bar.

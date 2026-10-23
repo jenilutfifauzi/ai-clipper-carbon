@@ -128,6 +128,7 @@ import {
   ASSET_TABS,
   AssetTabs,
   FrameStep,
+  HistoryTools,
   ItemTools,
   PlaybackPanel,
   SaveStatus,
@@ -1401,6 +1402,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       playback={playback}
       fps={fps}
       snapPoints={edgesOf(edits, played, { hidden: tracks.hidden, moving: pick })}
+      history={<HistoryTools history={history} />}
       tools={
         <>
           <MagneticToggle />
@@ -1664,10 +1666,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             }
           />
         }
-        history={history}
+        layout={layoutControls}
         actions={
           <>
-            {layoutControls}
             {job.options.captions && (
               <Downloads jobId={job.id} candidateId={initial.id} title={candidate.title} saving={saving > 0} />
             )}
