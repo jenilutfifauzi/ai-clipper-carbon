@@ -1,8 +1,9 @@
 import { ClipboardCopy, Copy, LayoutTemplate, RotateCcw, Trash2 } from "lucide-react";
-import { useContext, useState, type ReactNode } from "react";
+import { useContext, useMemo, useState, type ReactNode } from "react";
 import type { AdjustmentLayer, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TemplateInfo, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
+import { InspectorLayout } from "../../../components/inspectorLayout";
 import { canvasOf, useCanvas } from "../editor/canvas";
 import { CaptionStylePanel } from "../editor/CaptionStylePanel";
 import { PresetBar } from "../editor/PresetBar";
@@ -31,19 +32,24 @@ import type { TrackKind } from "./trackState";
 import { ShapeFields, ShapesFields } from "./Shapes";
 import { TextLayerFields, TextLayersFields } from "./TextLayers";
 import { pickedTemplate, templateNote } from "./templating";
+import { layout } from "./workspaceLayout";
 
 /**
  * The picked item's properties: a Segment's, a Text Layer's, a Shape's, a Music Clip's, an Overlay's, an Adjustment Layer's,
  * the hook's, or a join's Transition; or, with several picked, what they are and what can be done to them
- * (several Text Layers, or several Shapes, have their look edited together).
+ * (several Text Layers, or several Shapes, have their look edited together). Its fields are inline
+ * rows, in groups that fold, each group's fold remembered by the browser (inspectorLayout.ts) — on a
+ * phone's sheet too, whose width fits them.
  */
 export function Inspector({ templates = null, ...fields }: Parameters<typeof InspectorFields>[0] & { templates?: TemplateInfo[] | null }) {
   const marked = pickedTemplate(fields.edits, fields.pick);
+  const { foldedGroups } = layout.use();
+  const inline = useMemo(() => ({ folded: foldedGroups, onFold: layout.setGroupFolded }), [foldedGroups]);
   return (
-    <>
+    <InspectorLayout.Provider value={inline}>
       {marked && <TemplateNote templateId={marked} templates={templates} />}
       <InspectorFields {...fields} />
-    </>
+    </InspectorLayout.Provider>
   );
 }
 

@@ -1,8 +1,10 @@
 import { ChevronDown } from "lucide-react";
 import { useId, type CSSProperties, type ReactNode } from "react";
 import { cx } from "../format";
+import { INLINE_LABEL, useInline } from "./inspectorLayout";
 
-// A labelled native select, in the inset field look.
+// A labelled native select, in the inset field look. In the Inspector (inspectorLayout.ts) the
+// label goes left of the select.
 export function Select<T extends string>({
   label,
   value,
@@ -24,13 +26,14 @@ export function Select<T extends string>({
   disabled?: boolean;
 }) {
   const id = useId();
+  const inline = useInline();
   return (
-    <div className={cx("flex min-w-0 flex-col gap-1", className)}>
-      <label htmlFor={id} className="flex items-center gap-1.5 text-sm font-medium">
-        {label}
+    <div className={cx(inline ? "flex min-w-0 items-center gap-2" : "flex min-w-0 flex-col gap-1", className)}>
+      <label htmlFor={id} className={inline ? INLINE_LABEL : "flex items-center gap-1.5 text-sm font-medium"}>
+        {inline ? <span className="min-w-0 truncate">{label}</span> : label}
         {marker}
       </label>
-      <div className="relative">
+      <div className={inline ? "relative min-w-0 flex-1" : "relative"}>
         <select
           id={id}
           value={value}

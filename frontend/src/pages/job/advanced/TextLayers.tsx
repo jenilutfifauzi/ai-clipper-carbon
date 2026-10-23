@@ -150,7 +150,7 @@ export function MotionFields<T extends Partial<Animated> & { id: string }>({
   const moves = movesOf(item);
   return (
     <Group title="Motion">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="flex flex-col gap-2.5">
         <Select label="Comes on" value={moves.animation_in} options={ANIMATIONS} onChange={(value: Animation) => set("animation_in", value)} />
         <Select label="Goes off" value={moves.animation_out} options={ANIMATIONS} onChange={(value: Animation) => set("animation_out", value)} />
       </div>
@@ -192,7 +192,7 @@ export function SeveralMotionFields<T extends Animated>({
   const marker = (field: Motion) => (mixed(field) ? <Mixed /> : undefined);
   return (
     <Group title="Motion">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="flex flex-col gap-2.5">
         <Select
           label="Comes on"
           value={value("animation_in")}
