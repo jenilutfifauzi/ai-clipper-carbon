@@ -1774,7 +1774,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 padding 0.75rem + the sidebar's width + half the 0.75rem gap). A collapsed sidebar
                 renders no Divider, so it exposes no separator. */}
             {!ws.assetHidden && (
-              <aside aria-label="Assets" className="glass flex min-h-0 flex-col overflow-hidden rounded-panel">
+              <aside aria-label="Assets" className="panel flex min-h-0 flex-col overflow-hidden">
                 <AssetTabs value={assetTab} onChange={setAssetTab} />
                 {/* Its top space is a spacer, not padding: padding would hold the tabs' sticky shelf
                     headings below the top edge, with the cards scrolling past above them. */}
@@ -1833,7 +1833,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               />
             )}
             {!ws.inspectorHidden && (
-              <aside aria-label="Inspector" className="glass min-h-0 overflow-y-auto rounded-panel p-4">
+              <aside aria-label="Inspector" className="panel min-h-0 overflow-y-auto p-4">
                 {inspector}
               </aside>
             )}
@@ -1842,7 +1842,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           <div className="mx-3 flex min-h-0 gap-3" style={{ height: bottomHeightCss(ws) }}>
             <section
               aria-label="Timeline and Keyframes"
-              className="glass relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-panel"
+              className="panel relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
             >
               <BottomTabs value={bottomTab} onChange={setBottomTab} />
               {/* The bottom Divider: a grab strip along this section's top edge (the section is clipped, so

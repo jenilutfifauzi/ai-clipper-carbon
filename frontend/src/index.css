@@ -45,6 +45,17 @@
   backdrop-filter: var(--glass-filter);
 }
 
+/*
+ * A flat panel: the Advanced Edit's top-level regions (Asset Panel, Inspector, player, Bottom tabs,
+ * Meters). Solid fill and a hairline edge, no blur and no shadow, so the editor reads calm; what
+ * floats over it (menus, popovers, sheets, dialogs) stays `glass`.
+ */
+@utility panel {
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+}
+
 /* A control raised off the glass: a secondary button, the selected segment, a switch's thumb. */
 @utility raised {
   background-color: var(--surface-raised);

@@ -9,6 +9,10 @@
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Tests for the feature pass (`npx vitest run` on the touched test files only), `npx tsc --noEmit` clean.
+- [x] Tests for the feature pass (`npx vitest run` on the touched test files only), `npx tsc --noEmit` clean.
+
+## Comments
+
+- `panel` utility in `frontend/src/index.css` (surface fill, hairline border, `--radius-panel`, no blur/shadow). The Assets and Inspector asides, the Bottom tabs section and Meters use it; `Panel`, sheets, menus, popovers and dialogs keep `glass`. The player becomes a `panel` with ticket 04. Verified with `meters.test.tsx` and `tsc --noEmit`.
