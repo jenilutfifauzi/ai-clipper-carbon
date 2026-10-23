@@ -34,8 +34,8 @@ import { offsetAt, overlayTime, rangeOf, transitionOverlap } from "../editor/seg
 import { keyText, sameKey } from "../editor/timelineKey";
 import { fadesHalved, gestureRetime } from "./actions";
 import { ItemHandle, TimelineItem, TrackRow, type TimeGeometry } from "./AdvancedTimeline";
-import { DRAG_EFFECT, DRAG_LOOK, DRAG_MEDIA, DRAG_SHAPE, DRAG_TEXT, DRAG_TRANSITION } from "./drag";
-import { fadesWithin, ITEM_MIN_SECS, keptOffset, round, trackLanes, type AdvancedEdits } from "./edits";
+import { DRAG_EFFECT, DRAG_LOOK, DRAG_MEDIA, DRAG_SHAPE, DRAG_TEXT, DRAG_TRANSITION, useAssetDrag } from "./drag";
+import { fadesWithin, ITEM_MIN_SECS, keptOffset, round, type AdvancedEdits } from "./edits";
 import { filmstripLayer } from "./filmstrip";
 import { ItemCanvas } from "./ItemCanvas";
 import { MEDIA_MIN_SECS, SEGMENT_MIN_SECS } from "./MainTrack";
@@ -61,6 +61,7 @@ import {
   type Heard,
 } from "./timelineView";
 import { musicName } from "./Music";
+import { captionsShown, rowLanes, type LayerKind } from "./timelineRows";
 import { TRACKS, type TrackControl, type TrackKind, type TrackState } from "./trackState";
 import { waveformLayer } from "./waveform";
 
@@ -121,7 +122,8 @@ const CAPTION_SEEK_IN = 0.05;
  * Main Track (its Segments as played over their Scenes, and the joins between them), the Behind
  * Track's lanes (the Overlays Behind the Main Track, ADR 0015), the caption
  * lines, the hook, and the Music Clips' lanes. Each track takes what is dropped on it from the
- * asset panel.
+ * asset panel. Only the Tracks with something on them are drawn, and the Video Track always; an
+ * empty one shows as a row to drop on while something it takes is dragged (./timelineRows.ts).
  */
 export function Tracks({
   geometry,
@@ -157,7 +159,7 @@ export function Tracks({
   pending?: { id: string; start: number; end: number }[];
   // The Segments whose video's transcription failed, by id.
   failed?: Set<string>;
-  // Whether the Job is captioned: the Captions Track says so when it isn't.
+  // Whether the Job is captioned: the Captions Track is drawn before the plan comes when it is.
   captioned?: boolean;
   playback: Playback;
   // The Media Library, by id: names, lengths and stills.
@@ -200,11 +202,10 @@ export function Tracks({
     update();
   };
   const hookEnd = Math.min(edits.hook_start + edits.hook_secs, duration);
-  // The first lane next to the video, later ones above it; one row even when empty, to drop on.
-  const lanes = <T extends { start: number; secs: number }>(items: T[], upward: boolean) => {
-    const found = trackLanes(items);
-    return found.length ? (upward ? found.reverse() : found) : [[] as T[]];
-  };
+  // What the asset panel is dragging, for the empty Tracks that take it to show a row to drop on.
+  const dragging = useAssetDrag();
+  // The first lane next to the video, later ones above it; none when empty, but while dragging.
+  const lanes = <T extends { start: number; secs: number }>(items: T[], kind: LayerKind, upward: boolean) => rowLanes(items, kind, upward, dragging);
   const dropMedia = (track: DropTrack) => ({
     types: [DRAG_MEDIA],
     onDrop: (data: DataTransfer, clientX: number) => handlers.onDropMedia(track, data.getData(DRAG_MEDIA), geometry.timeAt(clientX)),
@@ -212,19 +213,21 @@ export function Tracks({
   const label = (kind: TrackKind) => <TrackLabel kind={kind} tracks={tracks} onTrack={onTrack} />;
   const dimmed = (kind: TrackKind) => tracks.hidden.includes(kind);
   const locked = (kind: TrackKind) => tracks.locked.includes(kind);
-  const textLanes = lanes(edits.text_layers, true);
-  const shapeLanes = lanes(edits.shapes, true);
-  const adjustLanes = lanes(listOf(edits, "adjustment"), true);
+  const textLanes = lanes(edits.text_layers, "text", true);
+  const shapeLanes = lanes(edits.shapes, "shape", true);
+  const adjustLanes = lanes(listOf(edits, "adjustment"), "adjust", true);
   // An Adjustment Layer is named by its Look, else by its first Video Effect.
   const looks = useLooks();
   const lookNames = new Map((looks ?? []).map((look) => [look.id, look.name]));
   const effects = useVideoEffects();
   const effectNames = new Map((effects ?? []).map((effect) => [effect.id, effect.name]));
-  const musicLanes = lanes(edits.music, false);
+  const musicLanes = lanes(edits.music, "music", false);
+  const cues = plan ? shownCues(plan) : [];
+  const captionsRow = captionsShown({ planned: !!plan, cues: cues.length, pending: pending.length, captioned });
   // An Overlay Track's lanes: the Overlay Track's above the Video Track (its first lane next to it,
   // later ones above), or the Behind Track's under it (ADR 0015; its first lane next to it, later ones below).
   const overlayRows = (kind: "overlay" | "behind", upward: boolean) => {
-    const overlayLanes = lanes(overlaysOn(edits.overlays, kind), upward);
+    const overlayLanes = lanes(overlaysOn(edits.overlays, kind), kind, upward);
     return overlayLanes.map((lane, i) => (
       <TrackRow
         key={`${kind}${upward ? overlayLanes.length - i : i + 1}`}
@@ -233,6 +236,7 @@ export function Tracks({
         locked={locked(kind)}
         drop={dropMedia(kind)}
       >
+        {!lane.length && <DropHint />}
         {lane.map((overlay) => {
           const selected = isPicked(pick, "overlay", overlay.id);
           const item = mediaById.get(overlay.media);
@@ -286,7 +290,7 @@ export function Tracks({
               }
               onDelete={selected ? onDelete : undefined}
             >
-              <img src={mediaThumbnailUrl(overlay.media)} alt="" className="h-6 w-auto shrink-0 rounded-sm" />
+              <img src={mediaThumbnailUrl(overlay.media)} alt="" className="h-5 w-auto shrink-0 rounded-sm" />
               <span className="truncate font-medium">{item?.name ?? "Overlay"}</span>
               <RetimingBadge retiming={overlay} />
               {overlay.muted && <MutedBadge />}
@@ -306,6 +310,7 @@ export function Tracks({
           locked={locked("text")}
           drop={{ types: [DRAG_TEXT], onDrop: (data, clientX) => handlers.onDropText(data.getData(DRAG_TEXT), geometry.timeAt(clientX)) }}
         >
+          {!lane.length && <DropHint />}
           {lane.map((layer) => {
             const selected = isPicked(pick, "text", layer.id);
             return (
@@ -344,6 +349,7 @@ export function Tracks({
           locked={locked("shape")}
           drop={{ types: [DRAG_SHAPE], onDrop: (data, clientX) => handlers.onDropShape(data.getData(DRAG_SHAPE) as ShapeKind, geometry.timeAt(clientX)) }}
         >
+          {!lane.length && <DropHint />}
           {lane.map((shape) => {
             const selected = isPicked(pick, "shape", shape.id);
             return (
@@ -388,6 +394,7 @@ export function Tracks({
                 : handlers.onDropLook(data.getData(DRAG_LOOK), geometry.timeAt(clientX)),
           }}
         >
+          {!lane.length && <DropHint />}
           {lane.map((layer) => {
             const selected = isPicked(pick, "adjustment", layer.id);
             const look = layer.grade.look ? lookNames.get(layer.grade.look) : undefined;
@@ -424,7 +431,7 @@ export function Tracks({
         </TrackRow>
       ))}
       {overlayRows("overlay", true)}
-      <TrackRow label={label("video")} height="h-14" dimmed={dimmed("video")} locked={locked("video")} drop={dropMedia("segment")}>
+      <TrackRow label={label("video")} height="h-18" data-track="video" dimmed={dimmed("video")} locked={locked("video")} drop={dropMedia("segment")}>
         {/* The Scenes' lane, under the Segments. */}
         <div aria-hidden className="pointer-events-none absolute inset-y-1 left-0 rounded-md bg-surface-raised" style={{ width: duration * pps }} />
         {played.map((shown, i) => {
@@ -512,21 +519,20 @@ export function Tracks({
               {muted && <MutedBadge />}
               {pending.some((span) => span.id === segment.id) && <TranscribingBadge />}
               {failed.has(segment.id) && <FailedBadge />}
+              {/* Its Scenes' Layouts, shown while it is hovered, focused or picked, so that a row of
+                  Segments reads as one label each. */}
+              <SceneTags scenes={plan?.scenes ?? []} shown={shown} pps={pps} picked={selected} />
             </TimelineItem>
           );
         })}
-        {/* The Scenes as planned, and their Layouts, over the Segments' frames. */}
+        {/* Where the Scenes as planned meet, over the Segments' frames. */}
         <div aria-hidden className="pointer-events-none absolute inset-y-1 left-0 overflow-hidden rounded-md" style={{ width: duration * pps }}>
           {plan?.scenes.map((scene, i) => (
             <span
               key={i}
-              className="absolute inset-y-0 border-l border-border px-1.5 pt-5 text-[10px] font-medium capitalize first:border-l-0"
+              className="absolute inset-y-0 border-l border-border first:border-l-0"
               style={{ left: scene.start * pps, width: (scene.end - scene.start) * pps }}
-            >
-              {(scene.end - scene.start) * pps > 48 && scene.layout !== "media" && (
-                <span className="rounded bg-black/50 px-1 py-px text-white/90">{scene.layout === "passthrough" ? "As shot" : scene.layout}</span>
-              )}
-            </span>
+            />
           ))}
         </div>
         {/* The joins, for Transitions: a Seam where one has a Transition, else a diamond. */}
@@ -587,71 +593,72 @@ export function Tracks({
         })}
       </TrackRow>
       {overlayRows("behind", false)}
-      <TrackRow
-        label={<TrackLabel kind="captions" tracks={tracks} onTrack={onTrack} onPick={() => onSelect({ kind: "captions" })} picked={pick?.kind === "captions"} />}
-        height="h-8"
-        dimmed={dimmed("captions")}
-        locked={locked("captions")}
-      >
-        {!captioned && (
-          <span className="pointer-events-none absolute inset-y-1 left-2 flex items-center text-[11px] text-muted">Captions are off for this Job</span>
-        )}
-        {/* Over a Segment whose captions are on their way. */}
-        {pending.map((span) => (
-          <div
-            key={span.id}
-            title="Transcribing this video for its captions"
-            className="pointer-events-none absolute inset-y-1 rounded ring-1 ring-border"
-            style={{
-              left: span.start * pps,
-              width: Math.max(2, (span.end - span.start) * pps - 1),
-              backgroundImage: "repeating-linear-gradient(135deg, var(--color-fill) 0 4px, transparent 4px 8px)",
-            }}
-          />
-        ))}
-        {plan &&
-          shownCues(plan).map(({ cue, shown }) => {
-            const selected = pick?.kind === "cue" && sameKey(pick.key, cue.key);
-            const text = cueText(cue);
-            return (
-              <TimelineItem
-                key={keyText(cue.key)}
-                geometry={geometry}
-                start={shown.start}
-                end={shown.end}
-                min={shown.low}
-                max={shown.high}
-                minSecs={shown.minSecs}
-                trimMin={shown.low}
-                trimMax={shown.high}
-                tone="neutral"
-                selected={selected || pick?.kind === "captions"}
-                label={`Caption "${text}", from ${shown.start.toFixed(2)} s to ${shown.end.toFixed(2)} s${shown.edited ? ", edited" : ""}`}
-                onSelect={() => {
-                  // Just inside the Cue, which a frame's rounding of its start can miss.
-                  playback.seek(shown.start + Math.min(CAPTION_SEEK_IN, (shown.end - shown.start) / 2));
-                  onSelect({ kind: "cue", key: cue.key });
-                }}
-                // Only a picked Cue is retimed: its edges write its Cue Edit's deltas, its body its shift.
-                onChange={
-                  selected
-                    ? (range, group) => {
-                        if (cueDrag.current?.group !== group) {
-                          cueDrag.current = { group, edit: cueEditOf(edits.cue_edits, plan, cue.key), start: shown.start, end: shown.end };
+      {/* Only with captions to show (none while the Job's captions are off), or captions on their way. */}
+      {captionsRow && (
+        <TrackRow
+          label={<TrackLabel kind="captions" tracks={tracks} onTrack={onTrack} onPick={() => onSelect({ kind: "captions" })} picked={pick?.kind === "captions"} />}
+          height="h-8"
+          dimmed={dimmed("captions")}
+          locked={locked("captions")}
+        >
+          {/* Over a Segment whose captions are on their way. */}
+          {pending.map((span) => (
+            <div
+              key={span.id}
+              title="Transcribing this video for its captions"
+              className="pointer-events-none absolute inset-y-1 rounded ring-1 ring-border"
+              style={{
+                left: span.start * pps,
+                width: Math.max(2, (span.end - span.start) * pps - 1),
+                backgroundImage: "repeating-linear-gradient(135deg, var(--color-fill) 0 4px, transparent 4px 8px)",
+              }}
+            />
+          ))}
+          {plan &&
+            cues.map(({ cue, shown }) => {
+              const selected = pick?.kind === "cue" && sameKey(pick.key, cue.key);
+              const text = cueText(cue);
+              return (
+                <TimelineItem
+                  key={keyText(cue.key)}
+                  geometry={geometry}
+                  start={shown.start}
+                  end={shown.end}
+                  min={shown.low}
+                  max={shown.high}
+                  minSecs={shown.minSecs}
+                  trimMin={shown.low}
+                  trimMax={shown.high}
+                  tone="neutral"
+                  selected={selected || pick?.kind === "captions"}
+                  label={`Caption "${text}", from ${shown.start.toFixed(2)} s to ${shown.end.toFixed(2)} s${shown.edited ? ", edited" : ""}`}
+                  onSelect={() => {
+                    // Just inside the Cue, which a frame's rounding of its start can miss.
+                    playback.seek(shown.start + Math.min(CAPTION_SEEK_IN, (shown.end - shown.start) / 2));
+                    onSelect({ kind: "cue", key: cue.key });
+                  }}
+                  // Only a picked Cue is retimed: its edges write its Cue Edit's deltas, its body its shift.
+                  onChange={
+                    selected
+                      ? (range, group) => {
+                          if (cueDrag.current?.group !== group) {
+                            cueDrag.current = { group, edit: cueEditOf(edits.cue_edits, plan, cue.key), start: shown.start, end: shown.end };
+                          }
+                          handlers.onCue(cue.key, range, group, cueDrag.current);
                         }
-                        handlers.onCue(cue.key, range, group, cueDrag.current);
-                      }
-                    : undefined
-                }
-              >
-                {shown.edited && <span aria-hidden title="Retimed" className="size-1.5 shrink-0 rounded-full bg-accent" />}
-                <span className="truncate text-[11px] font-medium">{text}</span>
-              </TimelineItem>
-            );
-          })}
-      </TrackRow>
-      <TrackRow label={label("hook")} dimmed={dimmed("hook")} locked={locked("hook")}>
-        {plan?.hook && (
+                      : undefined
+                  }
+                >
+                  {shown.edited && <span aria-hidden title="Retimed" className="size-1.5 shrink-0 rounded-full bg-accent" />}
+                  <span className="truncate text-[11px] font-medium">{text}</span>
+                </TimelineItem>
+              );
+            })}
+        </TrackRow>
+      )}
+      {/* Only with a hook. */}
+      {plan?.hook && (
+        <TrackRow label={label("hook")} height="h-8" dimmed={dimmed("hook")} locked={locked("hook")}>
           <TimelineItem
             geometry={geometry}
             start={edits.hook_start}
@@ -668,10 +675,11 @@ export function Tracks({
           >
             <span className="truncate font-medium">{plan.hook.lines.join(" ")}</span>
           </TimelineItem>
-        )}
-      </TrackRow>
+        </TrackRow>
+      )}
       {musicLanes.map((lane, i) => (
         <TrackRow key={`music${i}`} label={i === 0 ? label("music") : ""} locked={locked("music")} drop={dropMedia("music")}>
+          {!lane.length && <DropHint />}
           {lane.map((clip) => {
             const selected = isPicked(pick, "music", clip.id);
             // Of a song, or of the Source's sound (the episode's).
@@ -788,6 +796,44 @@ export function Tracks({
         </TrackRow>
       ))}
     </>
+  );
+}
+
+/** An empty Track's row while something it takes is dragged: an outline to drop in. */
+function DropHint() {
+  return <span aria-hidden className="pointer-events-none absolute inset-x-0 inset-y-1 rounded-md border border-dashed border-border" />;
+}
+
+/**
+ * The Layouts of the planned `scenes` under a Segment (as `shown`, at `pps` pixels a second), each at
+ * its Scene's start within it, where there is room: shown while the Segment is hovered or focused, or
+ * while it is `picked`, so that the Video Track reads as one label a Segment the rest of the time.
+ */
+function SceneTags({ scenes, shown, pps, picked }: { scenes: RenderPlan["scenes"]; shown: PlayedSegment; pps: number; picked: boolean }) {
+  const within = scenes.flatMap((scene) => {
+    const start = Math.max(scene.start, shown.start);
+    const end = Math.min(scene.end, shown.end);
+    return (end - start) * pps > 48 && scene.layout !== "media" ? [{ start, layout: scene.layout }] : [];
+  });
+  if (!within.length) return null;
+  return (
+    <span
+      aria-hidden
+      className={cx(
+        "pointer-events-none absolute inset-0 transition-opacity duration-150",
+        picked ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100",
+      )}
+    >
+      {within.map(({ start, layout }) => (
+        <span
+          key={start}
+          className="absolute top-5 rounded bg-black/50 px-1 py-px text-[10px] leading-none font-medium text-white/90 capitalize"
+          style={{ left: (start - shown.start) * pps + 6 }}
+        >
+          {layout === "passthrough" ? "As shot" : layout}
+        </span>
+      ))}
+    </span>
   );
 }
 

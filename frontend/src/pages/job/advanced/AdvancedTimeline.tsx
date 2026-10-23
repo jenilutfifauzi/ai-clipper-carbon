@@ -233,6 +233,25 @@ export function AdvancedTimeline({
     });
   }, [playback, view]);
 
+  // Once, as it first has room: the Video Track scrolled into view under the ruler, when the Tracks
+  // above it push it out of a short Timeline.
+  const videoShown = useRef(false);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (videoShown.current || !element || !element.clientHeight) return;
+    const video = element.querySelector<HTMLElement>("[data-track=video]");
+    if (!video) return;
+    videoShown.current = true;
+    const ruler = element.querySelector<HTMLElement>("[data-ruler]")?.offsetHeight ?? 0;
+    const top = element.getBoundingClientRect().top + element.clientTop;
+    const bottom = top + element.clientHeight;
+    const row = video.getBoundingClientRect();
+    if (row.bottom > bottom) {
+      // Its bottom at the view's, or its top under the ruler when it can't all show.
+      element.scrollTop += Math.min(row.bottom - bottom, row.top - top - ruler);
+    }
+  });
+
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element || !anchor.current) return;
@@ -471,7 +490,8 @@ export function AdvancedTimeline({
             setBand(null);
           }}
         >
-          <TrackRow label="" height="h-7">
+          {/* The ruler stays at the top as the Tracks scroll under it. */}
+          <TrackRow label="" height="h-7" className="sticky top-0 z-30 bg-bg" data-ruler>
             <Ruler duration={duration} pps={pps} />
             {loop?.region && <LoopBand region={loop.region} on={loop.on} pps={pps} fps={fps} timeAt={timeAt} onMarks={loop.onMarks} />}
             {keyMarks && <KeyMarks {...keyMarks} duration={duration} pps={pps} playback={playback} />}
@@ -499,15 +519,21 @@ export function AdvancedTimeline({
  */
 export function TrackRow({
   label,
-  height = "h-11",
+  height = "h-9",
+  className,
   drop,
   dimmed = false,
   locked = false,
   children,
+  ...data
 }: {
   label: ReactNode;
   // A Tailwind height class.
   height?: string;
+  className?: string;
+  // Marks it for finding on screen: `data-track` (the Video Track's, scrolled into view) or `data-ruler`.
+  "data-track"?: string;
+  "data-ruler"?: boolean;
   // Its items faded: its Track is hidden in the preview.
   dimmed?: boolean;
   // Its items out of reach (inert): its Track is locked. Drops still come, to be refused.
@@ -523,7 +549,8 @@ export function TrackRow({
   const takes = (data: DataTransfer) => !!drop && drop.types.some((type) => data.types.includes(type));
   return (
     <div
-      className={cx("flex shrink-0 border-b border-border last:border-b-0", height, over && "bg-accent/10")}
+      {...data}
+      className={cx("flex shrink-0 border-b border-border last:border-b-0", height, className, over && "bg-accent/10")}
       onDragOver={(event) => {
         if (!takes(event.dataTransfer)) return;
         event.preventDefault();
