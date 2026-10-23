@@ -323,7 +323,7 @@ describe("the Narrate tab", () => {
   test("names the .env settings, with Generate off, when no engine is ready", () => {
     for (const voices of [{ engines: [], default: null }, { engines: [{ ...VOICES.engines[0], ready: false }], default: null }]) {
       const html = fields(voices);
-      for (const key of ["GEMINI_API_KEY", "TTS_BASE_URL", "TTS_API_KEY", "TTS_MODEL"]) expect(html).toContain(`<code>${key}</code>`);
+      for (const key of ["GEMINI_API_KEY", "TTS_BASE_URL", "TTS_API_KEY", "TTS_MODEL", "ELEVENLABS_API_KEY"]) expect(html).toContain(`<code>${key}</code>`);
       expect(html.match(generate)![0]).toContain('disabled=""');
       expect(html).not.toContain('role="radiogroup"');
     }

@@ -310,7 +310,7 @@ class NarrationRunner:
                 narration.cancelled, engine, read, voice.id, style, speed, folder, lambda done: stage(READING, done)
             )
             stage(LEVELLING, len(read))
-            narrated = self._join(parts, lengths, pauses, 1.0 if engine.takes_speed else speed, folder / "narration.wav")
+            narrated = self._join(parts, lengths, pauses, speed / native_speed(engine, speed), folder / "narration.wav")
             stage(SAVING, len(read))
             name = f"Narration {voice.name} {self._now().strftime('%Y-%m-%d %H.%M.%S')}.wav"
             with narrated.open("rb") as file:
@@ -349,12 +349,12 @@ class NarrationRunner:
         return parts, lengths
 
     def _read(self, cancelled: threading.Event, engine: VoiceEngine, sentence: str, voice: str, style: str | None, speed: float) -> Pcm:
-        """The sentence read (at `speed` by an engine that takes one), once more after a passing
+        """The sentence read (at what of `speed` an engine that takes one reads), once more after a passing
         failure: after its Retry-After (at most MAX_RETRY_AFTER_SECS, app/voices.py), or RETRY_WAIT_SECS,
         unless a cancel comes meanwhile."""
 
         def read() -> Pcm:
-            return engine.read(sentence, voice, style, speed) if engine.takes_speed else engine.read(sentence, voice, style)
+            return engine.read(sentence, voice, style, native_speed(engine, speed)) if engine.takes_speed else engine.read(sentence, voice, style)
 
         try:
             return read()
@@ -392,6 +392,15 @@ class NarrationRunner:
         )
         _ffmpeg([*base, "-v", "error", "-y", "-filter_complex", f"{joined},{level}", "-ac", "1", "-c:a", "pcm_s16le", str(out)])
         return out
+
+
+def native_speed(engine: VoiceEngine, speed: float) -> float:
+    """What of `speed` the engine reads itself: the nearest in its speed_range, 1 for one that takes no
+    Speed. The runner retimes the rest (speed / it)."""
+    if not engine.takes_speed:
+        return 1.0
+    low, high = engine.speed_range
+    return min(max(speed, low), high)
 
 
 def _safe(name: str) -> str:
