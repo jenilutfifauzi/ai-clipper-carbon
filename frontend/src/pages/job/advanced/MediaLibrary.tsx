@@ -178,8 +178,11 @@ export function MediaCategories({
       role="tablist"
       aria-label="Media categories"
       className={cx(
-        "flex shrink-0 gap-1 overflow-x-auto",
-        column && "border-border @[20rem]/media:flex-col @[20rem]/media:overflow-visible @[20rem]/media:border-r @[20rem]/media:py-3 @[20rem]/media:pr-2",
+        "shrink-0 gap-1",
+        // In a narrow Asset Panel the four share one row, names only, so none scrolls out of sight.
+        column
+          ? "grid grid-cols-4 border-border @[20rem]/media:flex @[20rem]/media:flex-col @[20rem]/media:border-r @[20rem]/media:py-3 @[20rem]/media:pr-2"
+          : "flex overflow-x-auto",
       )}
     >
       {MEDIA_CATEGORIES.map((category) => (
@@ -192,11 +195,11 @@ export function MediaCategories({
           className={cx(
             "inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium",
             "focus-visible:outline-2 focus-visible:outline-focus",
-            column && "@[20rem]/media:min-h-8 @[20rem]/media:rounded-md @[20rem]/media:px-2",
+            column && "min-w-0 justify-center px-1 @[20rem]/media:min-h-8 @[20rem]/media:justify-start @[20rem]/media:rounded-md @[20rem]/media:px-2",
             value === category.value ? "bg-fill text-text" : "text-muted hover:bg-fill hover:text-text",
           )}
         >
-          <category.icon aria-hidden size={14} />
+          <category.icon aria-hidden size={14} className={cx(column && "@max-[20rem]/media:hidden")} />
           {category.label}
         </button>
       ))}
