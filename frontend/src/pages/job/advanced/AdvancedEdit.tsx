@@ -41,6 +41,7 @@ import { RenderButton } from "../RenderButton";
 import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
 import { CanvasContext, useCanvasOf } from "../editor/canvas";
 import { ClipPreview, type StageControls } from "../editor/ClipPreview";
+import { LoopButton, RateMenu } from "../editor/DeckTransport";
 import { ShowOriginal } from "../editor/GradeFilters";
 import { PICTURE_KEYS } from "../editor/keyframes";
 import { pictureCrop, pictureSource, withPictureCrop, withPictureTransform } from "../editor/stagePicture";
@@ -127,10 +128,12 @@ import { Divider } from "./Divider";
 import {
   ASSET_TABS,
   AssetTabs,
-  FrameStep,
+  DeckButtons,
   HistoryTools,
   ItemTools,
   PlaybackPanel,
+  previewFormat,
+  PreviewHeader,
   SaveStatus,
   Sheet,
   ShortcutsSheet,
@@ -1355,18 +1358,23 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         // Its Play button is Space: it stops a Take while one records.
         onPlay={() => void commands.play()}
         fit
-        rates={wide}
+        // The deck Transport (ADR 0025), on a desktop and a phone: no slider, the Timeline scrubs.
+        deck={{
+          before: <DeckButtons side="before" playback={playback} fps={fps} commands={commands} />,
+          after: <DeckButtons side="after" playback={playback} fps={fps} commands={commands} />,
+        }}
         tools={
           wide ? (
             <>
-              <TakeButton flow={take} atEnd={atEnd} settings={takeSettings} />
-              {holdOriginal}
               <CompareButton playback={playback} compare={checks.compare} state={checks.state} fetch={fetchCompare} />
+              {holdOriginal}
+              <TakeButton flow={take} atEnd={atEnd} settings={takeSettings} />
+              <RateMenu playback={playback} />
+              <LoopButton loop={{ on: looping, onToggle: commands.loop }} />
               {fullscreenButton}
             </>
           ) : (
             <>
-              <FrameStep playback={playback} fps={fps} commands={commands} />
               <TakeButton flow={take} atEnd={atEnd} settings={takeSettings} />
               {holdOriginal}
               {fullscreenButton}
@@ -1374,7 +1382,6 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           )
         }
         hideBar={!fullscreenBar.shown}
-        loop={wide ? { on: looping, onToggle: commands.loop } : undefined}
         over={wide && <CompareSplit state={checks.state} onClose={() => checks.compare.clear()} />}
       />
     </ShowOriginal>
@@ -1736,9 +1743,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     </>
   );
   const notes = previewError && <p className="text-center text-sm text-danger">Couldn't preview: {previewError}</p>;
-  // Above the player, but not over it full screen.
-  const aspectPicker = !fullscreen.way && (
-    <AspectPicker value={candidate.aspect} onPick={(aspect) => void pickAspect(aspect)} busy={reshaping} className="shrink-0 self-center" />
+  // The player panel's header (ADR 0025): "Preview", the Canvas and frame rate, and the Canvas Aspect.
+  const previewHeader = (
+    <PreviewHeader
+      format={previewFormat(canvas, fps)}
+      picker={<AspectPicker value={candidate.aspect} onPick={(aspect) => void pickAspect(aspect)} busy={reshaping} />}
+    />
   );
 
   if (ended) {
@@ -1820,10 +1830,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 onReset={() => layout.setAssetW(ASSET.def)}
               />
             )}
-            <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
-              {aspectPicker}
-              {room}
-              {notes}
+            <section aria-label="Player" className="panel flex min-h-0 flex-col overflow-hidden">
+              {previewHeader}
+              <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
+                {room}
+                {notes}
+              </div>
             </section>
             {!ws.inspectorHidden && (
               <Divider
@@ -1914,7 +1926,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       <div className="flex h-dvh flex-col overflow-hidden bg-bg">
         {bar}
         <section aria-label="Player" className="flex min-h-0 flex-1 flex-col gap-1 px-3 pt-1 pb-2">
-          {aspectPicker}
+          {previewHeader}
           {room}
           {notes}
         </section>

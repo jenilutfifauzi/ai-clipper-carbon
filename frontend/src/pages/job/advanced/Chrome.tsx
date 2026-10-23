@@ -21,6 +21,8 @@ import {
   Scaling,
   Scissors,
   Shuffle,
+  SkipBack,
+  SkipForward,
   SunMedium,
   SwatchBook,
   SlidersHorizontal,
@@ -576,21 +578,57 @@ function PlaybackButton({ playback, onClick }: { playback: Playback; onClick: ()
 }
 
 /**
- * The phone's frame buttons, in the player bar: the playhead a frame back or on, as ← and → do
- * (./commands.ts). Each is off at its end of the Clip.
+ * The deck Transport's buttons either side of Play: `before`, go to the start (Home) and a frame back
+ * (←); `after`, a frame on (→) and go to the last frame (End), each by its command (./commands.ts), off
+ * at its end of the Clip.
  */
-export function FrameStep({ playback, fps, commands }: { playback: Playback; fps: number; commands: Commands }) {
+export function DeckButtons({
+  side,
+  playback,
+  fps,
+  commands,
+}: {
+  side: "before" | "after";
+  playback: Playback;
+  fps: number;
+  commands: Commands;
+}) {
   const first = usePlayback(playback, (time) => onFrame(time, fps) <= 0);
   const last = usePlayback(playback, (time, p) => onFrame(time, fps) >= lastFrame(p.duration, fps));
-  return (
+  return side === "before" ? (
     <>
-      <Button variant="ghost" size="icon" onClick={commands["step-back"]} disabled={first} aria-label="One frame back">
+      <Button variant="ghost" size="icon" onClick={commands.start} disabled={first} aria-label="Go to start" aria-keyshortcuts="Home" title="Go to start (Home)">
+        <SkipBack aria-hidden size={18} />
+      </Button>
+      <Button variant="ghost" size="icon" onClick={commands["step-back"]} disabled={first} aria-label="One frame back" aria-keyshortcuts="ArrowLeft" title="One frame back (←)">
         <StepBack aria-hidden size={18} />
       </Button>
-      <Button variant="ghost" size="icon" onClick={commands["step-forward"]} disabled={last} aria-label="One frame forward">
+    </>
+  ) : (
+    <>
+      <Button variant="ghost" size="icon" onClick={commands["step-forward"]} disabled={last} aria-label="One frame forward" aria-keyshortcuts="ArrowRight" title="One frame forward (→)">
         <StepForward aria-hidden size={18} />
       </Button>
+      <Button variant="ghost" size="icon" onClick={commands.end} disabled={last} aria-label="Go to end" aria-keyshortcuts="End" title="Go to end (End)">
+        <SkipForward aria-hidden size={18} />
+      </Button>
     </>
+  );
+}
+
+/** The player panel's header line: the Canvas in output pixels and the frame rate, e.g. "1080 × 1920 · 30 fps". */
+export function previewFormat(canvas: { width: number; height: number }, fps: number): string {
+  return `${canvas.width} × ${canvas.height} · ${Number(fps.toFixed(2))} fps`;
+}
+
+/** The player panel's header, as Concat's: "Preview", the Canvas and frame rate (previewFormat), and `picker` (the Canvas Aspect). */
+export function PreviewHeader({ format, picker }: { format: string; picker?: ReactNode }) {
+  return (
+    <div className="@container flex min-h-11 shrink-0 items-center gap-2 border-b border-border px-3 py-1">
+      <h2 className="shrink-0 text-sm font-semibold">Preview</h2>
+      <p className="min-w-0 flex-1 truncate text-center text-xs text-muted tabular-nums">{format}</p>
+      <div className="shrink-0">{picker}</div>
+    </div>
   );
 }
 
