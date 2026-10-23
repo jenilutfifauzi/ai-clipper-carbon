@@ -1359,9 +1359,9 @@ function TrackLabel({
     );
   if (!onTrack) return name;
   return (
-    <span className="flex w-full items-center justify-between gap-1">
+    <span className="flex w-full items-center justify-between gap-2 pr-0.5">
       {name}
-      <span className="flex shrink-0">
+      <span className="flex shrink-0 items-center gap-0.5">
         {hide && (
           <TrackButton
             on={hidden}

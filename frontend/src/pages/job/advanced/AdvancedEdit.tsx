@@ -41,6 +41,7 @@ import { RenderButton } from "../RenderButton";
 import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
 import { CanvasContext, useCanvasOf } from "../editor/canvas";
 import { ClipPreview, type StageControls } from "../editor/ClipPreview";
+import { LoopButton, RateMenu } from "../editor/DeckTransport";
 import { ShowOriginal } from "../editor/GradeFilters";
 import { PICTURE_KEYS } from "../editor/keyframes";
 import { pictureCrop, pictureSource, withPictureCrop, withPictureTransform } from "../editor/stagePicture";
@@ -125,11 +126,15 @@ import {
 } from "./workspaceLayout";
 import { Divider } from "./Divider";
 import {
+  AddTools,
   ASSET_TABS,
   AssetTabs,
-  FrameStep,
+  DeckButtons,
+  HistoryTools,
   ItemTools,
   PlaybackPanel,
+  previewFormat,
+  PreviewHeader,
   SaveStatus,
   Sheet,
   ShortcutsSheet,
@@ -153,7 +158,7 @@ import { keysOf, resolveShortcut } from "./keymap";
 import { longestClip, newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
 import { MediaCaptionFields } from "./MediaCaptionFields";
-import { useMediaLibrary } from "./MediaLibrary";
+import { MediaCategories, useMediaLibrary, type MediaCategory } from "./MediaLibrary";
 import { listenNarration, NarrateFlow, narratedTitle } from "./narrate";
 import { NarratePanel } from "./NarratePanel";
 import { CompareButton, CompareSplit, HoldOriginalButton, usePlayerChecks } from "./PlayerChecks";
@@ -286,6 +291,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // picture's Transform, of the picked item's Speed or Audio effects, of the Tracks or of Playback.
   const [sheet, setSheet] = useState<AssetTab | "inspector" | "transform" | "speed" | "adjust" | "effects" | "tracks" | "playback" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
+  // The Media tab's category, kept while other tabs are open.
+  const [mediaCategory, setMediaCategory] = useState<MediaCategory>("all");
   // The Look a Filters card under the mouse auditions: the preview drawn in it, nothing saved.
   const [audition, setAudition] = useState<string | null>(null);
   // The Video Effect an Effects card under the mouse auditions: drawn on the Pick, nothing saved.
@@ -312,6 +319,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [bottomTab, setBottomTab] = useBottomTab();
   // The remembered desktop workspace: sidebar widths, bottom height and which panels are collapsed.
   const ws = layout.use();
+  // An asset tab opened from elsewhere (the timeline toolbar's Add Text and Add Audio): on a desktop in
+  // the Asset Panel, shown again if it was collapsed; on a phone, its sheet.
+  const openAsset = (tab: AssetTab, category?: MediaCategory) => {
+    setAssetTab(tab);
+    if (category) setMediaCategory(category);
+    if (!wide) setSheet(tab);
+    else if (ws.assetHidden) layout.setAssetHidden(false);
+  };
   // The desktop grid, measured on a Divider's pointer-down for the player-floor clamp (its width in
   // rem), and the snapshot each Divider drag captures then (the value being dragged and the DOM reads),
   // so each move's maths is pure (workspaceLayout.ts). A ref, not state: a drag never re-renders here.
@@ -1352,18 +1367,23 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         // Its Play button is Space: it stops a Take while one records.
         onPlay={() => void commands.play()}
         fit
-        rates={wide}
+        // The deck Transport (ADR 0025), on a desktop and a phone: no slider, the Timeline scrubs.
+        deck={{
+          before: <DeckButtons side="before" playback={playback} fps={fps} commands={commands} />,
+          after: <DeckButtons side="after" playback={playback} fps={fps} commands={commands} />,
+        }}
         tools={
           wide ? (
             <>
-              <TakeButton flow={take} atEnd={atEnd} settings={takeSettings} />
-              {holdOriginal}
               <CompareButton playback={playback} compare={checks.compare} state={checks.state} fetch={fetchCompare} />
+              {holdOriginal}
+              <TakeButton flow={take} atEnd={atEnd} settings={takeSettings} />
+              <RateMenu playback={playback} />
+              <LoopButton loop={{ on: looping, onToggle: commands.loop }} />
               {fullscreenButton}
             </>
           ) : (
             <>
-              <FrameStep playback={playback} fps={fps} commands={commands} />
               <TakeButton flow={take} atEnd={atEnd} settings={takeSettings} />
               {holdOriginal}
               {fullscreenButton}
@@ -1371,7 +1391,6 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           )
         }
         hideBar={!fullscreenBar.shown}
-        loop={wide ? { on: looping, onToggle: commands.loop } : undefined}
         over={wide && <CompareSplit state={checks.state} onClose={() => checks.compare.clear()} />}
       />
     </ShowOriginal>
@@ -1401,12 +1420,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       playback={playback}
       fps={fps}
       snapPoints={edgesOf(edits, played, { hidden: tracks.hidden, moving: pick })}
-      tools={
-        <>
-          <MagneticToggle />
-          <ItemTools actions={actions} splitter={splits} freezer={freezes} playback={playback} paste={pasteHere} />
-        </>
-      }
+      history={<HistoryTools history={history} />}
+      tools={<ItemTools actions={actions} splitter={splits} freezer={freezes} playback={playback} paste={pasteHere} />}
+      modes={<MagneticToggle />}
+      adds={<AddTools onText={() => openAsset("text")} onAudio={() => openAsset("media", "audio")} />}
       onBand={(items, band, add) => select(bandPick(pick, items, band, add))}
       onClear={() => select(null)}
       toFit={(timeline) => zoomToFit({ pick, edits, played, duration }, timeline)}
@@ -1572,6 +1589,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const assets = (tab: AssetTab) => (
     <AssetPanel
       tab={tab}
+      category={mediaCategory}
       fonts={fonts}
       library={library}
       transcript={job.transcript}
@@ -1664,10 +1682,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             }
           />
         }
-        history={history}
+        layout={layoutControls}
+        compact={!wide}
         actions={
           <>
-            {layoutControls}
             {job.options.captions && (
               <Downloads jobId={job.id} candidateId={initial.id} title={candidate.title} saving={saving > 0} />
             )}
@@ -1732,9 +1750,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     </>
   );
   const notes = previewError && <p className="text-center text-sm text-danger">Couldn't preview: {previewError}</p>;
-  // Above the player, but not over it full screen.
-  const aspectPicker = !fullscreen.way && (
-    <AspectPicker value={candidate.aspect} onPick={(aspect) => void pickAspect(aspect)} busy={reshaping} className="shrink-0 self-center" />
+  // The player panel's header (ADR 0025): "Preview", the Canvas and frame rate, and the Canvas Aspect.
+  const previewHeader = (
+    <PreviewHeader
+      format={previewFormat(canvas, fps)}
+      picker={<AspectPicker value={candidate.aspect} onPick={(aspect) => void pickAspect(aspect)} busy={reshaping} />}
+    />
   );
 
   if (ended) {
@@ -1774,11 +1795,24 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 padding 0.75rem + the sidebar's width + half the 0.75rem gap). A collapsed sidebar
                 renders no Divider, so it exposes no separator. */}
             {!ws.assetHidden && (
-              <aside aria-label="Assets" className="glass flex min-h-0 flex-col overflow-hidden rounded-panel">
+              <aside aria-label="Assets" className="panel flex min-h-0 flex-col overflow-hidden">
                 <AssetTabs value={assetTab} onChange={setAssetTab} />
-                {/* Its top space is a spacer, not padding: padding would hold the tabs' sticky shelf
-                    headings below the top edge, with the cards scrolling past above them. */}
-                <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 before:block before:h-4 before:content-['']">{assets(assetTab)}</div>
+                {/* The Media tab's categories: a column beside its items once the panel is wide enough,
+                    else chips above them (MediaCategories). */}
+                <div className="@container/media flex min-h-0 flex-1 flex-col">
+                  <div className="flex min-h-0 flex-1 flex-col @[20rem]/media:flex-row">
+                    {assetTab === "media" && (
+                      <div className="shrink-0 px-4 pt-3 @[20rem]/media:pt-0 @[20rem]/media:pr-0">
+                        <MediaCategories value={mediaCategory} onChange={setMediaCategory} column />
+                      </div>
+                    )}
+                    {/* Its top space is a spacer, not padding: padding would hold the tabs' sticky shelf
+                        headings below the top edge, with the cards scrolling past above them. */}
+                    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 pb-4 before:block before:h-4 before:content-['']">
+                      {assets(assetTab)}
+                    </div>
+                  </div>
+                </div>
               </aside>
             )}
             {!ws.assetHidden && (
@@ -1803,10 +1837,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 onReset={() => layout.setAssetW(ASSET.def)}
               />
             )}
-            <section aria-label="Player" className="flex min-h-0 flex-col gap-2">
-              {aspectPicker}
-              {room}
-              {notes}
+            <section aria-label="Player" className="panel flex min-h-0 flex-col overflow-hidden">
+              {previewHeader}
+              <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
+                {room}
+                {notes}
+              </div>
             </section>
             {!ws.inspectorHidden && (
               <Divider
@@ -1833,7 +1869,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               />
             )}
             {!ws.inspectorHidden && (
-              <aside aria-label="Inspector" className="glass min-h-0 overflow-y-auto rounded-panel p-4">
+              <aside aria-label="Inspector" className="panel min-h-0 overflow-y-auto p-4">
                 {inspector}
               </aside>
             )}
@@ -1842,7 +1878,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           <div className="mx-3 flex min-h-0 gap-3" style={{ height: bottomHeightCss(ws) }}>
             <section
               aria-label="Timeline and Keyframes"
-              className="glass relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-panel"
+              className="panel relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
             >
               <BottomTabs value={bottomTab} onChange={setBottomTab} />
               {/* The bottom Divider: a grab strip along this section's top edge (the section is clipped, so
@@ -1896,10 +1932,15 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     <CanvasContext.Provider value={canvas}>
       <div className="flex h-dvh flex-col overflow-hidden bg-bg">
         {bar}
-        <section aria-label="Player" className="flex min-h-0 flex-1 flex-col gap-1 px-3 pt-1 pb-2">
-          {aspectPicker}
-          {room}
-          {notes}
+        {/* The desktop's player panel, flat (ADR 0025), its header and deck Transport the same. */}
+        <section aria-label="Player" className="flex min-h-0 flex-1 flex-col px-3 pt-1 pb-2">
+          <div className="panel flex min-h-0 flex-1 flex-col overflow-hidden">
+            {previewHeader}
+            <div className="flex min-h-0 flex-1 flex-col gap-1 p-2">
+              {room}
+              {notes}
+            </div>
+          </div>
         </section>
         <section aria-label="Timeline" className="flex h-[30dvh] min-h-44 flex-col border-t border-border">
           {timeline}
@@ -2024,6 +2065,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               <TracksPanel tracks={tracks} onTrack={toggleTrack} />
             ) : sheet === "playback" ? (
               <PlaybackPanel playback={playback} commands={commands} region={region} looping={looping} editPoints={points} fps={fps} />
+            ) : sheet === "media" ? (
+              <div className="flex flex-col gap-3">
+                <MediaCategories value={mediaCategory} onChange={setMediaCategory} />
+                {assets(sheet)}
+              </div>
             ) : (
               assets(sheet)
             )}

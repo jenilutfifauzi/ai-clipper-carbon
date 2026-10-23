@@ -1,10 +1,12 @@
 import { useId, useState, type ReactNode } from "react";
 import { cx } from "../format";
+import { INLINE_LABEL, useInline } from "./inspectorLayout";
 
 const HEX = /^#[0-9a-f]{6}$/i;
 
 // A colour: the system picker in a swatch, and its #RRGGBB code, editable. A code is taken once it
-// is a whole colour. `after` goes beside the code (a key colour's eyedropper).
+// is a whole colour. `after` goes beside the code (a key colour's eyedropper). In the Inspector
+// (inspectorLayout.ts) the label goes left of the swatch and code.
 export function ColorField({
   label,
   value,
@@ -22,13 +24,14 @@ export function ColorField({
 }) {
   const id = useId();
   const [typed, setTyped] = useState<string | null>(null);
+  const inline = useInline();
   return (
-    <div className={cx("flex min-w-0 flex-col gap-1", className)}>
-      <label htmlFor={`${id}-code`} className="flex items-center gap-1.5 text-sm font-medium">
-        {label}
+    <div className={cx(inline ? "flex min-w-0 items-center gap-2" : "flex min-w-0 flex-col gap-1", className)}>
+      <label htmlFor={`${id}-code`} className={inline ? INLINE_LABEL : "flex items-center gap-1.5 text-sm font-medium"}>
+        {inline ? <span className="min-w-0 truncate">{label}</span> : label}
         {marker}
       </label>
-      <div className="flex items-center gap-2">
+      <div className={inline ? "flex min-w-0 flex-1 items-center gap-2" : "flex items-center gap-2"}>
         <input
           type="color"
           value={value.toLowerCase()}

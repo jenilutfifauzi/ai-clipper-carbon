@@ -1,9 +1,10 @@
 // .scratch/workspace-layout/issues/01: the Advanced Edit's hand-built, browser-remembered layout —
 // the pure clamp/fit helpers, the store merged over defaults, reset, and the one-time migration
-// from the old keyframes-pane switch.
+// from the old keyframes-pane switch; and the Inspector's folded groups (.scratch/workspace-polish/issues/05).
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   ASSET,
+  asFoldedGroups,
   BOTTOM,
   bottomHeightCss,
   clampBottomH,
@@ -11,9 +12,11 @@ import {
   clampWidth,
   DEFAULT_LAYOUT,
   fitSidebars,
+  foldGroup,
   gridTemplateColumns,
   INSPECTOR,
   layout,
+  MAX_FOLDED,
   migrateOnce,
   nextBottomH,
   nextSidebarW,
@@ -279,6 +282,48 @@ describe("store setters", () => {
   });
 });
 
+describe("folded groups", () => {
+  test("asFoldedGroups keeps strings only, each once, at most MAX_FOLDED of the latest", () => {
+    expect(asFoldedGroups(["Time", 3, null, "Time", "Transform", { a: 1 }])).toEqual(["Time", "Transform"]);
+    expect(asFoldedGroups("Time")).toEqual([]);
+    expect(asFoldedGroups(undefined)).toEqual([]);
+    const many = Array.from({ length: MAX_FOLDED + 5 }, (_, i) => `Scene ${i}`);
+    expect(asFoldedGroups(many)).toEqual(many.slice(-MAX_FOLDED));
+  });
+
+  test("foldGroup folds and opens a title, and hands back the same array when nothing changes", () => {
+    const folded = ["Time"];
+    expect(foldGroup(folded, "Time", true)).toBe(folded);
+    expect(foldGroup(folded, "Transform", false)).toBe(folded);
+    expect(foldGroup(folded, "Transform", true)).toEqual(["Time", "Transform"]);
+    expect(foldGroup(folded, "Time", false)).toEqual([]);
+  });
+
+  test("a stored bad list is normalised on the way out", () => {
+    vi.stubGlobal(
+      "localStorage",
+      fakeStorage({ "ai-clipper-advanced-layout": JSON.stringify({ foldedGroups: ["Look", "Look", 7, "Sound"] }) }),
+    );
+    expect(layout.read().foldedGroups).toEqual(["Look", "Sound"]);
+    vi.stubGlobal("localStorage", fakeStorage({ "ai-clipper-advanced-layout": JSON.stringify({ foldedGroups: "Look" }) }));
+    expect(layout.read().foldedGroups).toEqual([]);
+  });
+
+  test("setGroupFolded remembers each group by title, and writes nothing when it already is", () => {
+    const storage = fakeStorage({ "ai-clipper-advanced-layout": JSON.stringify(DEFAULT_LAYOUT) });
+    vi.stubGlobal("localStorage", storage);
+    layout.setGroupFolded("Transform", true);
+    layout.setGroupFolded("Time", true);
+    layout.setGroupFolded("Transform", false);
+    expect(JSON.parse(storage.map.get("ai-clipper-advanced-layout")!).foldedGroups).toEqual(["Time"]);
+
+    const setItem = vi.spyOn(storage, "setItem");
+    layout.setGroupFolded("Time", true);
+    layout.setGroupFolded("Look", false);
+    expect(setItem).not.toHaveBeenCalled();
+  });
+});
+
 describe("resetLayout", () => {
   test("restores sizes and collapse but preserves the open bottom tab", () => {
     vi.stubGlobal("localStorage", fakeStorage());
@@ -289,6 +334,13 @@ describe("resetLayout", () => {
     layout.resetLayout();
 
     expect(layout.read()).toEqual({ ...DEFAULT_LAYOUT, bottomTab: "meters" });
+  });
+
+  test("opens every folded Inspector group again", () => {
+    vi.stubGlobal("localStorage", fakeStorage());
+    layout.setGroupFolded("Transform", true);
+    layout.resetLayout();
+    expect(layout.read().foldedGroups).toEqual([]);
   });
 });
 

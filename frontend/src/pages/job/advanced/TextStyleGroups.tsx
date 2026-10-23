@@ -112,7 +112,7 @@ export function PlateGroup({ style }: { style: StyleAccess }) {
             format={plate.format("radius", px)}
             onChange={(radius) => plate.set("radius", radius)}
           />
-          <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-2.5">
             <Slider
               label="Padding across"
               value={plate.value("padding_x")}

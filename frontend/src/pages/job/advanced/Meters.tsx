@@ -58,7 +58,7 @@ export function Meters({ playback }: { playback: Playback }) {
     <aside
       aria-label="Meters"
       title="The preview's peak level, left and right. The render is normalized to −14 LUFS afterwards, so its level will differ."
-      className="glass grid shrink-0 grid-cols-[1.5rem_0.625rem_0.625rem] grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-x-1 gap-y-1.5 rounded-panel px-2.5 py-3"
+      className="panel grid shrink-0 grid-cols-[1.5rem_0.625rem_0.625rem] grid-rows-[auto_minmax(0,1fr)_auto_auto] gap-x-1 gap-y-1.5 px-2.5 py-3"
     >
       <button
         type="button"

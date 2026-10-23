@@ -1,6 +1,7 @@
 // .scratch/workspace-layout/issues/01, ADR 0024: the Advanced Edit's workspace is hand-built and
 // browser-remembered — the sidebars' widths and the bottom area's height, which sidebars are
-// collapsed, and the open bottom tab, all under one key. Sizes are clamped to their bounds and the
+// collapsed, the open bottom tab, and the Inspector's folded groups (.scratch/workspace-polish/issues/05),
+// all under one key. Sizes are clamped to their bounds and the
 // visible sidebars always leave the player a floor of width (the floor beats a sidebar's max). Widths
 // are in rem, the bottom's height in dvh.
 import { useSyncExternalStore } from "react";
@@ -22,6 +23,8 @@ export type WorkspaceLayout = {
   assetHidden: boolean;
   inspectorHidden: boolean;
   bottomTab: BottomTab;
+  // The titles of the Inspector's groups folded shut; every other group is open.
+  foldedGroups: string[];
 };
 
 export const DEFAULT_LAYOUT: WorkspaceLayout = {
@@ -31,11 +34,16 @@ export const DEFAULT_LAYOUT: WorkspaceLayout = {
   assetHidden: false,
   inspectorHidden: false,
   bottomTab: "timeline",
+  foldedGroups: [],
 };
 
 const KEY = "ai-clipper-advanced-layout";
 const OLD_KEYFRAMES_KEY = "ai-clipper-keyframes-pane";
 const BOTTOM_TABS: BottomTab[] = ["timeline", "keyframes", "meters"];
+
+// At most this many folded titles are kept, the latest folded last: a group's title can carry a
+// number ("Scene 3 at the playhead"), so the list is bounded rather than left to grow.
+export const MAX_FOLDED = 64;
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
@@ -47,6 +55,16 @@ export const clampBottomH = (value: number) => clamp(value, BOTTOM.min, BOTTOM.m
 
 const asBottomTab = (value: unknown): BottomTab =>
   BOTTOM_TABS.includes(value as BottomTab) ? (value as BottomTab) : "timeline";
+
+/** The folded titles as stored, made sound: strings only, each once, at most MAX_FOLDED (the latest). */
+export const asFoldedGroups = (value: unknown): string[] =>
+  Array.isArray(value) ? [...new Set(value.filter((title): title is string => typeof title === "string"))].slice(-MAX_FOLDED) : [];
+
+/** `folded` with `title` folded shut or opened; the same array when that changes nothing. */
+export function foldGroup(folded: string[], title: string, shut: boolean): string[] {
+  if (folded.includes(title) === shut) return folded;
+  return shut ? asFoldedGroups([...folded, title]) : folded.filter((each) => each !== title);
+}
 
 /**
  * Shorten the visible sidebars, if need be, so that a container `availableRem` wide still leaves the
@@ -160,6 +178,7 @@ const normalise = (raw: Partial<WorkspaceLayout> | null | undefined): WorkspaceL
     assetHidden: Boolean(merged.assetHidden),
     inspectorHidden: Boolean(merged.inspectorHidden),
     bottomTab: asBottomTab(merged.bottomTab),
+    foldedGroups: asFoldedGroups(merged.foldedGroups),
   };
 };
 
@@ -190,10 +209,16 @@ export const layout = {
   setAssetHidden: (hidden: boolean) => write({ ...current(), assetHidden: hidden }),
   setInspectorHidden: (hidden: boolean) => write({ ...current(), inspectorHidden: hidden }),
   setBottomTab: (tab: BottomTab) => write({ ...current(), bottomTab: asBottomTab(tab) }),
-  /** Back to the defaults, but keep the open bottom tab. */
+  /** The Inspector group `title` folded shut or opened; nothing written when it already is. */
+  setGroupFolded: (title: string, folded: boolean) => {
+    const now = current();
+    const next = foldGroup(now.foldedGroups, title, folded);
+    if (next !== now.foldedGroups) write({ ...now, foldedGroups: next });
+  },
+  /** Back to the defaults, every Inspector group open again, but keep the open bottom tab. */
   resetLayout: () => write({ ...DEFAULT_LAYOUT, bottomTab: current().bottomTab }),
   /** The current layout as a React hook. */
-  use: (): WorkspaceLayout => useSyncExternalStore(stored.subscribe, current),
+  use: (): WorkspaceLayout => useSyncExternalStore(stored.subscribe, current, current),
 };
 
 /**

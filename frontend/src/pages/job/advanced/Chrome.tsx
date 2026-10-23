@@ -3,12 +3,12 @@ import {
   ArrowLeft,
   ArrowLeftToLine,
   ArrowRightToLine,
-  AudioLines,
   AudioWaveform,
   Check,
   ClipboardCopy,
   ClipboardPaste,
   Copy,
+  Ellipsis,
   FastForward,
   Film,
   FoldHorizontal,
@@ -22,6 +22,8 @@ import {
   Scaling,
   Scissors,
   Shuffle,
+  SkipBack,
+  SkipForward,
   SunMedium,
   SwatchBook,
   SlidersHorizontal,
@@ -38,7 +40,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Button } from "../../../components/Button";
 import { Segmented } from "../../../components/Segmented";
 import { cx, formatPrecise } from "../../../format";
@@ -57,12 +59,12 @@ import type { EditHistory } from "./useEditHistory";
 // phone's toolbar, frame buttons, Playback sheet and bottom sheet, the timeline's buttons for the
 // picked item, and the shortcuts sheet.
 
-export type AssetTab = "text" | "stickers" | "audio" | "narrate" | "media" | "transitions" | "filters" | "effects" | "templates";
+// Media holds the songs too, under its Audio category (ADR 0025): there is no Audio tab.
+export type AssetTab = "text" | "stickers" | "narrate" | "media" | "transitions" | "filters" | "effects" | "templates";
 
 export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[] = [
   { value: "text", label: "Text", icon: Type },
   { value: "stickers", label: "Stickers", icon: Sticker },
-  { value: "audio", label: "Audio", icon: AudioLines },
   { value: "narrate", label: "Narrate", icon: Speech },
   { value: "media", label: "Media", icon: Film },
   { value: "transitions", label: "Transitions", icon: Shuffle },
@@ -75,79 +77,127 @@ export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[]
 // applies one, or "No Template", only.
 export const PHONE_ASSET_TABS = ASSET_TABS.filter((tab) => tab.value !== "effects");
 
-// The Asset Panel's tabs. Their names go (kept for a screen reader and in a tooltip) when the panel
-// is too narrow for all nine, as at its default width, rather than cut off the last tabs.
+// The Asset Panel's tabs, as Concat's: each an icon over its name, the open one on a filled
+// background. Every tab keeps its name: two rows of four in a narrow panel (its default width), one
+// row once it is widened.
 export function AssetTabs({ value, onChange }: { value: AssetTab; onChange: (tab: AssetTab) => void }) {
   return (
-    <div role="tablist" aria-label="Assets" className="@container flex gap-1 border-b border-border p-2">
-      {ASSET_TABS.map((tab) => (
-        <button
-          key={tab.value}
-          type="button"
-          role="tab"
-          aria-selected={value === tab.value}
-          onClick={() => onChange(tab.value)}
-          title={tab.label}
-          className={cx(
-            "flex min-h-11 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-[10px] text-[11px] font-medium @[18rem]:min-h-14",
-            "focus-visible:outline-2 focus-visible:outline-focus",
-            value === tab.value ? "raised text-text" : "text-muted hover:bg-fill hover:text-text",
-          )}
-        >
-          <tab.icon aria-hidden size={18} />
-          <span className="sr-only @[18rem]:not-sr-only">{tab.label}</span>
-        </button>
-      ))}
+    <div className="@container border-b border-border p-1.5">
+      <div role="tablist" aria-label="Assets" className="grid grid-cols-4 gap-0.5 @[30rem]:grid-cols-8">
+        {ASSET_TABS.map((tab) => (
+          <button
+            key={tab.value}
+            type="button"
+            role="tab"
+            aria-selected={value === tab.value}
+            onClick={() => onChange(tab.value)}
+            title={tab.label}
+            className={cx(
+              "flex min-h-13 min-w-0 flex-col items-center justify-center gap-1 rounded-md px-0.5 text-[10px] font-medium",
+              "focus-visible:outline-2 focus-visible:outline-focus",
+              value === tab.value ? "bg-fill text-text [&>svg]:text-accent-text" : "text-muted hover:bg-fill hover:text-text",
+            )}
+          >
+            <tab.icon aria-hidden size={18} />
+            <span className="max-w-full truncate">{tab.label}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
 
+// A thin rule between groups of buttons, in the top bar and the timeline's toolbar.
+export function ToolDivider() {
+  return <span aria-hidden className="mx-1 h-6 w-px shrink-0 bg-border" />;
+}
+
+/**
+ * The Advanced Edit's top bar, as Concat's: Back on the left; the Candidate's title and its save
+ * status centred (on a phone, beside Back); on the right its groups, each set off by a divider — the
+ * Workspace's `layout` controls and the shortcuts sheet, the document `actions` (Downloads, Save Frame,
+ * Revision History, Save as Template), then the `primary` action, Export. Undo and redo are the
+ * timeline toolbar's. A `compact` bar (a phone's) keeps the title's room: its document actions fold
+ * behind a More button into a row under the bar.
+ */
 export function TopBar({
   title,
   status,
-  history,
+  layout,
   actions,
   primary,
+  compact = false,
   onShortcuts,
   onClose,
 }: {
   title: string;
   status: ReactNode;
-  history: EditHistory<AdvancedEdits>;
-  // Beside undo and redo, such as the Revision History.
+  // The Workspace's collapses and reset: a desktop's.
+  layout?: ReactNode;
+  // Document actions, such as the Revision History.
   actions?: ReactNode;
-  // The editor's main action, such as Export: last, after undo and redo, set off by a divider.
+  // The editor's main action, such as Export: last, set off by a divider.
   primary?: ReactNode;
+  // A phone's: `actions` go behind More, into a row under the bar.
+  compact?: boolean;
   // Opens the shortcuts sheet: on a desktop only.
   onShortcuts?: () => void;
   onClose: () => void;
 }) {
-  return (
-    <header className="flex min-h-14 items-center gap-2 px-2 pt-[env(safe-area-inset-top)] sm:px-3">
-      <Button variant="ghost" size="icon" onClick={onClose} aria-label="Back to the clip editor">
-        <ArrowLeft aria-hidden size={18} />
-      </Button>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <h1 className="truncate text-sm font-semibold sm:text-base">{title}</h1>
-        <div className="truncate text-xs text-muted">{status}</div>
-      </div>
-      {actions}
+  const view = (layout || onShortcuts) && (
+    <>
+      {layout}
       {onShortcuts && (
         <Button variant="ghost" size="icon" onClick={onShortcuts} aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">
           <Keyboard aria-hidden size={18} />
         </Button>
       )}
-      <Button variant="ghost" size="icon" onClick={history.undo} disabled={!history.canUndo} aria-label="Undo">
-        <Undo2 aria-hidden size={18} />
-      </Button>
-      <Button variant="ghost" size="icon" onClick={history.redo} disabled={!history.canRedo} aria-label="Redo">
-        <Redo2 aria-hidden size={18} />
-      </Button>
-      {primary && (
-        <>
-          <span aria-hidden className="mx-1 h-6 w-px shrink-0 bg-border" />
-          {primary}
-        </>
+    </>
+  );
+  const [more, setMore] = useState(false);
+  const tray = useId();
+  const folded = compact && actions;
+  const shown = folded ? null : actions;
+  return (
+    <header className="border-b border-border pt-[env(safe-area-inset-top)]">
+      <div className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,auto)_minmax(0,1fr)] sm:px-3">
+        <div className="flex min-w-0 items-center">
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Back to the clip editor" title="Back to the clip editor">
+            <ArrowLeft aria-hidden size={18} />
+          </Button>
+        </div>
+        <div className="flex min-w-0 flex-col sm:items-center sm:text-center">
+          <h1 className="max-w-full truncate text-sm font-semibold sm:text-base">{title}</h1>
+          <div className="max-w-full truncate text-xs text-muted">{status}</div>
+        </div>
+        <div className="flex min-w-0 items-center justify-end gap-1">
+          {view}
+          {view && shown && <ToolDivider />}
+          {shown}
+          {folded && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setMore((open) => !open)}
+              aria-label="More actions"
+              aria-expanded={more}
+              aria-controls={tray}
+            >
+              <Ellipsis aria-hidden size={18} />
+            </Button>
+          )}
+          {primary && (
+            <>
+              {(view || shown) && <ToolDivider />}
+              {primary}
+            </>
+          )}
+        </div>
+      </div>
+      {folded && (
+        <div id={tray} role="group" aria-label="More actions" className={cx("items-center justify-end gap-1 px-2 pb-1.5", more ? "flex" : "hidden")}>
+          {actions}
+        </div>
       )}
     </header>
   );
@@ -305,10 +355,13 @@ export function Toolbar({
         </>
       ) : (
         <>
+          {/* Adjust sits beside the Filters tab: both are the Clip's Grade with nothing picked. */}
           {PHONE_ASSET_TABS.map((tab) => (
-            <ToolButton key={tab.value} icon={tab.icon} label={tab.label} onClick={() => onAsset(tab.value)} />
+            <Fragment key={tab.value}>
+              <ToolButton icon={tab.icon} label={tab.label} onClick={() => onAsset(tab.value)} />
+              {tab.value === "filters" && onAdjust && <ToolButton icon={SunMedium} label="Adjust" onClick={onAdjust} />}
+            </Fragment>
           ))}
-          {onAdjust && <ToolButton icon={SunMedium} label="Adjust" onClick={onAdjust} />}
           <SplitButton splitter={splitter} playback={playback} />
           <FreezeButton freezer={freezer} playback={playback} />
           <PlaybackButton playback={playback} onClick={onPlayback} />
@@ -452,6 +505,43 @@ export function ShortcutsSheet({ open, onClose }: { open: boolean; onClose: () =
   );
 }
 
+// The timeline toolbar's first group: undo and redo, next to the edits they take back.
+export function HistoryTools({ history }: { history: EditHistory<AdvancedEdits> }) {
+  const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
+  return (
+    <>
+      <Button variant="ghost" size="icon" onClick={history.undo} disabled={!history.canUndo} aria-label="Undo" title={`Undo (${shortcut}Z)`}>
+        <Undo2 aria-hidden size={17} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={history.redo}
+        disabled={!history.canRedo}
+        aria-label="Redo"
+        title={`Redo (${shortcut === "⌘" ? "⇧⌘Z" : "Ctrl+Y"})`}
+      >
+        <Redo2 aria-hidden size={17} />
+      </Button>
+    </>
+  );
+}
+
+// The timeline toolbar's adding group: Text opens the Text tab, Audio the Media tab on its Audio
+// category (on a phone, their sheets), revealing the Asset Panel if it was collapsed.
+export function AddTools({ onText, onAudio }: { onText: () => void; onAudio: () => void }) {
+  return (
+    <>
+      <Button variant="ghost" size="icon" onClick={onText} aria-label="Add text" title="Add text: the Text tab">
+        <Type aria-hidden size={17} />
+      </Button>
+      <Button variant="ghost" size="icon" onClick={onAudio} aria-label="Add audio" title="Add audio: the Media tab's Audio">
+        <Volume2 aria-hidden size={17} />
+      </Button>
+    </>
+  );
+}
+
 /**
  * The timeline bar's buttons: split at the playhead (the picked items, or with nothing picked
  * everything there); for the picked items, duplicate, copy and delete; and paste what the Clipboard
@@ -533,21 +623,59 @@ function PlaybackButton({ playback, onClick }: { playback: Playback; onClick: ()
 }
 
 /**
- * The phone's frame buttons, in the player bar: the playhead a frame back or on, as ← and → do
- * (./commands.ts). Each is off at its end of the Clip.
+ * The deck Transport's buttons either side of Play: `before`, go to the start (Home) and a frame back
+ * (←); `after`, a frame on (→) and go to the last frame (End), each by its command (./commands.ts), off
+ * at its end of the Clip.
  */
-export function FrameStep({ playback, fps, commands }: { playback: Playback; fps: number; commands: Commands }) {
+export function DeckButtons({
+  side,
+  playback,
+  fps,
+  commands,
+}: {
+  side: "before" | "after";
+  playback: Playback;
+  fps: number;
+  commands: Commands;
+}) {
   const first = usePlayback(playback, (time) => onFrame(time, fps) <= 0);
   const last = usePlayback(playback, (time, p) => onFrame(time, fps) >= lastFrame(p.duration, fps));
-  return (
+  return side === "before" ? (
     <>
-      <Button variant="ghost" size="icon" onClick={commands["step-back"]} disabled={first} aria-label="One frame back">
+      <Button variant="ghost" size="icon" onClick={commands.start} disabled={first} aria-label="Go to start" aria-keyshortcuts="Home" title="Go to start (Home)">
+        <SkipBack aria-hidden size={18} />
+      </Button>
+      <Button variant="ghost" size="icon" onClick={commands["step-back"]} disabled={first} aria-label="One frame back" aria-keyshortcuts="ArrowLeft" title="One frame back (←)">
         <StepBack aria-hidden size={18} />
       </Button>
-      <Button variant="ghost" size="icon" onClick={commands["step-forward"]} disabled={last} aria-label="One frame forward">
+    </>
+  ) : (
+    <>
+      <Button variant="ghost" size="icon" onClick={commands["step-forward"]} disabled={last} aria-label="One frame forward" aria-keyshortcuts="ArrowRight" title="One frame forward (→)">
         <StepForward aria-hidden size={18} />
       </Button>
+      <Button variant="ghost" size="icon" onClick={commands.end} disabled={last} aria-label="Go to end" aria-keyshortcuts="End" title="Go to end (End)">
+        <SkipForward aria-hidden size={18} />
+      </Button>
     </>
+  );
+}
+
+/** The player panel's header line: the Canvas in output pixels and the frame rate, e.g. "1080 × 1920 · 30 fps". */
+export function previewFormat(canvas: { width: number; height: number }, fps: number): string {
+  return `${canvas.width} × ${canvas.height} · ${Number(fps.toFixed(2))} fps`;
+}
+
+/** The player panel's header, as Concat's: "Preview", the Canvas and frame rate (previewFormat), and `picker` (the Canvas Aspect). */
+export function PreviewHeader({ format, picker }: { format: string; picker?: ReactNode }) {
+  return (
+    <div className="@container flex min-h-11 shrink-0 items-center gap-2 border-b border-border px-3 py-1">
+      <h2 className="shrink-0 text-sm font-semibold">Preview</h2>
+      {/* Too narrow (a phone's), the picker keeps the room and the format goes. */}
+      <p className="hidden min-w-0 flex-1 truncate text-center text-xs text-muted tabular-nums @[26rem]:block">{format}</p>
+      <span aria-hidden className="flex-1 @[26rem]:hidden" />
+      <div className="shrink-0">{picker}</div>
+    </div>
   );
 }
 

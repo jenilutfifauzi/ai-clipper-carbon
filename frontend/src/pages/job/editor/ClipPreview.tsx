@@ -1,4 +1,4 @@
-import { Pause, Play, Repeat, SkipForward } from "lucide-react";
+import { Pause, Play, SkipForward } from "lucide-react";
 import { createRef, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import {
   CUE_MAX_SCALE,
@@ -27,7 +27,8 @@ import { Button } from "../../../components/Button";
 import { cssFontSize, fontFamily } from "../../../fonts";
 import { useLooks } from "../../../looks";
 import { cx, formatPrecise } from "../../../format";
-import { RATES, usePlayback, useShown, type Playback } from "./playback";
+import { usePlayback, useShown, type Playback } from "./playback";
+import { DeckTransport, LoopButton, RateMenu } from "./DeckTransport";
 import { CanvasContext, CAPTION_HEIGHT, fittedStage, useCanvas, useCanvasOf } from "./canvas";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA, filledStyle, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewEffected } from "./PreviewEffected";
@@ -93,7 +94,9 @@ const percent = (value: number) => `${value * 100}%`;
  * While a picture is held, it is drawn from the drag until the plan has it. With `fit`, the frame is as large as fits the space its parent gives it (the
  * Advanced Edit's player), and the transport is a single row, ending with `tools`; with `rates` too,
  * it offers the playback rate, and with `loop` a button that turns Loop on and off; with `hideBar`,
- * that row fades out (full screen, while the pointer is still). `over` is laid over the stage.
+ * that row fades out (full screen, while the pointer is still). `over` is laid over the stage. With
+ * `deck` (the Advanced Edit's, ADR 0025), the transport is a deck instead (DeckTransport): no slider,
+ * the timecode, `deck.before` Play `deck.after` centred, and `tools` alone on the right.
  */
 export function ClipPreview({
   src,
@@ -111,6 +114,7 @@ export function ClipPreview({
   hideBar = false,
   over,
   onPlay,
+  deck,
   aspect,
 }: {
   src: string;
@@ -134,6 +138,9 @@ export function ClipPreview({
   // What the Play button does instead of playing or pausing (the Advanced Edit's Space, which stops a
   // Take while one records).
   onPlay?: () => void;
+  // With `fit`, the deck Transport, with these buttons either side of Play (go to start and a frame
+  // back; a frame on and go to end). The clip editor leaves it out and keeps its slider.
+  deck?: { before: ReactNode; after: ReactNode };
   // The Candidate's Canvas Aspect: the stage's shape until its plan comes (9:16 when left out).
   aspect?: Aspect;
 }) {
@@ -431,7 +438,11 @@ export function ClipPreview({
         <div ref={room} className="flex min-h-0 flex-1 items-center justify-center">
           {frame}
         </div>
-        <Transport playback={playback} compact rates={rates} loop={loop} tools={tools} hidden={hideBar} onPlay={onPlay} />
+        {deck ? (
+          <DeckTransport playback={playback} before={deck.before} after={deck.after} tools={tools} hidden={hideBar} onPlay={onPlay} />
+        ) : (
+          <Transport playback={playback} compact rates={rates} loop={loop} tools={tools} hidden={hideBar} onPlay={onPlay} />
+        )}
       </div>
     );
   }
@@ -1408,20 +1419,7 @@ function Transport({
           <span className={cx(compact && "max-sm:sr-only")}> / </span>
           {formatPrecise(duration)}
         </span>
-        {loop && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={loop.onToggle}
-            aria-pressed={loop.on}
-            aria-label="Loop"
-            aria-keyshortcuts="L"
-            title={loop.on ? "Loop on (L): playing repeats from In to Out" : "Loop (L): repeat from In to Out, or with no marks, the whole Clip"}
-            className="aria-pressed:text-accent-text"
-          >
-            <Repeat aria-hidden size={18} />
-          </Button>
-        )}
+        {loop && <LoopButton loop={loop} />}
         {rates && <RateMenu playback={playback} />}
         {tools}
       </div>
@@ -1438,33 +1436,5 @@ function Transport({
         </div>
       )}
     </div>
-  );
-}
-
-// The playback rate, picked from RATES; marked in the accent whenever it isn't 1×, so that a fast
-// preview isn't taken for a fast Clip.
-function RateMenu({ playback }: { playback: Playback }) {
-  const rate = usePlayback(playback, (_, p) => p.rate);
-  return (
-    <select
-      value={rate}
-      // Let go once a rate is picked, so that Space plays; the Advanced Edit's keys go on meanwhile.
-      onChange={(event) => {
-        playback.setRate(Number(event.target.value));
-        event.currentTarget.blur();
-      }}
-      aria-label="Playback rate"
-      data-shortcuts
-      className={cx(
-        "min-h-9 shrink-0 cursor-pointer appearance-none rounded-[10px] px-2 text-center text-sm font-medium tabular-nums hover:bg-fill",
-        rate === 1 ? "text-muted hover:text-text" : "text-accent-text",
-      )}
-    >
-      {RATES.map((each) => (
-        <option key={each} value={each}>
-          {each}×
-        </option>
-      ))}
-    </select>
   );
 }
