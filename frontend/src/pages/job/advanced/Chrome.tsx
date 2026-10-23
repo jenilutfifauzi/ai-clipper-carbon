@@ -8,6 +8,7 @@ import {
   ClipboardCopy,
   ClipboardPaste,
   Copy,
+  Ellipsis,
   FastForward,
   Film,
   FoldHorizontal,
@@ -39,7 +40,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
-import { Fragment, useEffect, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Button } from "../../../components/Button";
 import { Segmented } from "../../../components/Segmented";
 import { cx, formatPrecise } from "../../../format";
@@ -77,29 +78,31 @@ export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[]
 export const PHONE_ASSET_TABS = ASSET_TABS.filter((tab) => tab.value !== "effects");
 
 // The Asset Panel's tabs, as Concat's: each an icon over its name, the open one on a filled
-// background. Their names go (kept for a screen reader and in a tooltip) when the panel is too narrow
-// for all of them, as at its default width, rather than cut off the last tabs.
+// background. Every tab keeps its name: two rows of four in a narrow panel (its default width), one
+// row once it is widened.
 export function AssetTabs({ value, onChange }: { value: AssetTab; onChange: (tab: AssetTab) => void }) {
   return (
-    <div role="tablist" aria-label="Assets" className="@container flex gap-0.5 border-b border-border p-1.5">
-      {ASSET_TABS.map((tab) => (
-        <button
-          key={tab.value}
-          type="button"
-          role="tab"
-          aria-selected={value === tab.value}
-          onClick={() => onChange(tab.value)}
-          title={tab.label}
-          className={cx(
-            "flex min-h-11 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-md text-[10px] font-medium @[24rem]:min-h-13",
-            "focus-visible:outline-2 focus-visible:outline-focus",
-            value === tab.value ? "bg-fill text-text [&>svg]:text-accent-text" : "text-muted hover:bg-fill hover:text-text",
-          )}
-        >
-          <tab.icon aria-hidden size={18} />
-          <span className="sr-only @[24rem]:not-sr-only @[24rem]:max-w-full @[24rem]:truncate @[24rem]:px-0.5">{tab.label}</span>
-        </button>
-      ))}
+    <div className="@container border-b border-border p-1.5">
+      <div role="tablist" aria-label="Assets" className="grid grid-cols-4 gap-0.5 @[30rem]:grid-cols-8">
+        {ASSET_TABS.map((tab) => (
+          <button
+            key={tab.value}
+            type="button"
+            role="tab"
+            aria-selected={value === tab.value}
+            onClick={() => onChange(tab.value)}
+            title={tab.label}
+            className={cx(
+              "flex min-h-13 min-w-0 flex-col items-center justify-center gap-1 rounded-md px-0.5 text-[10px] font-medium",
+              "focus-visible:outline-2 focus-visible:outline-focus",
+              value === tab.value ? "bg-fill text-text [&>svg]:text-accent-text" : "text-muted hover:bg-fill hover:text-text",
+            )}
+          >
+            <tab.icon aria-hidden size={18} />
+            <span className="max-w-full truncate">{tab.label}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -114,7 +117,8 @@ export function ToolDivider() {
  * status centred (on a phone, beside Back); on the right its groups, each set off by a divider — the
  * Workspace's `layout` controls and the shortcuts sheet, the document `actions` (Downloads, Save Frame,
  * Revision History, Save as Template), then the `primary` action, Export. Undo and redo are the
- * timeline toolbar's.
+ * timeline toolbar's. A `compact` bar (a phone's) keeps the title's room: its document actions fold
+ * behind a More button into a row under the bar.
  */
 export function TopBar({
   title,
@@ -122,6 +126,7 @@ export function TopBar({
   layout,
   actions,
   primary,
+  compact = false,
   onShortcuts,
   onClose,
 }: {
@@ -133,6 +138,8 @@ export function TopBar({
   actions?: ReactNode;
   // The editor's main action, such as Export: last, set off by a divider.
   primary?: ReactNode;
+  // A phone's: `actions` go behind More, into a row under the bar.
+  compact?: boolean;
   // Opens the shortcuts sheet: on a desktop only.
   onShortcuts?: () => void;
   onClose: () => void;
@@ -147,28 +154,51 @@ export function TopBar({
       )}
     </>
   );
+  const [more, setMore] = useState(false);
+  const tray = useId();
+  const folded = compact && actions;
+  const shown = folded ? null : actions;
   return (
-    <header className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 border-b border-border px-2 pt-[env(safe-area-inset-top)] sm:grid-cols-[minmax(0,1fr)_minmax(0,auto)_minmax(0,1fr)] sm:px-3">
-      <div className="flex min-w-0 items-center">
-        <Button variant="ghost" size="icon" onClick={onClose} aria-label="Back to the clip editor" title="Back to the clip editor">
-          <ArrowLeft aria-hidden size={18} />
-        </Button>
+    <header className="border-b border-border pt-[env(safe-area-inset-top)]">
+      <div className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,auto)_minmax(0,1fr)] sm:px-3">
+        <div className="flex min-w-0 items-center">
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Back to the clip editor" title="Back to the clip editor">
+            <ArrowLeft aria-hidden size={18} />
+          </Button>
+        </div>
+        <div className="flex min-w-0 flex-col sm:items-center sm:text-center">
+          <h1 className="max-w-full truncate text-sm font-semibold sm:text-base">{title}</h1>
+          <div className="max-w-full truncate text-xs text-muted">{status}</div>
+        </div>
+        <div className="flex min-w-0 items-center justify-end gap-1">
+          {view}
+          {view && shown && <ToolDivider />}
+          {shown}
+          {folded && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setMore((open) => !open)}
+              aria-label="More actions"
+              aria-expanded={more}
+              aria-controls={tray}
+            >
+              <Ellipsis aria-hidden size={18} />
+            </Button>
+          )}
+          {primary && (
+            <>
+              {(view || shown) && <ToolDivider />}
+              {primary}
+            </>
+          )}
+        </div>
       </div>
-      <div className="flex min-w-0 flex-col sm:items-center sm:text-center">
-        <h1 className="max-w-full truncate text-sm font-semibold sm:text-base">{title}</h1>
-        <div className="max-w-full truncate text-xs text-muted">{status}</div>
-      </div>
-      <div className="flex min-w-0 items-center justify-end gap-1">
-        {view}
-        {view && actions && <ToolDivider />}
-        {actions}
-        {primary && (
-          <>
-            {(view || actions) && <ToolDivider />}
-            {primary}
-          </>
-        )}
-      </div>
+      {folded && (
+        <div id={tray} role="group" aria-label="More actions" className={cx("items-center justify-end gap-1 px-2 pb-1.5", more ? "flex" : "hidden")}>
+          {actions}
+        </div>
+      )}
     </header>
   );
 }

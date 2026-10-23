@@ -54,6 +54,22 @@ describe("Export in the TopBar", () => {
     expect(html).not.toContain('aria-label="Redo"');
   });
 
+  test("a compact bar (a phone's) folds the document actions behind More, into a row under the bar", () => {
+    const html = renderToStaticMarkup(
+      <TopBar
+        title="#1 Clip"
+        status="Saved"
+        actions={<button type="button">History</button>}
+        primary={<button type="button">Export</button>}
+        compact
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain('aria-label="More actions" aria-expanded="false"');
+    expect(html.indexOf(">History<")).toBeGreaterThan(html.indexOf(">Export<"));
+    expect(html).toMatch(/role="group" aria-label="More actions" class="[^"]*hidden/);
+  });
+
   test("without a primary action there is no divider", () => {
     const html = renderToStaticMarkup(<TopBar title="#1 Clip" status="Saved" onClose={() => {}} />);
     expect(html).not.toContain("w-px");

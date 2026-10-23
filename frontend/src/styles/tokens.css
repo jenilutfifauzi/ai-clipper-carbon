@@ -37,6 +37,8 @@
   --waiting-surface: rgb(100 210 255 / 0.12);
 
   --radius-panel: 24px;
+  /* The Advanced Edit's flat regions: tighter, as an editor's (Concat's) panels are. */
+  --radius-region: 12px;
   --radius-control: 14px;
   --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 40px rgb(0 0 0 / 0.45);
   --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.35), 0 2px 8px rgb(0 0 0 / 0.25);

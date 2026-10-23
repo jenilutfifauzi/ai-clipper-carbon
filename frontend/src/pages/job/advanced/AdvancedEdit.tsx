@@ -1683,6 +1683,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           />
         }
         layout={layoutControls}
+        compact={!wide}
         actions={
           <>
             {job.options.captions && (
