@@ -1,5 +1,6 @@
 import { Minus, Plus, ScanLine, UnfoldHorizontal, Volume2, VolumeX } from "lucide-react";
 import {
+  Fragment,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -89,6 +90,8 @@ export function AdvancedTimeline({
   snapPoints,
   history,
   tools,
+  modes,
+  adds,
   onBand,
   onClear,
   toFit,
@@ -106,10 +109,14 @@ export function AdvancedTimeline({
   fps: number;
   // Edges items snap to, besides the playhead and the Clip's ends.
   snapPoints: number[];
-  // The bar's first group, undo and redo, set off from the rest by a divider.
+  // The bar's groups above the tracks, as Concat's, each set off by a divider: undo and redo
+  // (`history`); the picked items' buttons (`tools`: split, delete, ...); the Timeline's switches
+  // (`modes`: the Magnetic timeline, then the Skim's own); what adds an asset (`adds`). The zoom
+  // buttons are on the right.
   history?: ReactNode;
-  // Buttons for the bar above the tracks (split, delete, ...).
   tools?: ReactNode;
+  modes?: ReactNode;
+  adds?: ReactNode;
   onBand?: (items: (Area & { key: string })[], band: Area, add: boolean) => void;
   onClear?: () => void;
   // The view Zoom to fit gives on a Timeline `width` CSS pixels wide for its times, now at `zoom`;
@@ -326,37 +333,51 @@ export function AdvancedTimeline({
       <div className="flex min-h-11 items-center justify-between gap-2 px-2">
         {/* On a phone the tools scroll sideways, so that the zoom's buttons always show. */}
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
-          {history}
-          {history && tools && <ToolDivider />}
-          {tools}
+          {[
+            history,
+            tools,
+            (modes || skimmable) && (
+              <>
+                {modes}
+                {skimmable && (
+                  <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Skim">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="aria-pressed:text-accent-text"
+                      onClick={() => setSkim(!skimming)}
+                      aria-pressed={skimming}
+                      aria-label="Skim"
+                      aria-keyshortcuts="S"
+                      title="Skim (S): while paused, the preview shows the frame under the pointer"
+                    >
+                      <ScanLine aria-hidden size={16} />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="aria-pressed:text-accent-text"
+                      onClick={() => setSkimSound(!skimSound)}
+                      aria-pressed={skimSound}
+                      aria-label="Skim sound"
+                      title="Skim sound: hear what is under the pointer in short snippets"
+                    >
+                      {skimSound ? <Volume2 aria-hidden size={16} /> : <VolumeX aria-hidden size={16} />}
+                    </Button>
+                  </div>
+                )}
+              </>
+            ),
+            adds,
+          ]
+            .filter(Boolean)
+            .map((group, i) => (
+              <Fragment key={i}>
+                {i > 0 && <ToolDivider />}
+                {group}
+              </Fragment>
+            ))}
         </div>
-        {skimmable && (
-          <div className="ml-auto flex shrink-0 items-center gap-1" role="group" aria-label="Skim">
-            <Button
-              size="icon"
-              variant="ghost"
-              className="aria-pressed:text-accent-text"
-              onClick={() => setSkim(!skimming)}
-              aria-pressed={skimming}
-              aria-label="Skim"
-              aria-keyshortcuts="S"
-              title="Skim (S): while paused, the preview shows the frame under the pointer"
-            >
-              <ScanLine aria-hidden size={16} />
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="aria-pressed:text-accent-text"
-              onClick={() => setSkimSound(!skimSound)}
-              aria-pressed={skimSound}
-              aria-label="Skim sound"
-              title="Skim sound: hear what is under the pointer in short snippets"
-            >
-              {skimSound ? <Volume2 aria-hidden size={16} /> : <VolumeX aria-hidden size={16} />}
-            </Button>
-          </div>
-        )}
         <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Zoom">
           <Button size="icon" variant="ghost" onClick={() => zoomTo(zoom / ZOOM_STEP)} disabled={zoom <= 1} aria-label="Zoom out" aria-keyshortcuts="-" title="Zoom out (-)">
             <Minus aria-hidden size={16} />

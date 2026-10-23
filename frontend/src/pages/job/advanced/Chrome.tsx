@@ -497,6 +497,21 @@ export function HistoryTools({ history }: { history: EditHistory<AdvancedEdits> 
   );
 }
 
+// The timeline toolbar's adding group: Text opens the Text tab, Audio the Media tab on its Audio
+// category (on a phone, their sheets), revealing the Asset Panel if it was collapsed.
+export function AddTools({ onText, onAudio }: { onText: () => void; onAudio: () => void }) {
+  return (
+    <>
+      <Button variant="ghost" size="icon" onClick={onText} aria-label="Add text" title="Add text: the Text tab">
+        <Type aria-hidden size={17} />
+      </Button>
+      <Button variant="ghost" size="icon" onClick={onAudio} aria-label="Add audio" title="Add audio: the Media tab's Audio">
+        <Volume2 aria-hidden size={17} />
+      </Button>
+    </>
+  );
+}
+
 /**
  * The timeline bar's buttons: split at the playhead (the picked items, or with nothing picked
  * everything there); for the picked items, duplicate, copy and delete; and paste what the Clipboard

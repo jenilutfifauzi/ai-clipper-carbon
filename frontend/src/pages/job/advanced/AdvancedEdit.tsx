@@ -126,6 +126,7 @@ import {
 } from "./workspaceLayout";
 import { Divider } from "./Divider";
 import {
+  AddTools,
   ASSET_TABS,
   AssetTabs,
   DeckButtons,
@@ -318,6 +319,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [bottomTab, setBottomTab] = useBottomTab();
   // The remembered desktop workspace: sidebar widths, bottom height and which panels are collapsed.
   const ws = layout.use();
+  // An asset tab opened from elsewhere (the timeline toolbar's Add Text and Add Audio): on a desktop in
+  // the Asset Panel, shown again if it was collapsed; on a phone, its sheet.
+  const openAsset = (tab: AssetTab, category?: MediaCategory) => {
+    setAssetTab(tab);
+    if (category) setMediaCategory(category);
+    if (!wide) setSheet(tab);
+    else if (ws.assetHidden) layout.setAssetHidden(false);
+  };
   // The desktop grid, measured on a Divider's pointer-down for the player-floor clamp (its width in
   // rem), and the snapshot each Divider drag captures then (the value being dragged and the DOM reads),
   // so each move's maths is pure (workspaceLayout.ts). A ref, not state: a drag never re-renders here.
@@ -1412,12 +1421,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       fps={fps}
       snapPoints={edgesOf(edits, played, { hidden: tracks.hidden, moving: pick })}
       history={<HistoryTools history={history} />}
-      tools={
-        <>
-          <MagneticToggle />
-          <ItemTools actions={actions} splitter={splits} freezer={freezes} playback={playback} paste={pasteHere} />
-        </>
-      }
+      tools={<ItemTools actions={actions} splitter={splits} freezer={freezes} playback={playback} paste={pasteHere} />}
+      modes={<MagneticToggle />}
+      adds={<AddTools onText={() => openAsset("text")} onAudio={() => openAsset("media", "audio")} />}
       onBand={(items, band, add) => select(bandPick(pick, items, band, add))}
       onClear={() => select(null)}
       toFit={(timeline) => zoomToFit({ pick, edits, played, duration }, timeline)}
