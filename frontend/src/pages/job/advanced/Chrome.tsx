@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   ArrowLeftToLine,
   ArrowRightToLine,
-  AudioLines,
   AudioWaveform,
   Check,
   ClipboardCopy,
@@ -38,7 +37,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import { Button } from "../../../components/Button";
 import { Segmented } from "../../../components/Segmented";
 import { cx, formatPrecise } from "../../../format";
@@ -57,12 +56,12 @@ import type { EditHistory } from "./useEditHistory";
 // phone's toolbar, frame buttons, Playback sheet and bottom sheet, the timeline's buttons for the
 // picked item, and the shortcuts sheet.
 
-export type AssetTab = "text" | "stickers" | "audio" | "narrate" | "media" | "transitions" | "filters" | "effects" | "templates";
+// Media holds the songs too, under its Audio category (ADR 0025): there is no Audio tab.
+export type AssetTab = "text" | "stickers" | "narrate" | "media" | "transitions" | "filters" | "effects" | "templates";
 
 export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[] = [
   { value: "text", label: "Text", icon: Type },
   { value: "stickers", label: "Stickers", icon: Sticker },
-  { value: "audio", label: "Audio", icon: AudioLines },
   { value: "narrate", label: "Narrate", icon: Speech },
   { value: "media", label: "Media", icon: Film },
   { value: "transitions", label: "Transitions", icon: Shuffle },
@@ -75,11 +74,12 @@ export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[]
 // applies one, or "No Template", only.
 export const PHONE_ASSET_TABS = ASSET_TABS.filter((tab) => tab.value !== "effects");
 
-// The Asset Panel's tabs. Their names go (kept for a screen reader and in a tooltip) when the panel
-// is too narrow for all nine, as at its default width, rather than cut off the last tabs.
+// The Asset Panel's tabs, as Concat's: each an icon over its name, the open one on a filled
+// background. Their names go (kept for a screen reader and in a tooltip) when the panel is too narrow
+// for all of them, as at its default width, rather than cut off the last tabs.
 export function AssetTabs({ value, onChange }: { value: AssetTab; onChange: (tab: AssetTab) => void }) {
   return (
-    <div role="tablist" aria-label="Assets" className="@container flex gap-1 border-b border-border p-2">
+    <div role="tablist" aria-label="Assets" className="@container flex gap-0.5 border-b border-border p-1.5">
       {ASSET_TABS.map((tab) => (
         <button
           key={tab.value}
@@ -89,13 +89,13 @@ export function AssetTabs({ value, onChange }: { value: AssetTab; onChange: (tab
           onClick={() => onChange(tab.value)}
           title={tab.label}
           className={cx(
-            "flex min-h-11 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-[10px] text-[11px] font-medium @[18rem]:min-h-14",
+            "flex min-h-11 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-md text-[10px] font-medium @[24rem]:min-h-13",
             "focus-visible:outline-2 focus-visible:outline-focus",
-            value === tab.value ? "raised text-text" : "text-muted hover:bg-fill hover:text-text",
+            value === tab.value ? "bg-fill text-text [&>svg]:text-accent-text" : "text-muted hover:bg-fill hover:text-text",
           )}
         >
           <tab.icon aria-hidden size={18} />
-          <span className="sr-only @[18rem]:not-sr-only">{tab.label}</span>
+          <span className="sr-only @[24rem]:not-sr-only @[24rem]:max-w-full @[24rem]:truncate @[24rem]:px-0.5">{tab.label}</span>
         </button>
       ))}
     </div>
@@ -323,10 +323,13 @@ export function Toolbar({
         </>
       ) : (
         <>
+          {/* Adjust sits beside the Filters tab: both are the Clip's Grade with nothing picked. */}
           {PHONE_ASSET_TABS.map((tab) => (
-            <ToolButton key={tab.value} icon={tab.icon} label={tab.label} onClick={() => onAsset(tab.value)} />
+            <Fragment key={tab.value}>
+              <ToolButton icon={tab.icon} label={tab.label} onClick={() => onAsset(tab.value)} />
+              {tab.value === "filters" && onAdjust && <ToolButton icon={SunMedium} label="Adjust" onClick={onAdjust} />}
+            </Fragment>
           ))}
-          {onAdjust && <ToolButton icon={SunMedium} label="Adjust" onClick={onAdjust} />}
           <SplitButton splitter={splitter} playback={playback} />
           <FreezeButton freezer={freezer} playback={playback} />
           <PlaybackButton playback={playback} onClick={onPlayback} />

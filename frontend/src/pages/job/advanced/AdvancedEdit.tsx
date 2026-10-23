@@ -154,7 +154,7 @@ import { keysOf, resolveShortcut } from "./keymap";
 import { longestClip, newMediaSegment } from "./MainTrack";
 import { MediaCache } from "./mediaCache";
 import { MediaCaptionFields } from "./MediaCaptionFields";
-import { useMediaLibrary } from "./MediaLibrary";
+import { MediaCategories, useMediaLibrary, type MediaCategory } from "./MediaLibrary";
 import { listenNarration, NarrateFlow, narratedTitle } from "./narrate";
 import { NarratePanel } from "./NarratePanel";
 import { CompareButton, CompareSplit, HoldOriginalButton, usePlayerChecks } from "./PlayerChecks";
@@ -287,6 +287,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // picture's Transform, of the picked item's Speed or Audio effects, of the Tracks or of Playback.
   const [sheet, setSheet] = useState<AssetTab | "inspector" | "transform" | "speed" | "adjust" | "effects" | "tracks" | "playback" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
+  // The Media tab's category, kept while other tabs are open.
+  const [mediaCategory, setMediaCategory] = useState<MediaCategory>("all");
   // The Look a Filters card under the mouse auditions: the preview drawn in it, nothing saved.
   const [audition, setAudition] = useState<string | null>(null);
   // The Video Effect an Effects card under the mouse auditions: drawn on the Pick, nothing saved.
@@ -1574,6 +1576,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const assets = (tab: AssetTab) => (
     <AssetPanel
       tab={tab}
+      category={mediaCategory}
       fonts={fonts}
       library={library}
       transcript={job.transcript}
@@ -1777,9 +1780,22 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             {!ws.assetHidden && (
               <aside aria-label="Assets" className="panel flex min-h-0 flex-col overflow-hidden">
                 <AssetTabs value={assetTab} onChange={setAssetTab} />
-                {/* Its top space is a spacer, not padding: padding would hold the tabs' sticky shelf
-                    headings below the top edge, with the cards scrolling past above them. */}
-                <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 before:block before:h-4 before:content-['']">{assets(assetTab)}</div>
+                {/* The Media tab's categories: a column beside its items once the panel is wide enough,
+                    else chips above them (MediaCategories). */}
+                <div className="@container/media flex min-h-0 flex-1 flex-col">
+                  <div className="flex min-h-0 flex-1 flex-col @[20rem]/media:flex-row">
+                    {assetTab === "media" && (
+                      <div className="shrink-0 px-4 pt-3 @[20rem]/media:pt-0 @[20rem]/media:pr-0">
+                        <MediaCategories value={mediaCategory} onChange={setMediaCategory} column />
+                      </div>
+                    )}
+                    {/* Its top space is a spacer, not padding: padding would hold the tabs' sticky shelf
+                        headings below the top edge, with the cards scrolling past above them. */}
+                    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 pb-4 before:block before:h-4 before:content-['']">
+                      {assets(assetTab)}
+                    </div>
+                  </div>
+                </div>
               </aside>
             )}
             {!ws.assetHidden && (
@@ -2025,6 +2041,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               <TracksPanel tracks={tracks} onTrack={toggleTrack} />
             ) : sheet === "playback" ? (
               <PlaybackPanel playback={playback} commands={commands} region={region} looping={looping} editPoints={points} fps={fps} />
+            ) : sheet === "media" ? (
+              <div className="flex flex-col gap-3">
+                <MediaCategories value={mediaCategory} onChange={setMediaCategory} />
+                {assets(sheet)}
+              </div>
             ) : (
               assets(sheet)
             )}

@@ -1,4 +1,4 @@
-import { ChevronDown, Film, ImagePlus, Layers, Music, Pause, Play, Plus, Trash2, Upload } from "lucide-react";
+import { ChevronDown, Film, Image, ImagePlus, LayoutGrid, Layers, Music, Pause, Play, Plus, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   api,
@@ -129,8 +129,85 @@ export function inUse(uses: MediaUse[]): string {
 }
 
 /**
- * The Media tab (videos and images) or the Audio tab (songs, and videos' sound): an upload button,
- * the uploads under way, and the items, each added to the clip by `onAdd` and deletable.
+ * The Media tab's categories: All (the episode's moments, the videos and images, and the songs), or
+ * one kind of the Media Library alone. Audio is what the Audio tab was (ADR 0025).
+ */
+export type MediaCategory = "all" | "video" | "audio" | "images";
+
+export const MEDIA_CATEGORIES: { value: MediaCategory; label: string; icon: typeof Film }[] = [
+  { value: "all", label: "All", icon: LayoutGrid },
+  { value: "video", label: "Video", icon: Film },
+  { value: "audio", label: "Audio", icon: Music },
+  { value: "images", label: "Images", icon: Image },
+];
+
+/** The Media Library's sections a category shows, in order: its kinds each, and whether the Source's moments head it. */
+export function mediaSections(category: MediaCategory): { source: boolean; sections: MediaKind[][] } {
+  if (category === "video") return { source: true, sections: [["video"]] };
+  if (category === "images") return { source: false, sections: [["image"]] };
+  if (category === "audio") return { source: false, sections: [["audio"]] };
+  return { source: true, sections: [["video", "image"], ["audio"]] };
+}
+
+// What a section's upload button takes and says, and what it says while empty.
+export function uploadOf(kinds: MediaKind[]): { accept: string; label: string; empty: string } {
+  if (kinds.includes("audio")) return { accept: "audio/*", label: "Upload music", empty: "No music yet." };
+  const video = kinds.includes("video");
+  const image = kinds.includes("image");
+  if (video && image) return { accept: "video/*,image/png,image/jpeg,image/webp", label: "Upload video or image", empty: "No videos or images yet." };
+  if (video) return { accept: "video/*", label: "Upload video", empty: "No videos yet." };
+  return { accept: "image/png,image/jpeg,image/webp", label: "Upload image", empty: "No images yet." };
+}
+
+/**
+ * The Media tab's sub-nav. As `chips` (a phone's sheet), a row of chips above the items; as a
+ * `column` (the Asset Panel), a narrow column beside them once the panel is wide enough (a container
+ * query on the panel's body, `@container/media`), else the same chips.
+ */
+export function MediaCategories({
+  value,
+  onChange,
+  column = false,
+}: {
+  value: MediaCategory;
+  onChange: (category: MediaCategory) => void;
+  column?: boolean;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Media categories"
+      className={cx(
+        "flex shrink-0 gap-1 overflow-x-auto",
+        column && "border-border @[20rem]/media:flex-col @[20rem]/media:overflow-visible @[20rem]/media:border-r @[20rem]/media:py-3 @[20rem]/media:pr-2",
+      )}
+    >
+      {MEDIA_CATEGORIES.map((category) => (
+        <button
+          key={category.value}
+          type="button"
+          role="tab"
+          aria-selected={value === category.value}
+          onClick={() => onChange(category.value)}
+          className={cx(
+            "inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium",
+            "focus-visible:outline-2 focus-visible:outline-focus",
+            column && "@[20rem]/media:min-h-8 @[20rem]/media:rounded-md @[20rem]/media:px-2",
+            value === category.value ? "bg-fill text-text" : "text-muted hover:bg-fill hover:text-text",
+          )}
+        >
+          <category.icon aria-hidden size={14} />
+          {category.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A section of the Media tab, of the `kinds` its category shows (videos and images, or songs and
+ * videos' sound): an upload button, the uploads under way (unless `uploads` is off, for a second
+ * section, so that they show once), and the items, each added to the clip by `onAdd` and deletable.
  */
 export function MediaAssets({
   library,
@@ -141,6 +218,7 @@ export function MediaAssets({
   languages,
   hint,
   details,
+  uploads = true,
 }: {
   library: MediaLibrary;
   kinds: MediaKind[];
@@ -154,8 +232,10 @@ export function MediaAssets({
   // One sentence, and more in a tip.
   hint: ReactNode;
   details?: ReactNode;
+  uploads?: boolean;
 }) {
   const audio = kinds.includes("audio");
+  const uploader = uploadOf(kinds);
   const items = library.items?.filter((item) => kinds.includes(item.kind)) ?? null;
   const [deleting, setDeleting] = useState<MediaItem | null>(null);
   const [busy, setBusy] = useState(false);
@@ -178,13 +258,13 @@ export function MediaAssets({
   return (
     <div className="flex flex-col gap-3">
       <UploadButton
-        accept={audio ? "audio/*" : "video/*,image/png,image/jpeg,image/webp"}
-        label={audio ? "Upload music" : "Upload video or image"}
+        accept={uploader.accept}
+        label={uploader.label}
         icon={audio ? Music : ImagePlus}
         onFile={library.upload}
       />
       <Hint more={details}>{hint}</Hint>
-      {library.uploads.map((upload) => (
+      {uploads && library.uploads.map((upload) => (
         <div key={upload.key} className="flex flex-col gap-1.5 rounded-[10px] bg-fill p-2.5 text-sm">
           <div className="flex items-center justify-between gap-2">
             <span className="truncate">{upload.name}</span>
@@ -211,7 +291,7 @@ export function MediaAssets({
           <Skeleton className="aspect-video" />
         </div>
       ) : items.length === 0 ? (
-        <p className="text-sm text-muted">{audio ? "No music yet." : "No videos or images yet."}</p>
+        <p className="text-sm text-muted">{uploader.empty}</p>
       ) : audio ? (
         <ul className="flex flex-col gap-1.5">
           {items.map((item) => (
