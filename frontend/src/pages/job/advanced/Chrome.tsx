@@ -107,6 +107,7 @@ export function TopBar({
   status,
   history,
   actions,
+  primary,
   onShortcuts,
   onClose,
 }: {
@@ -115,6 +116,8 @@ export function TopBar({
   history: EditHistory<AdvancedEdits>;
   // Beside undo and redo, such as the Revision History.
   actions?: ReactNode;
+  // The editor's main action, such as Export: last, after undo and redo, set off by a divider.
+  primary?: ReactNode;
   // Opens the shortcuts sheet: on a desktop only.
   onShortcuts?: () => void;
   onClose: () => void;
@@ -140,6 +143,12 @@ export function TopBar({
       <Button variant="ghost" size="icon" onClick={history.redo} disabled={!history.canRedo} aria-label="Redo">
         <Redo2 aria-hidden size={18} />
       </Button>
+      {primary && (
+        <>
+          <span aria-hidden className="mx-1 h-6 w-px shrink-0 bg-border" />
+          {primary}
+        </>
+      )}
     </header>
   );
 }

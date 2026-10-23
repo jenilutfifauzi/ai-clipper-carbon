@@ -1,5 +1,5 @@
 import { Check, ChevronDown, Clapperboard, SlidersHorizontal } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { api, type Aspect, type ExportPresetList } from "../../api";
 import { Button, buttonClass } from "../../components/Button";
 import { formatBytes } from "../../format";
@@ -23,6 +23,7 @@ export function RenderButton({
   disabled,
   batch,
   onManage,
+  icon = <Clapperboard aria-hidden size={16} />,
 }: {
   label: string;
   presets: ExportPresetList | null;
@@ -33,6 +34,7 @@ export function RenderButton({
   // The Clips it renders: how long they last in all of each Canvas Aspect (batchParts), and the Source's frame rate.
   batch?: { parts: { aspect: Aspect; secs: number }[]; fps: number } | null;
   onManage?: () => void;
+  icon?: ReactNode;
 }) {
   const toggle = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -92,7 +94,7 @@ export function RenderButton({
         title={name && `Render with ${name}`}
         className={presets ? "rounded-r-none!" : undefined}
       >
-        <Clapperboard aria-hidden size={16} />
+        {icon}
         {label}
       </Button>
       {presets && (
