@@ -160,7 +160,7 @@ export function TopBar({
   const shown = folded ? null : actions;
   return (
     <header className="border-b border-border pt-[env(safe-area-inset-top)]">
-      <div className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,auto)_minmax(0,1fr)] sm:px-3">
+      <div className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-2 sm:grid-cols-[minmax(max-content,1fr)_minmax(0,auto)_minmax(max-content,1fr)] sm:px-3">
         <div className="flex min-w-0 items-center">
           <Button variant="ghost" size="icon" onClick={onClose} aria-label="Back to the clip editor" title="Back to the clip editor">
             <ArrowLeft aria-hidden size={18} />

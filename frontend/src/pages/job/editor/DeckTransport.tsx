@@ -38,21 +38,21 @@ export function DeckTransport({
         hidden && "not-has-focus-visible:pointer-events-none not-has-focus-visible:opacity-0",
       )}
     >
-      <div role="group" aria-label="Transport" className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 @[34rem]:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+      <div role="group" aria-label="Transport" className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 @[44rem]:grid-cols-[minmax(max-content,1fr)_auto_minmax(max-content,1fr)]">
         <span
-          className="col-start-1 row-start-2 justify-self-start rounded-md border border-border bg-fill px-2 py-1 text-xs whitespace-nowrap text-text tabular-nums @[34rem]:row-start-1"
+          className="col-start-1 row-start-2 justify-self-start rounded-md border border-border bg-fill px-2 py-1 text-xs whitespace-nowrap text-text tabular-nums @[44rem]:row-start-1"
         >
           {formatPrecise(Math.max(0, tenths / 10))}
           <span className="text-muted"> / {formatPrecise(playback.duration)}</span>
         </span>
-        <div className="col-span-2 row-start-1 flex items-center justify-center gap-1 @[34rem]:col-span-1 @[34rem]:col-start-2">
+        <div className="col-span-2 row-start-1 flex items-center justify-center gap-1 @[44rem]:col-span-1 @[44rem]:col-start-2">
           {before}
           <Button variant="secondary" size="icon" onClick={() => (onPlay ? onPlay() : playback.toggle())} aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause (Space)" : "Play (Space)"}>
             {playing ? <Pause aria-hidden size={18} /> : <Play aria-hidden size={18} />}
           </Button>
           {after}
         </div>
-        <div className="col-start-2 row-start-2 flex min-w-0 items-center justify-end gap-1 @[34rem]:col-start-3 @[34rem]:row-start-1">{tools}</div>
+        <div className="col-start-2 row-start-2 flex min-w-0 items-center justify-end gap-1 @[44rem]:col-start-3 @[44rem]:row-start-1">{tools}</div>
       </div>
     </div>
   );
