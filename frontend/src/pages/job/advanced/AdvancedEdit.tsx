@@ -565,7 +565,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const draft: CandidateChange = { ...candidateDraft(candidate), ...edits };
   // Counted up to plan again while a media Segment's Media Words are being transcribed.
   const [replan, setReplan] = useState(0);
-  const { preview, error: previewError, planned: plannedDraft } = usePreviewPlan(job.id, candidate.id, heardDraft(draft, tracks), `${job.status} ${replan}`);
+  // Planned again on a change of aspect too: the draft doesn't hold it, and a Candidate with nothing to
+  // rescale comes back from it with the same draft, on a Canvas the old plan doesn't show.
+  const { preview, error: previewError, planned: plannedDraft } = usePreviewPlan(
+    job.id,
+    candidate.id,
+    heardDraft(draft, tracks),
+    `${job.status} ${replan} ${candidate.aspect}`,
+  );
   // The plan's items with Audio Effects heard from their Effected copies, as they are made.
   useEffectedCopies(job.id, candidate.id, plannedDraft, preview?.plan ?? null);
   useEffectedVersion();
