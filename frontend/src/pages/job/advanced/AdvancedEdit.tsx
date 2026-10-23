@@ -1931,10 +1931,15 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     <CanvasContext.Provider value={canvas}>
       <div className="flex h-dvh flex-col overflow-hidden bg-bg">
         {bar}
-        <section aria-label="Player" className="flex min-h-0 flex-1 flex-col gap-1 px-3 pt-1 pb-2">
-          {previewHeader}
-          {room}
-          {notes}
+        {/* The desktop's player panel, flat (ADR 0025), its header and deck Transport the same. */}
+        <section aria-label="Player" className="flex min-h-0 flex-1 flex-col px-3 pt-1 pb-2">
+          <div className="panel flex min-h-0 flex-1 flex-col overflow-hidden">
+            {previewHeader}
+            <div className="flex min-h-0 flex-1 flex-col gap-1 p-2">
+              {room}
+              {notes}
+            </div>
+          </div>
         </section>
         <section aria-label="Timeline" className="flex h-[30dvh] min-h-44 flex-col border-t border-border">
           {timeline}

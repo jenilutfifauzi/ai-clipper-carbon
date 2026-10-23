@@ -641,7 +641,9 @@ export function PreviewHeader({ format, picker }: { format: string; picker?: Rea
   return (
     <div className="@container flex min-h-11 shrink-0 items-center gap-2 border-b border-border px-3 py-1">
       <h2 className="shrink-0 text-sm font-semibold">Preview</h2>
-      <p className="min-w-0 flex-1 truncate text-center text-xs text-muted tabular-nums">{format}</p>
+      {/* Too narrow (a phone's), the picker keeps the room and the format goes. */}
+      <p className="hidden min-w-0 flex-1 truncate text-center text-xs text-muted tabular-nums @[26rem]:block">{format}</p>
+      <span aria-hidden className="flex-1 @[26rem]:hidden" />
       <div className="shrink-0">{picker}</div>
     </div>
   );
