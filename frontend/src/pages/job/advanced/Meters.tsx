@@ -6,6 +6,8 @@ import { MeterFeed } from "./meterFeed";
 
 // The ruler's numbers, in dB: every 6 to −24, every 12 below, where the odd dB matters less.
 const RULER = [0, -6, -12, -18, -24, -36, -48, -60];
+// Marks dropped from a short ruler (a laptop's Bottom tabs), where they would crowd the top.
+const MINOR = new Set([-6, -18]);
 
 // How far up its bar `db` is, from 0 at FLOOR_DB to 1 at 0 dBFS.
 const height = (db: number) => (db - FLOOR_DB) / -FLOOR_DB;
@@ -70,11 +72,14 @@ export function Meters({ playback }: { playback: Playback }) {
         <span className={cx("h-1.5 w-full rounded-full", clipped ? "bg-danger" : "bg-fill")} />
       </button>
 
-      <div aria-hidden className="relative col-start-1 row-start-2 border-r border-border">
+      <div aria-hidden className="relative col-start-1 row-start-2 border-r border-border [container-type:size]">
         {RULER.map((db) => (
           <span
             key={db}
-            className="absolute right-0 flex items-center gap-0.5 text-[10px] leading-none text-muted tabular-nums"
+            className={cx(
+              "absolute right-0 flex items-center gap-0.5 text-[10px] leading-none text-muted tabular-nums",
+              MINOR.has(db) && "[@container(height<16rem)]:hidden",
+            )}
             // Held inside the ruler at both ends: 0 hangs from the top and −60 sits on the foot.
             style={{ top: `${(1 - height(db)) * 100}%`, transform: `translateY(-${(1 - height(db)) * 100}%)` }}
           >
