@@ -15,14 +15,17 @@ import { Hint } from "../../../components/InfoTip";
 import { ProgressBar } from "../../../components/ProgressBar";
 import { Skeleton } from "../../../components/Skeleton";
 import { cx, formatBytes, formatPrecise } from "../../../format";
-import { DRAG_MEDIA } from "./drag";
+import { DRAG_MEDIA, DRAG_MEDIA_PICTURE, DRAG_MEDIA_SOUND } from "./drag";
 import { languageChoices } from "./mediaCaptions";
 
-// An item's card or row carries its id when dragged onto the timeline.
+// An item's card or row carries its id when dragged onto the timeline, and says whether it has a
+// picture and sound, for the Timeline to show the empty Tracks that take it.
 const draggable = (item: MediaItem) => ({
   draggable: true,
   onDragStart: (event: React.DragEvent) => {
     event.dataTransfer.setData(DRAG_MEDIA, item.id);
+    if (item.kind !== "audio") event.dataTransfer.setData(DRAG_MEDIA_PICTURE, "1");
+    if (item.has_audio) event.dataTransfer.setData(DRAG_MEDIA_SOUND, "1");
     event.dataTransfer.effectAllowed = "copy";
   },
 });
