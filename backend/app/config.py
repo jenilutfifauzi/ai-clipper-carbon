@@ -35,6 +35,7 @@ DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 # Gemini's speech model for Narrations (app/voices.py): the cost-efficient TTS model, made for dubbing
 # and many short reads, which is what a script read sentence by sentence is.
 DEFAULT_TTS_GEMINI_MODEL = "gemini-3.8-flash-lite-tts"
+DEFAULT_ELEVENLABS_MODEL = "eleven_multilingual_v2"
 DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
 DEFAULT_LLM_MODEL = "deepseek-flash"
 DEFAULT_WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
@@ -319,6 +320,9 @@ class Settings:
     # Whether it takes a Style, sent as its `instructions`; None: on for a model that takes them
     # (gpt-4o-mini-tts and its kind, app/voices.py), off for others (tts-1, most compatible services).
     tts_style: bool | None = None
+    # ElevenLabs for Narrations, offered when its key is set (docs/adr/0026): its Voices are the account's.
+    elevenlabs_api_key: str | None = field(default=None, repr=False)
+    elevenlabs_model: str = DEFAULT_ELEVENLABS_MODEL
     # Not read from the environment: the eval points it at the Reference Set it measures against.
     reference_set: Path = REFERENCE_SET
     transcription: TranscriptionTuning = TranscriptionTuning()
@@ -391,6 +395,8 @@ def load_settings(env_file: Path = ENV_FILE) -> Settings:
         tts_model=get("TTS_MODEL") or None,
         tts_voices=tuple(voice.strip() for voice in get("TTS_VOICES").split(",") if voice.strip()),
         tts_style=_parse_bool("TTS_STYLE", get("TTS_STYLE")) if get("TTS_STYLE") else None,
+        elevenlabs_api_key=get("ELEVENLABS_API_KEY") or None,
+        elevenlabs_model=get("ELEVENLABS_MODEL", DEFAULT_ELEVENLABS_MODEL),
         quota=QuotaTuning(
             request_interval_secs=_parse_secs("LLM_REQUEST_INTERVAL_SECS", interval)
             if interval

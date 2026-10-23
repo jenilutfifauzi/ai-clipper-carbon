@@ -12,7 +12,7 @@ import httpx
 import numpy as np
 import pytest
 
-from app.voices import OPENAI_VOICES, GeminiSpeech, OpenAiSpeech, SpeechError, TransientSpeechError
+from app.voices import OPENAI_VOICES, ElevenLabsSpeech, GeminiSpeech, OpenAiSpeech, SpeechError, TransientSpeechError, Voice
 
 
 def pcm_answer(samples: np.ndarray, rate: int = 24_000) -> httpx.Response:
@@ -273,3 +273,133 @@ def test_openai_names_its_service_and_lists_the_standard_voices_or_tts_voices(se
     official, _ = openai(replace(settings, tts_voices=("Coral", "my-clone")), wav_answer(np.zeros(1)), tts_base_url="https://api.openai.com/v1")
     assert (official.label, official.service) == ("OpenAI", "OpenAI")
     assert [(voice.id, voice.name) for voice in official.voices()] == [("Coral", "Coral"), ("my-clone", "my-clone")]
+
+
+ACCOUNT_VOICES = {
+    "voices": [
+        {"voice_id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel", "category": "premade", "labels": {"accent": "american", "gender": "female"}},
+        {"voice_id": "my-clone-1", "name": "Jeni", "category": "cloned", "labels": {}},
+    ]
+}
+
+
+def elevenlabs(settings, *answers: httpx.Response, voices: httpx.Response | None = None) -> tuple[ElevenLabsSpeech, list[httpx.Request]]:
+    """ElevenLabs answering the account's Voices with `voices` (ACCOUNT_VOICES by default), and each
+    read with the next of `answers`."""
+    requests: list[httpx.Request] = []
+    reads = list(answers)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/v1/voices":
+            return voices or httpx.Response(200, json=ACCOUNT_VOICES)
+        return reads.pop(0)
+
+    engine = ElevenLabsSpeech(replace(settings, elevenlabs_api_key="xi-123"), httpx.Client(transport=httpx.MockTransport(handle)))
+    return engine, requests
+
+
+def elevenlabs_error(code: int, status: str, message: str, headers: dict | None = None) -> httpx.Response:
+    return httpx.Response(code, headers=headers, json={"detail": {"status": status, "message": message}})
+
+
+def test_elevenlabs_is_sent_the_sentence_and_its_model_for_raw_pcm_at_24_khz(settings):
+    tone = np.arange(-50, 50).astype("<i2")
+    engine, requests = elevenlabs(settings, httpx.Response(200, headers={"content-type": "audio/pcm"}, content=tone.tobytes()))
+    pcm = engine.read("Halo semua.", "21m00Tcm4TlvDq8ikWAM")
+    assert pcm.rate == 24_000 and np.array_equal(pcm.samples, tone)
+
+    [request] = requests
+    assert request.url.path == "/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM"
+    assert request.url.params["output_format"] == "pcm_24000"
+    assert request.headers["xi-api-key"] == "xi-123"
+    # At 1× no voice_settings: the Voice reads with its own.
+    assert json.loads(request.content) == {"text": "Halo semua.", "model_id": "eleven_multilingual_v2"}
+
+
+def test_elevenlabs_takes_a_speed_within_its_range_and_no_style(settings):
+    engine, requests = elevenlabs(settings, httpx.Response(200, content=b"\0\0"))
+    assert (engine.takes_style, engine.takes_speed, engine.speed_range) == (False, True, (0.7, 1.2))
+    engine.read("Halo.", "my-clone-1", speed=1.2)
+    assert json.loads(requests[0].content)["voice_settings"] == {"speed": 1.2}
+
+
+def test_elevenlabs_lists_the_accounts_voices_with_their_labels_read_any_language(settings):
+    engine, _ = elevenlabs(settings)
+    assert (engine.id, engine.label, engine.service, engine.local) == ("elevenlabs", "ElevenLabs", "ElevenLabs", False)
+    assert engine.voices() == [
+        Voice("21m00Tcm4TlvDq8ikWAM", "Rachel", "Female · American · premade"),
+        Voice("my-clone-1", "Jeni", "Cloned"),
+    ]
+    assert engine.ready()
+
+
+def test_elevenlabs_voices_are_asked_once_and_kept(settings):
+    engine, requests = elevenlabs(settings)
+    engine.voices(), engine.ready(), engine.voices()
+    [request] = requests
+    assert request.headers["xi-api-key"] == "xi-123"
+
+
+def test_elevenlabs_whose_voices_cant_be_listed_isnt_ready_and_is_asked_again_later(settings):
+    engine, requests = elevenlabs(settings, voices=elevenlabs_error(401, "invalid_api_key", "Invalid API key"))
+    assert engine.voices() == [] and not engine.ready()
+    # Remembered a little while, so one listing of the engines doesn't ask three times...
+    assert len(requests) == 1
+    # ...then asked again.
+    engine._failed_at -= 60
+    engine.voices()
+    assert len(requests) == 2
+
+
+def test_elevenlabs_without_a_key_isnt_ready_and_asks_nothing(settings):
+    requests: list[httpx.Request] = []
+    engine = ElevenLabsSpeech(settings, httpx.Client(transport=httpx.MockTransport(lambda r: requests.append(r) or httpx.Response(500))))
+    assert not engine.ready() and engine.voices() == [] and requests == []
+
+
+@pytest.mark.parametrize("code", [401, 403])
+def test_elevenlabs_refused_key_says_to_check_elevenlabs_api_key(settings, code):
+    engine, _ = elevenlabs(settings, elevenlabs_error(code, "invalid_api_key", "Invalid API key"))
+    with pytest.raises(SpeechError, match="ElevenLabs refused ELEVENLABS_API_KEY: check the key in .env and restart") as raised:
+        engine.read("Halo.", "my-clone-1")
+    assert not isinstance(raised.value, TransientSpeechError)
+
+
+def test_elevenlabs_out_of_credits_says_so(settings):
+    engine, _ = elevenlabs(settings, elevenlabs_error(401, "quota_exceeded", "This request exceeds your quota."))
+    with pytest.raises(SpeechError, match="ElevenLabs is out of credits: This request exceeds your quota"):
+        engine.read("Halo.", "my-clone-1")
+
+
+@pytest.mark.parametrize(
+    ("answer", "retry_after"),
+    [
+        (elevenlabs_error(429, "too_many_concurrent_requests", "Too many requests.", headers={"Retry-After": "4"}), 4.0),
+        (httpx.Response(503, text="Service Unavailable"), None),
+    ],
+)
+def test_elevenlabs_rate_limit_or_server_error_is_transient_with_its_retry_after(settings, answer, retry_after):
+    engine, _ = elevenlabs(settings, answer)
+    with pytest.raises(TransientSpeechError, match=f"ElevenLabs is busy \\({answer.status_code}\\)") as raised:
+        engine.read("Halo.", "my-clone-1")
+    assert raised.value.retry_after == retry_after
+
+
+def test_elevenlabs_other_refusal_fails_with_its_message(settings):
+    validation = httpx.Response(422, json={"detail": [{"loc": ["body", "text"], "msg": "field required"}]})
+    engine, _ = elevenlabs(settings, elevenlabs_error(400, "voice_not_found", "A voice with that ID does not exist."), validation)
+    with pytest.raises(SpeechError, match="ElevenLabs failed \\(400\\): A voice with that ID does not exist"):
+        engine.read("Halo.", "nobody")
+    with pytest.raises(SpeechError, match="ElevenLabs failed \\(422\\): field required"):
+        engine.read("Halo.", "nobody")
+
+
+def test_elevenlabs_network_failure_is_transient(settings):
+    def handle(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    engine = ElevenLabsSpeech(replace(settings, elevenlabs_api_key="xi"), httpx.Client(transport=httpx.MockTransport(handle)))
+    with pytest.raises(TransientSpeechError, match="Couldn't reach ElevenLabs"):
+        engine.read("Halo.", "my-clone-1")
+    assert not engine.ready()

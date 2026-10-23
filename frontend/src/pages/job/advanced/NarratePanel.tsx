@@ -150,8 +150,8 @@ export function NarrateFields({
       <div className="flex flex-col gap-4">
         <Hint>
           No speech engine is set up. In <code>.env</code>, add your Gemini API key as <code>GEMINI_API_KEY</code>, or an
-          OpenAI-compatible speech service as <code>TTS_BASE_URL</code>, <code>TTS_API_KEY</code> and <code>TTS_MODEL</code>, and
-          restart to narrate{voices.kokoro ? ", or download Kokoro to narrate English on this Mac" : ""}.
+          OpenAI-compatible speech service as <code>TTS_BASE_URL</code>, <code>TTS_API_KEY</code> and <code>TTS_MODEL</code>, or
+          your ElevenLabs API key as <code>ELEVENLABS_API_KEY</code>, and restart to narrate{voices.kokoro ? ", or download Kokoro to narrate English on this Mac" : ""}.
         </Hint>
         {kokoro}
         <Button variant="primary" disabled>

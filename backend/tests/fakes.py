@@ -194,7 +194,8 @@ class FakeVoiceEngine:
     """A speech engine that reads each sentence as one second of a 660 Hz tone at `level` (of full
     scale), at `rate` Hz, and records each read as (text, voice, style), and its speed in `speeds`.
     `ready` says whether it is; `takes_style` and `takes_speed` what it takes: one that takes a Speed
-    reads its tone in 1/speed seconds, one that doesn't is never asked one (its speeds are all 1).
+    reads its tone in 1/speed seconds, and is asked one within its `speed_range`; one that doesn't is
+    never asked one (its speeds are all 1).
     `fail_with(message)` makes every read raise SpeechError; with `times`, only that many reads, after
     `after` that don't; `transient` raises TransientSpeechError instead, with `retry_after`.
     `hold(after=n)` makes the reads after the first `n` wait for `release()`. Each `load()` is recorded in
@@ -209,6 +210,7 @@ class FakeVoiceEngine:
         local: bool = False,
         takes_style: bool = True,
         takes_speed: bool = False,
+        speed_range: tuple[float, float] = (0.5, 2.0),
     ) -> None:
         self.id = id
         self.label = f"Fake {id}"
@@ -216,6 +218,7 @@ class FakeVoiceEngine:
         self.local = local
         self.takes_style = takes_style
         self.takes_speed = takes_speed
+        self.speed_range = speed_range
         self.level = level
         self.rate = rate
         self.is_ready = ready

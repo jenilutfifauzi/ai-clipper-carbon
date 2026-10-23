@@ -19,7 +19,7 @@ from app.main import create_app
 from app import narration
 from app.narration import sentences
 from app.ports import Ports
-from app.voices import GeminiSpeech, OpenAiSpeech, voice_engines
+from app.voices import ElevenLabsSpeech, GeminiSpeech, OpenAiSpeech, voice_engines
 from fakes import FakeVoiceEngine
 from test_events import events
 from test_mcp import HALO_KABAR, anyio_backend, call, fails, manual, mcp  # noqa: F401
@@ -224,6 +224,17 @@ def test_an_engine_with_a_speed_reads_at_it_and_is_not_retimed(client, settings,
     assert item["duration"] == pytest.approx(2 * TONE_SECS / 2 + 0.3, abs=0.06)
 
 
+def test_an_engine_reads_what_of_the_speed_is_in_its_range_and_the_rest_is_retimed(settings, video_source, transcriber, llm):
+    ranged = FakeVoiceEngine("ranged", takes_speed=True, speed_range=(0.7, 1.2))
+    with TestClient(create_app(settings, Ports(video_source, transcriber, llm, voices=(ranged,)))) as client:
+        fast = narrated(client, "Satu. Dua.", engine="ranged", speed=1.5)
+        slow = narrated(client, "Satu.", engine="ranged", speed=0.5)
+    # Asked its fastest and slowest, then retimed by 1.25 and 0.5/0.7: the Speed asked, overall.
+    assert ranged.speeds == [1.2, 1.2, 0.7]
+    assert fast["duration"] == pytest.approx(2 * TONE_SECS / 1.5 + 0.3, abs=0.06)
+    assert slow["duration"] == pytest.approx(TONE_SECS / 0.5, abs=0.06)
+
+
 def test_the_style_is_sent_with_each_sentence_and_a_blank_one_is_none(client, engine, native):
     narrated(client, "Satu. Dua.", style="  warm, unhurried ")
     assert [style for _, _, style in engine.reads] == ["warm, unhurried"] * 2
@@ -343,6 +354,18 @@ def test_tts_voices_replaces_the_openai_compatible_voice_list(tmp_path, monkeypa
     [openai] = voice_engines(load_settings(env_file=env_file))
     assert [voice.id for voice in openai.voices()] == ["af_bella", "am_adam"]
     assert openai.service == "localhost"
+
+
+def test_elevenlabs_is_offered_with_its_key_after_the_other_cloud_engines(tmp_path, monkeypatch):
+    for key in ("GEMINI_API_KEY", "ELEVENLABS_API_KEY", "ELEVENLABS_MODEL", *TTS):
+        monkeypatch.delenv(key, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("GEMINI_API_KEY=gemini-secret\nELEVENLABS_API_KEY=xi-secret\nELEVENLABS_MODEL=eleven_flash_v2_5\n")
+    gemini, elevenlabs = voice_engines(load_settings(env_file=env_file))
+    assert isinstance(gemini, GeminiSpeech) and isinstance(elevenlabs, ElevenLabsSpeech)
+    assert elevenlabs.settings.elevenlabs_model == "eleven_flash_v2_5"
+    env_file.write_text("GEMINI_API_KEY=gemini-secret\n")
+    assert [engine.id for engine in voice_engines(load_settings(env_file=env_file))] == ["gemini"]
 
 
 @pytest.mark.anyio

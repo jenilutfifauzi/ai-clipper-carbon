@@ -25,6 +25,8 @@ KEYS = (
     "TTS_MODEL",
     "TTS_VOICES",
     "TTS_STYLE",
+    "ELEVENLABS_API_KEY",
+    "ELEVENLABS_MODEL",
 )
 
 
@@ -114,6 +116,18 @@ def test_the_openai_compatible_speech_settings_are_read_apart_from_the_llms(tmp_
     assert "sk-speech" not in repr(settings)
     # The LLM's settings are its own.
     assert (settings.llm_base_url, settings.llm_api_key, settings.llm_name) == ("https://api.deepseek.com", "sk-llm", "DeepSeek")
+
+
+def test_the_elevenlabs_settings_are_read_its_key_kept_out_of_repr_and_its_model_defaulted(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("ELEVENLABS_API_KEY=xi-secret\n")
+
+    settings = load_settings(env_file=env_file)
+
+    assert (settings.elevenlabs_api_key, settings.elevenlabs_model) == ("xi-secret", "eleven_multilingual_v2")
+    assert "xi-secret" not in repr(settings)
+    env_file.write_text("ELEVENLABS_MODEL=eleven_flash_v2_5\n")
+    assert (load_settings(env_file=env_file).elevenlabs_api_key, load_settings(env_file=env_file).elevenlabs_model) == (None, "eleven_flash_v2_5")
 
 
 def test_the_request_interval_can_be_set(tmp_path, monkeypatch):

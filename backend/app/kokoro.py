@@ -228,6 +228,7 @@ class KokoroSpeech:
     local = True
     takes_style = False
     takes_speed = True
+    speed_range = (0.5, 2.0)
 
     def __init__(self, model: KokoroModel) -> None:
         self.model = model

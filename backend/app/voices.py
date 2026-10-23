@@ -8,13 +8,16 @@ splits the script, joins and levels the sentences, so an engine only ever reads 
 
 The cloud engines are configured apart from the LLM: Gemini TTS is offered whenever GEMINI_API_KEY is
 set, whatever LLM_PROVIDER says; an OpenAI-compatible /audio/speech service when TTS_BASE_URL,
-TTS_API_KEY and TTS_MODEL are.
+TTS_API_KEY and TTS_MODEL are; ElevenLabs when ELEVENLABS_API_KEY is (docs/adr/0026).
 """
 
 import base64
+import logging
 import math
 import re
 import struct
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -23,6 +26,8 @@ import httpx
 import numpy as np
 
 from app.config import Settings
+
+logger = logging.getLogger(__name__)
 
 GEMINI_API = "https://generativelanguage.googleapis.com/v1beta"
 # A sentence is short; Gemini can still take a while to start speaking under load.
@@ -35,6 +40,16 @@ _GEMINI_RATE = 24_000
 _RATE = re.compile(r"rate=(\d+)")
 # OpenAI's raw "pcm" answer: 24 kHz 16-bit mono, little-endian.
 _OPENAI_PCM_RATE = 24_000
+ELEVENLABS_API = "https://api.elevenlabs.io/v1"
+# The raw PCM asked of ElevenLabs (output_format pcm_24000, on every plan): 24 kHz 16-bit mono, little-endian.
+_ELEVENLABS_RATE = 24_000
+# How long the account's Voices are kept before they are asked again (a Voice added on ElevenLabs shows
+# up after this), and a failure to list them is remembered, so that one listing of the engines (which
+# asks whether each is ready, and its Voices) doesn't wait for a failing ElevenLabs more than once.
+_ELEVENLABS_VOICES_SECS = 600.0
+_ELEVENLABS_RETRY_SECS = 30.0
+# Listing the Voices is quick, and holds up the engine picker while it is asked.
+_VOICES_TIMEOUT_SECS = 10
 # OpenAI's speech models that take `instructions` (a Style): gpt-4o-mini-tts and its kind, not tts-1.
 _INSTRUCTED_MODEL = re.compile(r"^gpt-.*tts", re.IGNORECASE)
 
@@ -91,6 +106,9 @@ class VoiceEngine(Protocol):
     # runner retimes what it reads at 1×).
     takes_style: bool
     takes_speed: bool
+    # The Speeds it reads natively, when it takes_speed: one outside is asked its nearest, and the
+    # runner retimes the rest.
+    speed_range: tuple[float, float]
 
     def ready(self) -> bool: ...
 
@@ -102,8 +120,8 @@ class VoiceEngine(Protocol):
     def voices(self) -> list[Voice]: ...
 
     def read(self, text: str, voice: str, style: str | None = None, speed: float = 1.0) -> Pcm:
-        """`text`, one sentence, read by Voice `voice`, at `speed` (0.5–2, asked only of an engine that
-        takes_speed). SpeechError (or TransientSpeechError) when it fails."""
+        """`text`, one sentence, read by Voice `voice`, at `speed` (within speed_range, asked only of an
+        engine that takes_speed). SpeechError (or TransientSpeechError) when it fails."""
         ...
 
 
@@ -155,6 +173,7 @@ class GeminiSpeech:
     local = False
     takes_style = True
     takes_speed = False
+    speed_range = (1.0, 1.0)
 
     def __init__(self, settings: Settings, http_client: httpx.Client | None = None) -> None:
         self.settings = settings
@@ -266,6 +285,7 @@ class OpenAiSpeech:
     id = "openai"
     local = False
     takes_speed = True
+    speed_range = (0.25, 4.0)
 
     def __init__(self, settings: Settings, http_client: httpx.Client | None = None) -> None:
         self.settings = settings
@@ -334,6 +354,112 @@ class OpenAiSpeech:
         return self._http
 
 
+class ElevenLabsSpeech:
+    """ElevenLabs: POST {ELEVENLABS_API}/text-to-speech/{voice} with the sentence and ELEVENLABS_MODEL,
+    answered as raw 24 kHz PCM. Its Voices are the account's (premade, cloned and added from its
+    library), asked of GET /voices and kept a while; it isn't ready while they can't be listed. Speed
+    goes in voice_settings (left out at 1×, so the Voice reads with its own settings), 0.7–1.2 being all
+    ElevenLabs takes; it takes no Style."""
+
+    id = "elevenlabs"
+    label = "ElevenLabs"
+    service = "ElevenLabs"
+    local = False
+    takes_style = False
+    takes_speed = True
+    speed_range = (0.7, 1.2)
+
+    def __init__(self, settings: Settings, http_client: httpx.Client | None = None) -> None:
+        self.settings = settings
+        self._http = http_client
+        self._lock = threading.Lock()
+        self._voices: list[Voice] = []
+        self._listed_at = self._failed_at = -math.inf
+
+    def ready(self) -> bool:
+        return bool(self.voices())
+
+    def load(self) -> None:
+        pass
+
+    def voices(self) -> list[Voice]:
+        if not self.settings.elevenlabs_api_key:
+            return []
+        with self._lock:
+            now = time.monotonic()
+            if now - self._listed_at < _ELEVENLABS_VOICES_SECS or now - self._failed_at < _ELEVENLABS_RETRY_SECS:
+                return self._voices
+            try:
+                self._voices, self._listed_at = self._list_voices(), now
+            except SpeechError as exc:
+                logger.warning("ElevenLabs isn't offered: %s", exc)
+                self._voices, self._failed_at = [], now
+            return self._voices
+
+    def _list_voices(self) -> list[Voice]:
+        try:
+            response = self._client().get(f"{ELEVENLABS_API}/voices", headers=self._headers(), timeout=_VOICES_TIMEOUT_SECS)
+        except httpx.TransportError as exc:
+            raise TransientSpeechError(f"Couldn't reach ElevenLabs: {exc}") from exc
+        if response.status_code != 200:
+            raise _elevenlabs_error(response)
+        return [_elevenlabs_voice(voice) for voice in response.json().get("voices") or []]
+
+    def read(self, text: str, voice: str, style: str | None = None, speed: float = 1.0) -> Pcm:
+        body: dict = {"text": text, "model_id": self.settings.elevenlabs_model}
+        if speed != 1:
+            body["voice_settings"] = {"speed": speed}
+        url = f"{ELEVENLABS_API}/text-to-speech/{voice}"
+        params = {"output_format": f"pcm_{_ELEVENLABS_RATE}"}
+        try:
+            response = self._client().post(url, params=params, json=body, headers=self._headers(), timeout=_TIMEOUT_SECS)
+        except httpx.TransportError as exc:
+            raise TransientSpeechError(f"Couldn't reach ElevenLabs: {exc}") from exc
+        if response.status_code != 200:
+            raise _elevenlabs_error(response)
+        data = response.content
+        return Pcm(np.frombuffer(data[: len(data) // 2 * 2], dtype="<i2"), _ELEVENLABS_RATE)
+
+    def _headers(self) -> dict:
+        return {"xi-api-key": self.settings.elevenlabs_api_key or ""}
+
+    def _client(self) -> httpx.Client:
+        if self._http is None:
+            self._http = httpx.Client()
+        return self._http
+
+
+def _elevenlabs_voice(voice: dict) -> Voice:
+    """An account's Voice, its detail its gender, accent and kind ("Female · American · premade"). They
+    are multilingual: each reads any language."""
+    labels = voice.get("labels") or {}
+    detail = " · ".join([str(labels[key]).strip().capitalize() for key in ("gender", "accent") if labels.get(key)] + [voice.get("category") or ""])
+    return Voice(voice["voice_id"], voice.get("name") or voice["voice_id"], (detail[:1].upper() + detail[1:]).strip(" ·"))
+
+
+def _elevenlabs_error(response: httpx.Response) -> SpeechError:
+    """ElevenLabs' failure: its detail is {"status", "message"}, or a list of what a request lacked (422)."""
+    try:
+        detail = response.json()["detail"]
+    except (ValueError, KeyError, TypeError):
+        detail = None
+    status = detail.get("status") if isinstance(detail, dict) else None
+    if isinstance(detail, dict):
+        message = detail.get("message") or status or response.reason_phrase
+    elif isinstance(detail, list):
+        message = "; ".join(str(item.get("msg", item)) if isinstance(item, dict) else str(item) for item in detail)
+    else:
+        message = str(detail) if detail else response.text[:200] or response.reason_phrase
+    code = response.status_code
+    if status == "quota_exceeded":
+        return SpeechError(f"ElevenLabs is out of credits: {message}")
+    if code in (401, 403):
+        return SpeechError(f"ElevenLabs refused ELEVENLABS_API_KEY: check the key in .env and restart ({message})")
+    if code == 429 or code >= 500:
+        return TransientSpeechError(f"ElevenLabs is busy ({code}): {message}", _retry_after(response))
+    return SpeechError(f"ElevenLabs failed ({code}): {message}")
+
+
 def _wav(data: bytes, name: str) -> Pcm:
     """The mono PCM in a 16-bit WAV file, its channels averaged. A streamed file's sizes may be unknown
     (0xFFFFFFFF), so the data chunk is read to the end of what was sent, whatever its size says."""
@@ -368,6 +494,8 @@ def voice_engines(settings: Settings, http_client: httpx.Client | None = None) -
     openai = OpenAiSpeech(settings, http_client)
     if openai.ready():
         engines.append(openai)
+    if settings.elevenlabs_api_key:
+        engines.append(ElevenLabsSpeech(settings, http_client))
     return engines
 
 
