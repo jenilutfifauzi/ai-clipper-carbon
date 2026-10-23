@@ -1,4 +1,4 @@
-import { ArrowLeft, BookmarkPlus, Download, Loader2, Maximize, Minimize, PanelLeft, PanelRight, RotateCcw } from "lucide-react";
+import { ArrowLeft, BookmarkPlus, Download, Loader2, Upload, Maximize, Minimize, PanelLeft, PanelRight, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import {
@@ -7,6 +7,7 @@ import {
   mediaUrl,
   type Candidate,
   type CandidateChange,
+  type ExportPresetList,
   type AdjustmentLayer,
   type Aspect,
   type ClipSegment,
@@ -35,6 +36,8 @@ import { useTextPresets } from "../../../textPresets";
 import { cx } from "../../../format";
 import { useMediaQuery } from "../../../hooks/useMediaQuery";
 import { candidateName } from "../CandidateList";
+import { batchParts, pickedPreset } from "../exportPresets";
+import { RenderButton } from "../RenderButton";
 import { ChangeNotice, type Notice } from "../editor/ChangeNotice";
 import { CanvasContext, useCanvasOf } from "../editor/canvas";
 import { ClipPreview, type StageControls } from "../editor/ClipPreview";
@@ -592,6 +595,34 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       setNotice({ id: Date.now(), text: `Couldn't save a WAV of ${sound.name}: ${(reason as Error).message}` });
     } finally {
       setSavingSound(false);
+    }
+  }
+  // Export: render this clip with an Export Preset, its edits saved first; the editor stays open
+  // while it renders, and a notice offers the job page, where the Clip is downloaded.
+  const [exportPresets, setExportPresets] = useState<ExportPresetList | null>(null);
+  const [pickedExport, setPickedExport] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  useEffect(() => void api.listExportPresets().then(setExportPresets, () => {}), []);
+  async function exportClip(exportPresetId?: string) {
+    if (exportPresetId) setPickedExport(exportPresetId);
+    setExporting(true);
+    try {
+      await history.flush();
+      await api.render(job.id, [initial.id], exportPresetId);
+      const name = exportPresets?.presets.find((preset) => preset.id === exportPresetId)?.name;
+      setNotice({
+        id: Date.now(),
+        text: name ? `Rendering this clip with ${name}` : "Rendering this clip",
+        action: (
+          <Button size="xs" onClick={() => void close()}>
+            View clip
+          </Button>
+        ),
+      });
+    } catch (reason) {
+      setNotice({ id: Date.now(), text: `Not queued: ${(reason as Error).message}` });
+    } finally {
+      setExporting(false);
     }
   }
   // The plan as the player draws it, the hidden Tracks left out, its Segments, Overlays, Adjustment
@@ -1656,6 +1687,18 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               </Button>
             )}
           </>
+        }
+        primary={
+          <RenderButton
+            label="Export"
+            icon={<Upload aria-hidden size={16} />}
+            variant="primary"
+            presets={exportPresets}
+            picked={exportPresets && pickedPreset(exportPresets, pickedExport)}
+            onRender={(exportPresetId) => void exportClip(exportPresetId)}
+            disabled={exporting || ended !== null}
+            batch={{ parts: batchParts([candidate]), fps: job.source?.metadata.fps ?? 30 }}
+          />
         }
         onShortcuts={wide ? () => setShortcuts(true) : undefined}
         onClose={() => void close()}
