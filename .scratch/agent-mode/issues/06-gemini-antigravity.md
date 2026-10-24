@@ -16,9 +16,13 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Detection picks `--acp` or `--experimental-acp` from a faked `--help` output.
-- [ ] The Antigravity entry carries the warning, and `ProviderSetup` shows it (renderToStaticMarkup).
-- [ ] A refused `session/new` ends the turn with a readable `error`.
-- [ ] Tests extend `test_agent_providers.py` / `test_agent_acp.py`; only those are run.
+- [x] Detection picks `--acp` or `--experimental-acp` from a faked `--help` output.
+- [x] The Antigravity entry carries the warning, and `ProviderSetup` shows it (renderToStaticMarkup).
+- [x] A refused `session/new` ends the turn with a readable `error`.
+- [x] Tests extend `test_agent_providers.py` / `test_agent_acp.py`; only those are run.
+
+**Notes (2026-10):**
+- Gemini CLI defines `--acp` and keeps `--experimental-acp` as a deprecated alias (`packages/cli/src/config/config.ts`); the ACP registry launches it with `--acp`. Its `initialize` answers `mcpCapabilities: {http: true, sse: true}` (`packages/cli/src/acp/acpRpcDispatcher.ts`), so no stdio bridge is needed. Its auth methods: "Log in with Google" (picked by `login_method`), API key, Vertex AI, gateway.
+- Antigravity's registry entry is `antigravity-acp`: a zip per platform whose command is `./agy_acp_server.par` (macOS arm64/x86_64), no npx. The entry says nothing about auth or MCP transports. An agent that doesn't advertise `mcpCapabilities.http` now fails its turn with a readable error rather than getting an HTTP server it can't use; a stdio bridge would be the follow-up if Antigravity turns out to be stdio-only.

@@ -9,8 +9,9 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -21,6 +22,13 @@ from app.config import DEFAULT_GEMINI_MODEL
 DETECTION_TTL_SECS = 30.0
 # `<command> --version` is given this long; a slower one leaves the version unknown.
 VERSION_TIMEOUT_SECS = 3.0
+# `<command> --help`, read for its ACP flag, is given this long (Gemini CLI is a Node program).
+HELP_TIMEOUT_SECS = 10.0
+# The scoped MCP server's name as an ACP agent knows it: its tools are `mcp__ai-clipper__<tool>`.
+MCP_SERVER_NAME = "ai-clipper"
+# Claude Code's built-in tools that touch the shell, files or the web: refused outright through the
+# adapter's `_meta`, whatever the owner's own Claude Code settings allow.
+CLAUDE_CODE_DISALLOWED = ["Bash", "BashOutput", "KillShell", "Edit", "MultiEdit", "Write", "NotebookEdit", "WebFetch", "WebSearch"]
 
 
 class AcpProvider(BaseModel):
@@ -31,6 +39,11 @@ class AcpProvider(BaseModel):
     label: str
     # Its adapter's or CLI's command, tried first.
     command: list[str]
+    # Where else `command[0]` may be: another name on PATH, or a path (`~` is the home folder).
+    locations: list[str] = []
+    # The ACP flags it may take, newest first: the first that `<command> --help` lists is added to
+    # `command`, the last when it lists none (an older CLI's help may not show it).
+    acp_flags: list[str] = []
     # The npm package run through `npx -y` when `command` isn't installed but npx is; None: no fallback.
     npx_package: str | None = None
     install_hint: str
@@ -40,6 +53,10 @@ class AcpProvider(BaseModel):
     docs_url: str
     # Shown in its setup, such as Antigravity's terms note.
     warning: str | None = None
+    # What to do before its first turn, shown in its setup and when it refuses to open a session.
+    setup_note: str | None = None
+    # Sent as `session/new`'s `_meta`: Claude Code's adapter reads its Agent SDK options there.
+    session_meta: dict[str, Any] | None = Field(default=None, exclude=True)
 
 
 class ApiProvider(BaseModel):
@@ -96,6 +113,10 @@ PROVIDERS: list[AcpProvider | ApiProvider] = [
         login="terminal",
         login_command=["claude", "auth", "login"],
         docs_url="https://docs.claude.com/en/docs/claude-code",
+        # The scoped server's tools allowed without asking; the shell, files and the web refused.
+        session_meta={
+            "claudeCode": {"options": {"allowedTools": [f"mcp__{MCP_SERVER_NAME}"], "disallowedTools": CLAUDE_CODE_DISALLOWED}}
+        },
     ),
     AcpProvider(
         id="codex",
@@ -111,8 +132,11 @@ PROVIDERS: list[AcpProvider | ApiProvider] = [
     AcpProvider(
         id="gemini-cli",
         label="Gemini CLI",
-        command=["gemini", "--experimental-acp"],
+        command=["gemini"],
+        # `--acp` in current releases; `--experimental-acp` before, kept as a deprecated alias.
+        acp_flags=["--acp", "--experimental-acp"],
         install_hint="npm install -g @google/gemini-cli",
+        # Its `authenticate` offers "Log in with Google" in the browser; `gemini` signs in on first run too.
         login="acp",
         login_command=["gemini"],
         docs_url="https://github.com/google-gemini/gemini-cli",
@@ -121,13 +145,16 @@ PROVIDERS: list[AcpProvider | ApiProvider] = [
         id="antigravity",
         label="Antigravity",
         command=["agy_acp_server"],
-        install_hint="Install Google Antigravity, which ships agy_acp_server",
+        # The ACP registry's macOS build is `agy_acp_server.par`, in a zip unpacked wherever the owner puts it.
+        locations=["agy_acp_server.par", "~/.local/bin/agy_acp_server.par", "~/.local/bin/agy_acp_server"],
+        install_hint="Download agy_acp_server from the ACP registry and put it on PATH or in ~/.local/bin",
         login="acp",
-        docs_url="https://antigravity.google",
+        docs_url="https://antigravity.google/docs/ide/extensions",
         warning=(
-            "Google's terms may not allow a personal Google sign-in to be used through other apps. "
-            "Use it at your own risk."
+            "Google's terms may not allow a personal Antigravity login to be used from other apps. "
+            "Use it at your own risk, or use Gemini CLI or a Gemini API key."
         ),
+        setup_note="Choose how Antigravity signs in, in Antigravity's own settings, before its first turn.",
     ),
     ApiProvider(
         id="deepseek",
@@ -174,13 +201,41 @@ def provider_by_id(provider_id: str) -> AcpProvider | ApiProvider | None:
 
 
 def launch_command(provider: AcpProvider, which: Callable[[str], str | None] = shutil.which) -> list[str] | None:
-    """The command `provider` is started with: its own when installed, else `npx -y <package>` when
-    npx is, else None."""
-    if which(provider.command[0]):
-        return provider.command
+    """The command `provider` is started with: its own when installed (on PATH or at one of its
+    `locations`, with its ACP flag), else `npx -y <package>` when npx is, else None. Blocking the
+    first time an `acp_flags` CLI is seen: its `--help` is read."""
+    if binary := _installed(provider, which):
+        flag = _acp_flag(which(binary) or binary, tuple(provider.acp_flags)) if provider.acp_flags else None
+        return [binary, *provider.command[1:], *([flag] if flag else [])]
     if provider.npx_package and which("npx"):
         return ["npx", "-y", provider.npx_package]
     return None
+
+
+def _installed(provider: AcpProvider, which: Callable[[str], str | None]) -> str | None:
+    """`command[0]` when on PATH, else the first of its `locations` there is: a name as is, a path in full."""
+    for name in [provider.command[0], *provider.locations]:
+        if "/" not in name:
+            if which(name):
+                return name
+            continue
+        path = Path(name).expanduser()
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return None
+
+
+@cache
+def _acp_flag(binary: str, flags: tuple[str, ...]) -> str:
+    """The first of `flags` that `<binary> --help` lists, else the last; read once per installed binary."""
+    try:
+        result = subprocess.run(
+            [binary, "--help"], capture_output=True, text=True, timeout=HELP_TIMEOUT_SECS, check=False, stdin=subprocess.DEVNULL
+        )
+        listed = set((result.stdout + result.stderr).split())
+    except (OSError, subprocess.TimeoutExpired):
+        listed = set()
+    return next((flag for flag in flags if flag in listed), flags[-1])
 
 
 def detect_acp(provider: AcpProvider) -> ProviderStatus:
@@ -188,7 +243,7 @@ def detect_acp(provider: AcpProvider) -> ProviderStatus:
     command = launch_command(provider)
     if command is None:
         return ProviderStatus(id=provider.id, ready=False, installed=False, login="unknown")
-    version = _version(command[0]) if command == provider.command else None
+    version = None if command[:2] == ["npx", "-y"] else _version(command[0])
     return ProviderStatus(id=provider.id, ready=True, installed=True, command=command, version=version, login=login_state(provider))
 
 
@@ -256,7 +311,7 @@ class DetectionCache:
 def _version(binary: str) -> str | None:
     try:
         result = subprocess.run(
-            [binary, "--version"], capture_output=True, text=True, timeout=VERSION_TIMEOUT_SECS, check=False
+            [binary, "--version"], capture_output=True, text=True, timeout=VERSION_TIMEOUT_SECS, check=False, stdin=subprocess.DEVNULL
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

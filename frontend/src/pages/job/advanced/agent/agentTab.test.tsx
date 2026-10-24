@@ -49,8 +49,9 @@ const antigravity: AgentProviderListing = {
     install_hint: "brew install antigravity",
     login: "terminal",
     login_command: ["agy", "login"],
-    docs_url: "https://example.com",
-    warning: "Google's terms may not allow a personal login through other apps.",
+    docs_url: "https://antigravity.google/docs/ide/extensions",
+    warning: "Google's terms may not allow a personal Antigravity login to be used from other apps. Use it at your own risk, or use Gemini CLI or a Gemini API key.",
+    setup_note: "Choose how Antigravity signs in, in Antigravity's own settings, before its first turn.",
   },
   status: { id: "antigravity", ready: false, installed: false, command: null, version: null, login: null, has_key: null, key_source: null, base_url: null, model: null },
 };
@@ -146,10 +147,12 @@ describe("AgentTab", () => {
     expect(html.match(/data-example/g)).toHaveLength(3);
   });
 
-  test("an ACP provider's setup: its install hint, Login and its warning", () => {
+  test("an ACP provider's setup: its install hint, Login, its warning and what to do first", () => {
     const html = renderToStaticMarkup(<AgentTab jobId="j" candidateId="c" stream={idle} initialProviders={[antigravity]} />);
     expect(html).toContain("brew install antigravity");
     expect(html).toContain("Log in");
-    expect(html).toContain("Google&#x27;s terms");
+    expect(html).toContain("Google&#x27;s terms may not allow a personal Antigravity login to be used from other apps.");
+    expect(html).toContain("or use Gemini CLI or a Gemini API key.");
+    expect(html).toContain("in Antigravity&#x27;s own settings");
   });
 });

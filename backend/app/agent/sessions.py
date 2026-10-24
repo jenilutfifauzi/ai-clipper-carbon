@@ -30,8 +30,8 @@ from app.jobs import JobStore
 logger = logging.getLogger(__name__)
 
 SessionKey = tuple[str, str, str]
-# The ACP agents an Agent Turn runs on so far (acp_client.py); Gemini CLI and Antigravity come later.
-ACP_DRIVEN = ("claude-code", "codex")
+# The ACP agents an Agent Turn runs on (acp_client.py).
+ACP_DRIVEN = ("claude-code", "codex", "gemini-cli", "antigravity")
 # Where each Agent Session's ACP agent runs: an empty folder of its own under DATA_DIR.
 SANDBOX_DIR = Path("agent") / "sandbox"
 
@@ -125,7 +125,8 @@ class AgentSessionManager:
     ) -> str:
         """Start a turn of the tab's session (opened now if it isn't) and return its id. Raises
         TurnRunning while the session runs one, and ValueError for a provider that can't run one."""
-        command = acp_command(provider) if isinstance(provider, AcpProvider) else None
+        # Off the loop: finding its command may read its `--help` once.
+        command = await asyncio.to_thread(acp_command, provider) if isinstance(provider, AcpProvider) else None
         driver = driver_for(provider) if command is None else None
         session = self._session(job_id, candidate_id, tab, provider, model, credential)
         if session.busy:
@@ -194,7 +195,7 @@ class AgentSessionManager:
             await session.acp.close()
         scope = self._scopes.resolve(session.token)
         sandbox = self._app.state.settings.data_dir / SANDBOX_DIR / scope.session_id
-        session.acp = AcpAgent(provider.id, provider.label, command, sandbox)
+        session.acp = AcpAgent(provider, command, sandbox)
         return session.acp
 
     async def _run(self, session: AgentSession, turn: str, driver: Driver, prompt: str) -> None:
