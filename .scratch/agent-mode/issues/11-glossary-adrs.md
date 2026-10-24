@@ -18,6 +18,6 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Three ADR files and the glossary section exist and use the glossary's existing terms exactly.
+- [x] Three ADR files and the glossary section exist and use the glossary's existing terms exactly.
