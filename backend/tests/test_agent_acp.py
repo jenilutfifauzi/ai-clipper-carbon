@@ -39,17 +39,23 @@ class FakeAgent:
 
 @pytest.fixture
 def fake_agent(tmp_path, monkeypatch) -> FakeAgent:
-    """The fake agent as `claude-agent-acp` and `codex-acp`, the only commands on PATH."""
+    """The fake agent as `claude-agent-acp`, `codex-acp`, `gemini` (whose help lists `--acp`) and
+    `agy_acp_server`, the only commands on PATH."""
     folder = tmp_path / "fake-acp"
     folder.mkdir()
     bin_dir = folder / "bin"
     bin_dir.mkdir()
-    for name in ("claude-agent-acp", "codex-acp"):
+    for name in ("claude-agent-acp", "codex-acp", "gemini", "agy_acp_server"):
         launcher = bin_dir / name
-        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{FAKE_AGENT}" "$@"\n')
+        launcher.write_text(
+            "#!/bin/sh\n"
+            'case "$1" in --help) echo "  --acp  Starts the agent in ACP mode"; exit 0;; --version) echo 1.0.0; exit 0;; esac\n'
+            f'exec "{sys.executable}" "{FAKE_AGENT}" "$@"\n'
+        )
         launcher.chmod(0o755)
     agent = FakeAgent(folder)
     monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("HOME", str(folder))
     monkeypatch.setenv("FAKE_ACP_LOG", str(agent.log))
     monkeypatch.setenv("FAKE_ACP_SCRIPT", str(agent.script))
     return agent
@@ -289,3 +295,58 @@ def test_codex_is_reported_signed_in_when_its_login_file_exists(served, fake_age
     listing = {entry["provider"]["id"]: entry["status"] for entry in served.get("/api/agent/providers").json()}
 
     assert listing["codex"]["login"] == "signed_in"
+
+
+def test_gemini_cli_runs_a_turn_launched_with_the_flag_its_help_lists(served, job, fake_agent):
+    candidate = job["candidates"][0]
+    fake_agent.turns([[says("Gemini here.")]])
+    stream = agent_events(served, job, candidate)
+    next(stream)
+
+    sent = send(served, job, candidate, "Hi", provider="gemini-cli")
+
+    assert sent.status_code == 202, sent.text
+    received = until_finished(stream)
+    assert [(name, data.get("delta")) for name, data in received[1:]] == [("text", "Gemini here."), ("turn_finished", None)]
+    [started] = [message for message in fake_agent.received() if "started" in message]
+    assert started["args"] == ["--acp"]
+    [new] = fake_agent.received("session/new")
+    assert new["params"]["mcpServers"][0]["type"] == "http"
+    # Claude Code's options are Claude Code's alone.
+    assert "_meta" not in new["params"]
+
+
+def test_a_refused_session_ends_the_turn_with_a_readable_error_and_the_next_send_tries_again(served, job, fake_agent, monkeypatch):
+    candidate = job["candidates"][0]
+    monkeypatch.setenv("FAKE_ACP_REFUSE_SESSION", "Authentication required")
+    stream = agent_events(served, job, candidate)
+    next(stream)
+
+    send(served, job, candidate, "Hi", provider="antigravity")
+    refused = until_finished(stream)
+
+    assert [name for name, _ in refused] == ["turn_started", "error", "turn_finished"]
+    message = refused[1][1]["message"]
+    assert message.startswith("Antigravity didn't open a session: Authentication required.")
+    assert "Antigravity's own settings" in message
+    assert "https://antigravity.google/docs" in message
+    assert refused[-1][1]["stop"] == "error"
+    assert fake_agent.received("session/prompt") == []
+
+    send(served, job, candidate, "Hi", provider="antigravity")
+    until_finished(stream)
+    assert len(fake_agent.received("initialize")) == 2
+
+
+def test_an_agent_without_mcp_over_http_ends_the_turn_with_a_readable_error(served, job, fake_agent, monkeypatch):
+    candidate = job["candidates"][0]
+    monkeypatch.setenv("FAKE_ACP_NO_HTTP", "1")
+    stream = agent_events(served, job, candidate)
+    next(stream)
+
+    send(served, job, candidate, "Hi", provider="antigravity")
+    received = until_finished(stream)
+
+    assert [name for name, _ in received] == ["turn_started", "error", "turn_finished"]
+    assert "MCP servers over HTTP" in received[1][1]["message"]
+    assert fake_agent.received("session/new") == []

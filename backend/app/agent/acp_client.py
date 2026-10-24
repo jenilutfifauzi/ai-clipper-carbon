@@ -21,12 +21,11 @@ from typing import Any
 from app.agent.api_loop import tool_summary
 from app.agent.driver import TurnContext
 from app.agent.events import AgentEvent, Stop, TextDelta, ThoughtDelta, ToolFinished, ToolStarted, TurnFinished
+from app.agent.providers import MCP_SERVER_NAME, AcpProvider
 
 logger = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = 1
-# The scoped MCP server's name as the agent knows it: its tools are `mcp__ai-clipper__<tool>`.
-MCP_SERVER_NAME = "ai-clipper"
 MCP_TOOL_PREFIX = f"mcp__{MCP_SERVER_NAME}__"
 # A line of JSON may be long (a tool call's whole input); the default 64 KiB limit isn't enough.
 LINE_LIMIT = 16 * 2**20
@@ -37,9 +36,6 @@ INITIALIZE_TIMEOUT_SECS = 30.0
 LOGIN_TIMEOUT_SECS = 10 * 60.0
 # How long a process is given to exit before it is killed.
 EXIT_GRACE_SECS = 2.0
-# Claude Code's built-in tools that touch the shell, files or the web: refused outright through the
-# adapter's `_meta`, whatever the owner's own Claude Code settings allow.
-CLAUDE_CODE_DISALLOWED = ["Bash", "BashOutput", "KillShell", "Edit", "MultiEdit", "Write", "NotebookEdit", "WebFetch", "WebSearch"]
 # ACP's stop reasons as an Agent Turn's.
 STOPS: dict[str, Stop] = {
     "end_turn": "end_turn",
@@ -204,12 +200,11 @@ def scoped_server(url: str, headers: dict[str, str]) -> dict[str, Any]:
     return {"type": "http", "name": MCP_SERVER_NAME, "url": url, "headers": [{"name": name, "value": value} for name, value in headers.items()]}
 
 
-def session_meta(provider_id: str) -> dict[str, Any] | None:
-    """Claude Code's adapter passes `_meta.claudeCode.options` to the Agent SDK: the scoped server's
-    tools allowed without asking, the shell, files and the web refused."""
-    if provider_id != "claude-code":
-        return None
-    return {"claudeCode": {"options": {"allowedTools": [f"mcp__{MCP_SERVER_NAME}"], "disallowedTools": CLAUDE_CODE_DISALLOWED}}}
+def reaches_http_mcp(initialized: dict[str, Any] | None) -> bool:
+    """Whether the agent said, answering `initialize`, that it connects to MCP servers over HTTP: the
+    scoped server is HTTP only. Gemini CLI does; ACP requires stdio of every agent, HTTP of none."""
+    capabilities = (initialized or {}).get("agentCapabilities") or {}
+    return bool((capabilities.get("mcpCapabilities") or {}).get("http"))
 
 
 def login_method(auth_methods: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -291,9 +286,10 @@ async def _refuse(method: str, params: dict[str, Any]) -> Any:
 class AcpAgent:
     """One Agent Session's ACP agent: one process, kept between its turns."""
 
-    def __init__(self, provider_id: str, label: str, command: list[str], sandbox: Path) -> None:
-        self.provider_id = provider_id
-        self._label = label
+    def __init__(self, provider: AcpProvider, command: list[str], sandbox: Path) -> None:
+        self.provider_id = provider.id
+        self._provider = provider
+        self._label = provider.label
         self._command = command
         self._sandbox = sandbox
         self._connection: AcpConnection | None = None
@@ -332,19 +328,36 @@ class AcpAgent:
         self._connection = None
 
     async def _ensure_started(self, context: TurnContext) -> bool:
-        """Launch, `initialize` and open its ACP session unless it runs; True when it was launched now."""
+        """Launch, `initialize` and open its ACP session unless it runs; True when it was launched now.
+        An agent that can't reach the scoped server or won't open a session raises AcpError and is
+        ended, so the next turn starts it afresh."""
         if self._connection is not None and self._connection.alive:
             return False
         await self.close()
         self._sandbox.mkdir(parents=True, exist_ok=True)
         self._connection = await AcpConnection.start(self._command, self._sandbox, self._label, self._notified, self._requested)
-        await self._connection.request("initialize", {"protocolVersion": PROTOCOL_VERSION, "clientCapabilities": client_capabilities()})
-        params: dict[str, Any] = {"cwd": str(self._sandbox), "mcpServers": [scoped_server(context.tools.url, context.tools.headers)]}
-        if (meta := session_meta(self.provider_id)) is not None:
-            params["_meta"] = meta
-        result = await self._connection.request("session/new", params)
-        self._session_id = result["sessionId"]
+        try:
+            self._session_id = await self._open_session(context)
+        except BaseException:
+            await self.close()
+            raise
         return True
+
+    async def _open_session(self, context: TurnContext) -> str:
+        initialized = await self._connection.request(
+            "initialize", {"protocolVersion": PROTOCOL_VERSION, "clientCapabilities": client_capabilities()}
+        )
+        if not reaches_http_mcp(initialized):
+            raise AcpError(f"{self._label} doesn't connect to MCP servers over HTTP, which the Agent's tools are served on")
+        params: dict[str, Any] = {"cwd": str(self._sandbox), "mcpServers": [scoped_server(context.tools.url, context.tools.headers)]}
+        if self._provider.session_meta is not None:
+            params["_meta"] = self._provider.session_meta
+        try:
+            result = await self._connection.request("session/new", params)
+        except AcpError as error:
+            advice = " ".join(filter(None, [self._provider.setup_note, f"See {self._provider.docs_url}"]))
+            raise AcpError(f"{self._label} didn't open a session: {str(error).rstrip('.')}. {advice}") from error
+        return result["sessionId"]
 
     async def _cancel(self, prompt: asyncio.Future) -> None:
         """Ask the agent to stop and give it a moment to answer the prompt `cancelled`."""

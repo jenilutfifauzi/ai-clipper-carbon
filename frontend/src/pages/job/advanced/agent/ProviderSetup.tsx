@@ -143,6 +143,7 @@ function AcpSetup({ provider, status }: { provider: AcpAgentProvider; status: Pr
           {provider.warning}
         </p>
       )}
+      {provider.setup_note && <p className="text-sm text-pretty text-muted">{provider.setup_note}</p>}
       {status.installed === false && (
         <div className="flex flex-col gap-1">
           <p className="text-sm font-medium">Install it</p>

@@ -102,18 +102,22 @@ def test_the_chat_is_kept_and_sent_back_as_history(served, chat, job):
     ]
 
 
-def test_a_provider_without_a_key_or_one_that_cant_run_a_turn_yet_is_refused_clearly(served, job):
+def test_a_provider_without_a_key_or_one_that_isnt_installed_is_refused_clearly(served, job, tmp_path, monkeypatch):
     candidate = job["candidates"][0]
     url = f"{agent_url(job, candidate)}/turns"
 
     no_key = served.post(url, json={"provider": "anthropic", "prompt": "Hi", "tab": "tab-a"})
-    # An ACP agent the client doesn't drive yet (issue 06); Claude Code and Codex are test_agent_acp's.
+    # An ACP agent that isn't installed; ones that are are test_agent_acp's.
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    monkeypatch.setenv("HOME", str(tmp_path))
     acp = served.post(url, json={"provider": "gemini-cli", "prompt": "Hi", "tab": "tab-a"})
     unknown = served.post(url, json={"provider": "nope", "prompt": "Hi", "tab": "tab-a"})
     missing = served.post(f"/api/jobs/{job['id']}/candidates/nope/agent/turns", json={"provider": "deepseek", "prompt": "Hi", "tab": "t"})
 
     assert no_key.status_code == 400 and "no key" in no_key.json()["detail"]
-    assert acp.status_code == 400
+    assert acp.status_code == 400 and "isn't installed" in acp.json()["detail"]
     assert unknown.status_code == 404
     assert missing.status_code == 404
 

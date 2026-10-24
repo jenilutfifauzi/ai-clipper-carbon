@@ -162,8 +162,57 @@ def test_detection_is_cached(client, tmp_path, monkeypatch):
     empty = tmp_path / "empty-bin"
     empty.mkdir()
     monkeypatch.setenv("PATH", str(empty))
+    monkeypatch.setenv("HOME", str(tmp_path))
     assert listing(client)["antigravity"]["status"]["installed"] is False
 
     fake_binary(empty, "agy_acp_server")
 
     assert listing(client)["antigravity"]["status"]["installed"] is False
+
+
+def fake_gemini(folder, help_text: str) -> None:
+    path = folder / "gemini"
+    path.write_text(f"#!/bin/sh\nif [ \"$1\" = --help ]; then echo '{help_text}'; else echo 0.65.0; fi\n")
+    path.chmod(0o755)
+
+
+@pytest.mark.parametrize(
+    ("help_text", "flag"),
+    [
+        ("  --acp  Starts the agent in ACP mode\n  --experimental-acp  (deprecated, use --acp instead)", "--acp"),
+        ("  --experimental-acp  Starts the agent in ACP mode", "--experimental-acp"),
+    ],
+)
+def test_gemini_cli_is_launched_with_the_acp_flag_its_help_lists(agent_settings, tmp_path, monkeypatch, help_text, flag):
+    folder = tmp_path / "bin"
+    folder.mkdir()
+    fake_gemini(folder, help_text)
+    monkeypatch.setenv("PATH", str(folder))
+
+    with make_client(agent_settings) as client:
+        gemini = listing(client)["gemini-cli"]["status"]
+
+    assert gemini["installed"] is True
+    assert gemini["command"] == ["gemini", flag]
+    assert gemini["version"] == "0.65.0"
+
+
+def test_antigravity_is_found_where_it_is_installed_when_not_on_path(client, tmp_path, monkeypatch):
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+    installed = tmp_path / "home" / ".local" / "bin"
+    installed.mkdir(parents=True)
+    fake_binary(installed, "agy_acp_server.par", "1.4.3")
+    monkeypatch.setenv("PATH", str(empty))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    antigravity = listing(client)["antigravity"]
+
+    assert antigravity["status"]["installed"] is True
+    assert antigravity["status"]["command"] == [str(installed / "agy_acp_server.par")]
+    assert antigravity["status"]["version"] == "1.4.3"
+    assert antigravity["provider"]["warning"] == (
+        "Google's terms may not allow a personal Antigravity login to be used from other apps. "
+        "Use it at your own risk, or use Gemini CLI or a Gemini API key."
+    )
+    assert "settings" in antigravity["provider"]["setup_note"]

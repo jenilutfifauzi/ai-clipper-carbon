@@ -2231,6 +2231,8 @@ export interface AcpAgentProvider {
   docs_url: string;
   // Shown in its setup, such as Antigravity's terms note.
   warning: string | null;
+  // What to do before its first turn, such as choosing Antigravity's sign-in in its own settings.
+  setup_note: string | null;
 }
 
 // A model the backend's own tool loop calls over its API.
