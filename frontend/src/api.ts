@@ -2142,7 +2142,75 @@ export const api = {
   // Forgets what was saved for an API provider: its key comes from the backend's .env again, if there.
   deleteAgentCredential: (providerId: string) =>
     request<void>(`/agent/credentials/${encodeURIComponent(providerId)}`, { method: "DELETE" }),
+  // Signs an ACP provider in: what to run in a terminal, or a note. Rejects with a 404 where the backend
+  // can't sign it in yet.
+  loginAgentProvider: (providerId: string) =>
+    request<AgentLogin>(`/agent/providers/${encodeURIComponent(providerId)}/login`, { method: "POST" }),
+  // Starts an Agent Turn on the Candidate from this tab: its id, whose events come on agentEventsUrl.
+  // Rejects with a 409 while this tab's turn runs, a 400 for a provider that isn't ready.
+  sendAgentTurn: (jobId: string, candidateId: string, body: AgentTurnRequest) =>
+    request<{ turn: string }>(`${agentPath(jobId, candidateId)}/turns`, { method: "POST", body: JSON.stringify(body) }).then(
+      (answer) => answer.turn,
+    ),
+  // Stops the tab's turn, if one runs: it ends with what it had done so far.
+  cancelAgentTurn: (jobId: string, candidateId: string, tab: string) =>
+    request<void>(`${agentPath(jobId, candidateId)}/cancel`, { method: "POST", body: JSON.stringify({ tab }) }),
+  // The Candidate's chat: its finished Agent Turns, oldest first.
+  agentTranscript: (jobId: string, candidateId: string) => request<AgentTranscriptTurn[]>(`${agentPath(jobId, candidateId)}/transcript`),
 };
+
+const agentPath = (jobId: string, candidateId: string) =>
+  `/jobs/${encodeURIComponent(jobId)}/candidates/${encodeURIComponent(candidateId)}/agent`;
+
+// `ready` with the turns running now (`{running: {tab: turn}}`), then each AgentEvent named by its type.
+export const agentEventsUrl = (jobId: string, candidateId: string) => `/api${agentPath(jobId, candidateId)}/events`;
+
+// What signing an ACP provider in asks of the owner: a command to run in a terminal, or a note.
+export interface AgentLogin {
+  command?: string[];
+  note?: string;
+}
+
+export interface AgentTurnRequest {
+  provider: string;
+  // Else the provider's saved or default model.
+  model?: string;
+  prompt: string;
+  tab: string;
+}
+
+// Why an Agent Turn ended (backend/app/agent/events.py).
+export type AgentStop = "end_turn" | "step_limit" | "cancelled" | "error";
+
+// What an Agent Turn tells the editor as it runs, on agentEventsUrl.
+export type AgentEvent =
+  | { type: "turn_started"; turn: string; tab: string; provider: string; model: string | null }
+  | { type: "text"; turn: string; delta: string }
+  | { type: "thought"; turn: string; delta: string }
+  // `tool` comes without any `mcp__…__` prefix.
+  | { type: "tool_started"; turn: string; call: string; tool: string; summary: string }
+  | { type: "tool_finished"; turn: string; call: string; ok: boolean; error?: string | null; revision?: number | null }
+  | { type: "turn_finished"; turn: string; stop: AgentStop; first_revision?: number | null; last_revision?: number | null }
+  | { type: "error"; turn?: string | null; message: string };
+
+// A part of a turn: a run of text or of thought, or a tool call (ok null while it runs).
+export type AgentTurnPart =
+  | { type: "text"; text: string }
+  | { type: "thought"; text: string }
+  | { type: "tool"; call: string; tool: string; summary: string; ok: boolean | null; error: string | null; revision: number | null };
+
+// A finished turn of the Candidate's chat (backend/app/agent/transcript_store.py).
+export interface AgentTranscriptTurn {
+  id: string;
+  provider: string;
+  model: string | null;
+  prompt: string;
+  parts: AgentTurnPart[];
+  first_revision: number | null;
+  last_revision: number | null;
+  stop: AgentStop;
+  started_at: string;
+}
 
 // A coding agent the backend launches over the Agent Client Protocol (backend/app/agent/providers.py).
 export interface AcpAgentProvider {
