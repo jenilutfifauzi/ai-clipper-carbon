@@ -1,10 +1,11 @@
 import { ArrowUp, Settings2, Square } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useContext, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, TAB_ID, type AgentProviderListing } from "../../../../api";
 import { Button } from "../../../../components/Button";
 import { Select } from "../../../../components/Select";
 import { rememberedValue } from "../../../../remembered";
 import type { AgentTurnView } from "./agentStream";
+import { PresenceContext } from "./presence";
 import { ProviderSetup } from "./ProviderSetup";
 import { TurnView, type UndoTurn } from "./TurnView";
 import type { AgentStream } from "./useAgentStream";
@@ -54,6 +55,12 @@ export function AgentTab({
   useEffect(() => {
     api.listAgentProviders().then(setProviders, (reason) => setProvidersError(reason instanceof Error ? reason.message : "Couldn't list the providers"));
   }, []);
+
+  // The Agent's cursor names its provider as listed here.
+  const presence = useContext(PresenceContext);
+  useEffect(() => {
+    if (providers) presence?.named(Object.fromEntries(providers.map(({ provider }) => [provider.id, provider.label])));
+  }, [providers, presence]);
 
   const listing = providers && chosenListing(providers, choice?.provider ?? null);
   const models = listing ? modelOptions(listing) : [];

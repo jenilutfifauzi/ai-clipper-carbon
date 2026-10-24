@@ -216,3 +216,41 @@
     box-shadow: 0 0 0 3px var(--color-accent);
   }
 }
+
+/*
+ * Agent Presence (docs/adr/0029) on what the Agent is at work on: a Timeline item, or a picture's
+ * outline on the stage, marked `data-agent`. The ring is drawn once, on its own layer (`::after`),
+ * and only its opacity moves: a soft breathe while a tool call runs (pulse), one ring that fades
+ * when a Revision lands (flash, as long as the store keeps the mark). With reduced motion, a still
+ * ring for as long as the mark lasts.
+ */
+[data-agent]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 2px var(--color-accent);
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  [data-agent="pulse"]::after {
+    animation: agent-pulse 1.4s ease-in-out infinite;
+  }
+  [data-agent="flash"]::after {
+    animation: agent-flash 700ms var(--ease-out) forwards;
+  }
+}
+@keyframes agent-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes agent-flash {
+  to {
+    opacity: 0;
+  }
+}

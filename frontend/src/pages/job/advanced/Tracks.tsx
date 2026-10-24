@@ -265,6 +265,7 @@ export function Tracks({
               tone="overlay"
               selected={selected}
               changed={changed.has(overlay.id)}
+              agent={overlay.id}
               label={`${kind === "behind" ? "Behind Overlay" : "Overlay"} ${item?.name ?? ""}, from ${overlay.start.toFixed(1)} s for ${overlay.secs.toFixed(1)} s${retimingName(overlay)}${overlay.muted ? ", Muted" : ""}`}
               pickKey={keyOf({ kind: "overlay", id: overlay.id })}
               onSelect={choose({ kind: "overlay", id: overlay.id })}
@@ -324,6 +325,7 @@ export function Tracks({
                 tone="text"
                 selected={selected}
                 changed={changed.has(layer.id)}
+                agent={layer.id}
                 label={`Text "${layer.text}", from ${layer.start.toFixed(1)} s for ${layer.secs.toFixed(1)} s`}
                 pickKey={keyOf({ kind: "text", id: layer.id })}
                 onSelect={choose({ kind: "text", id: layer.id })}
@@ -363,6 +365,7 @@ export function Tracks({
                 tone="shape"
                 selected={selected}
                 changed={changed.has(shape.id)}
+                agent={shape.id}
                 label={`Shape, ${shape.style.kind}, from ${shape.start.toFixed(1)} s for ${shape.secs.toFixed(1)} s`}
                 pickKey={keyOf({ kind: "shape", id: shape.id })}
                 onSelect={choose({ kind: "shape", id: shape.id })}
@@ -411,6 +414,7 @@ export function Tracks({
                 tone="adjustment"
                 selected={selected}
                 changed={changed.has(layer.id)}
+                agent={layer.id}
                 label={`Adjustment Layer ${name}, from ${layer.start.toFixed(1)} s for ${layer.secs.toFixed(1)} s at ${Math.round(layer.strength)}%`}
                 pickKey={keyOf({ kind: "adjustment", id: layer.id })}
                 onSelect={choose({ kind: "adjustment", id: layer.id })}
@@ -462,6 +466,7 @@ export function Tracks({
               tone="video"
               selected={selected}
               changed={changed.has(segment.id)}
+              agent={segment.id}
               label={`Segment ${i + 1}, ${formatPrecise(shown.source_start)} to ${formatPrecise(shown.source_end)} of ${segment.media ? "its video" : "the episode"}${retimingName(segment)}${held ? `, held ${holdLabel(segment.hold!)}` : ""}${muted ? ", Muted" : ""}`}
               pickKey={keyOf({ kind: "segment", id: segment.id })}
               onSelect={choose({ kind: "segment", id: segment.id })}
@@ -669,6 +674,7 @@ export function Tracks({
             tone="waiting"
             selected={pick?.kind === "hook"}
             changed={changed.has("hook")}
+            agent="hook"
             label={`Hook, from ${edits.hook_start.toFixed(1)} s for ${(hookEnd - edits.hook_start).toFixed(1)} s`}
             onSelect={() => onSelect({ kind: "hook" })}
             onChange={({ start, end }, group) => handlers.onEdits({ ...edits, hook_start: round(start), hook_secs: round(end - start) }, group)}
@@ -716,6 +722,7 @@ export function Tracks({
                 tone="audio"
                 selected={selected}
                 changed={changed.has(clip.id)}
+                agent={clip.id}
                 label={`${episode ? name : `Music ${song?.name ?? ""}`}, from ${clip.start.toFixed(1)} s for ${clip.secs.toFixed(1)} s${retimingName(clip)}${muted ? ", Muted" : ""}`}
                 pickKey={keyOf({ kind: "music", id: clip.id })}
                 onSelect={choose({ kind: "music", id: clip.id })}

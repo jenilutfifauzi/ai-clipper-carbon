@@ -30,6 +30,9 @@ import {
   type AgentTurnUndo,
 } from "../../../api";
 import { adoptionGroup } from "./agent/adoption";
+import { AgentCursor } from "./agent/AgentCursor";
+import { PresenceContext, presenceStore } from "./agent/presence";
+import { touchedItems, touchedTarget } from "./agent/touched";
 import type { AgentTurnView } from "./agent/agentStream";
 import type { UndoTurn } from "./agent/TurnView";
 import { useAgentStream } from "./agent/useAgentStream";
@@ -457,6 +460,10 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     gone.current = true;
     setEnded(how);
   }
+  // Where the Agent is at work (ADR 0029): a store outside this page's state, fed by the Agent's
+  // events (below) and by the diff of each Revision it saves (`incoming`), read only by what draws it.
+  const [presence] = useState(() => presenceStore());
+  useEffect(() => () => presence.dispose(), [presence]);
   // A newer Revision: saved elsewhere, the one a save here was refused for (then all the edits here
   // are unsaved), or a Restore or a change of aspect asked for here. The edits here not yet saved are
   // merged onto it. With `adopt` (the Agent's Revision for a turn this tab started, ADR 0028), it is
@@ -481,6 +488,11 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     if (adopt) history.adopt(merged, adopt, unsaved);
     else history.elsewhere(merged, rebase, unsaved);
     setChanged(changedItems(edits, merged));
+    // The Agent's Revisions, adopted here or not, show what they changed from the one before.
+    if (source === "agent") {
+      const touched = touchedItems(base, theirs);
+      presence.revised(touched, touchedTarget(touched, base, theirs));
+    }
     if (how === "restored" || how === "reshaped") return;
     // The chat says what the Agent did; only a collision with the edits here needs a notice.
     if (adopt && !collisions.length) return;
@@ -544,6 +556,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // The Agent's chat of this clip: one stream per editor, handed to the Inspector's Agent tab. The
   // turns it says this tab started have their Revisions adopted as undo steps (`onCandidate` below).
   const agentChat = useAgentStream(job.id, initial.id);
+  const { subscribe: heardAgent } = agentChat;
+  useEffect(() => heardAgent((event) => presence.heard(event)), [heardAgent, presence]);
   // A turn's Revert or Restore (ADR 0028), once the edits waiting here are saved: a Restore, taken
   // as one, with a notice saying how it went.
   async function undoTurn(turn: AgentTurnView, how: AgentTurnUndo) {
@@ -1481,68 +1495,71 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       }
     >
       {(geometry) => (
-        <Tracks
-          geometry={geometry}
-          duration={duration}
-          plan={preview?.plan ?? null}
-          edits={edits}
-          pick={pick}
-          track={track}
-          played={played}
-          pending={pendingSpans(played, edits.segments, preview?.words_status)}
-          failed={failedSegments(preview?.words_status)}
-          captioned={job.options.captions}
-          playback={playback}
-          mediaById={mediaById}
-          mediaCache={mediaCache}
-          source={{ job: job.id, metadata: source.metadata }}
-          changed={changed}
-          picking={picking}
-          tracks={tracks}
-          onTrack={wide ? toggleTrack : undefined}
-          handlers={{
-            onSelect: select,
-            onEdits: history.set,
-            onText: updateText,
-            onShape: updateShape,
-            onAdjustment: updateAdjustment,
-            onMusic: updateMusic,
-            onOverlay: updateOverlay,
-            onSegment: moveSegment,
-            onMove: moveLayers,
-            onVolume: (item, volume, group) => {
-              // A Music Clip or Segment with volume Keyframes gets one at the playhead (auto-key).
-              applyKeyed(writeItemKey({ ...scene, track }, item, "volume", volume, playback.time), group);
-            },
-            onFade: (id, fade, secs, heard, group) => {
-              const outcome = setFade(scene, id, fade, secs, heard);
-              if (outcome) history.set(outcome.edits, group);
-            },
-            onJoin: (after) => {
-              select({ kind: "join", after });
-              if (wide) setAssetTab("transitions");
-            },
-            onCue: (key, range, group, from) => {
-              const outcome = retimeCue({ edits, plan: preview?.plan ?? null, locked: tracks.locked }, key, range, from);
-              if (outcome) history.set(outcome.edits, group);
-              else refused("captions");
-            },
-            onTransition: (transition) => {
-              if (!refused("video")) updateTransition(transition);
-            },
-            onDropTransition: setTransition,
-            onDropMedia: dropMedia,
-            onDropText: (id, time) => {
-              const preset = textPresets?.find((p) => p.id === id);
-              if (preset) addText(fromPreset(preset, canvas), time);
-            },
-            onDropShape: (kind, time) => addNewShape(kind, time),
-            onDropLook: addAdjustment,
-            onDropEffect: addEffectAdjustment,
-            onDelete: actions ? (rippled) => (rippled ? actions.rippleRemove() : actions.remove()) : undefined,
-            onItemMenu: wide ? (item, at) => itemSound(item, edits, mediaById) && setItemMenu({ item, at }) : undefined,
-          }}
-        />
+        <>
+          <Tracks
+            geometry={geometry}
+            duration={duration}
+            plan={preview?.plan ?? null}
+            edits={edits}
+            pick={pick}
+            track={track}
+            played={played}
+            pending={pendingSpans(played, edits.segments, preview?.words_status)}
+            failed={failedSegments(preview?.words_status)}
+            captioned={job.options.captions}
+            playback={playback}
+            mediaById={mediaById}
+            mediaCache={mediaCache}
+            source={{ job: job.id, metadata: source.metadata }}
+            changed={changed}
+            picking={picking}
+            tracks={tracks}
+            onTrack={wide ? toggleTrack : undefined}
+            handlers={{
+              onSelect: select,
+              onEdits: history.set,
+              onText: updateText,
+              onShape: updateShape,
+              onAdjustment: updateAdjustment,
+              onMusic: updateMusic,
+              onOverlay: updateOverlay,
+              onSegment: moveSegment,
+              onMove: moveLayers,
+              onVolume: (item, volume, group) => {
+                // A Music Clip or Segment with volume Keyframes gets one at the playhead (auto-key).
+                applyKeyed(writeItemKey({ ...scene, track }, item, "volume", volume, playback.time), group);
+              },
+              onFade: (id, fade, secs, heard, group) => {
+                const outcome = setFade(scene, id, fade, secs, heard);
+                if (outcome) history.set(outcome.edits, group);
+              },
+              onJoin: (after) => {
+                select({ kind: "join", after });
+                if (wide) setAssetTab("transitions");
+              },
+              onCue: (key, range, group, from) => {
+                const outcome = retimeCue({ edits, plan: preview?.plan ?? null, locked: tracks.locked }, key, range, from);
+                if (outcome) history.set(outcome.edits, group);
+                else refused("captions");
+              },
+              onTransition: (transition) => {
+                if (!refused("video")) updateTransition(transition);
+              },
+              onDropTransition: setTransition,
+              onDropMedia: dropMedia,
+              onDropText: (id, time) => {
+                const preset = textPresets?.find((p) => p.id === id);
+                if (preset) addText(fromPreset(preset, canvas), time);
+              },
+              onDropShape: (kind, time) => addNewShape(kind, time),
+              onDropLook: addAdjustment,
+              onDropEffect: addEffectAdjustment,
+              onDelete: actions ? (rippled) => (rippled ? actions.rippleRemove() : actions.remove()) : undefined,
+              onItemMenu: wide ? (item, at) => itemSound(item, edits, mediaById) && setItemMenu({ item, at }) : undefined,
+            }}
+          />
+          <AgentCursor pps={geometry.pps} />
+        </>
       )}
     </AdvancedTimeline>
   );
@@ -1823,300 +1840,304 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   if (wide) {
     return (
       <CanvasContext.Provider value={canvas}>
-        <div className="flex h-dvh flex-col gap-3 overflow-hidden bg-bg pb-3">
-          {bar}
-          <div
-            ref={gridRef}
-            className="relative grid min-h-0 flex-1 gap-3 px-3"
-            style={{ gridTemplateColumns: gridTemplateColumns(ws) }}
-          >
-            {/* Source order here is the Tab order: Asset Panel → its Divider → player → Inspector's
-                Divider → Inspector (ticket 05). The Dividers are absolutely positioned, so their place
-                in the flow is free; each is centred in the gap-3 gutter at its boundary (the px-3
-                padding 0.75rem + the sidebar's width + half the 0.75rem gap). A collapsed sidebar
-                renders no Divider, so it exposes no separator. */}
-            {!ws.assetHidden && (
-              <aside aria-label="Assets" className="panel flex min-h-0 flex-col overflow-hidden">
-                <AssetTabs value={assetTab} onChange={setAssetTab} />
-                {/* The Media tab's categories: a column beside its items once the panel is wide enough,
-                    else chips above them (MediaCategories). */}
-                <div className="@container/media flex min-h-0 flex-1 flex-col">
-                  <div className="flex min-h-0 flex-1 flex-col @[20rem]/media:flex-row">
-                    {assetTab === "media" && (
-                      <div className="shrink-0 px-4 pt-3 @[20rem]/media:pt-0 @[20rem]/media:pr-0">
-                        <MediaCategories value={mediaCategory} onChange={setMediaCategory} column />
+        <PresenceContext.Provider value={presence}>
+          <div className="flex h-dvh flex-col gap-3 overflow-hidden bg-bg pb-3">
+            {bar}
+            <div
+              ref={gridRef}
+              className="relative grid min-h-0 flex-1 gap-3 px-3"
+              style={{ gridTemplateColumns: gridTemplateColumns(ws) }}
+            >
+              {/* Source order here is the Tab order: Asset Panel → its Divider → player → Inspector's
+                  Divider → Inspector (ticket 05). The Dividers are absolutely positioned, so their place
+                  in the flow is free; each is centred in the gap-3 gutter at its boundary (the px-3
+                  padding 0.75rem + the sidebar's width + half the 0.75rem gap). A collapsed sidebar
+                  renders no Divider, so it exposes no separator. */}
+              {!ws.assetHidden && (
+                <aside aria-label="Assets" className="panel flex min-h-0 flex-col overflow-hidden">
+                  <AssetTabs value={assetTab} onChange={setAssetTab} />
+                  {/* The Media tab's categories: a column beside its items once the panel is wide enough,
+                      else chips above them (MediaCategories). */}
+                  <div className="@container/media flex min-h-0 flex-1 flex-col">
+                    <div className="flex min-h-0 flex-1 flex-col @[20rem]/media:flex-row">
+                      {assetTab === "media" && (
+                        <div className="shrink-0 px-4 pt-3 @[20rem]/media:pt-0 @[20rem]/media:pr-0">
+                          <MediaCategories value={mediaCategory} onChange={setMediaCategory} column />
+                        </div>
+                      )}
+                      {/* Its top space is a spacer, not padding: padding would hold the tabs' sticky shelf
+                          headings below the top edge, with the cards scrolling past above them. */}
+                      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 pb-4 before:block before:h-4 before:content-['']">
+                        {assets(assetTab)}
                       </div>
-                    )}
-                    {/* Its top space is a spacer, not padding: padding would hold the tabs' sticky shelf
-                        headings below the top edge, with the cards scrolling past above them. */}
-                    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 pb-4 before:block before:h-4 before:content-['']">
-                      {assets(assetTab)}
                     </div>
                   </div>
+                </aside>
+              )}
+              {!ws.assetHidden && (
+                <Divider
+                  orientation="vertical"
+                  label="Resize the Asset Panel"
+                  value={ws.assetW}
+                  min={ASSET.min}
+                  max={ASSET.max}
+                  style={{ left: `calc(0.75rem + ${ws.assetW}rem + 0.375rem)` }}
+                  onStart={() => {
+                    const d = dividerDrag.current;
+                    d.remPx = remPx();
+                    d.availableRem = (gridRef.current?.clientWidth ?? 0) / d.remPx;
+                    d.otherVisibleW = ws.inspectorHidden ? 0 : ws.inspectorW;
+                    d.startW = ws.assetW;
+                  }}
+                  onDrag={(deltaPx) => {
+                    const d = dividerDrag.current;
+                    layout.setAssetW(nextSidebarW(d.startW, deltaPx, d.remPx, 1, d.otherVisibleW, d.availableRem, ASSET));
+                  }}
+                  onReset={() => layout.setAssetW(ASSET.def)}
+                />
+              )}
+              <section aria-label="Player" className="panel flex min-h-0 flex-col overflow-hidden">
+                {previewHeader}
+                <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
+                  {room}
+                  {notes}
                 </div>
-              </aside>
-            )}
-            {!ws.assetHidden && (
-              <Divider
-                orientation="vertical"
-                label="Resize the Asset Panel"
-                value={ws.assetW}
-                min={ASSET.min}
-                max={ASSET.max}
-                style={{ left: `calc(0.75rem + ${ws.assetW}rem + 0.375rem)` }}
-                onStart={() => {
-                  const d = dividerDrag.current;
-                  d.remPx = remPx();
-                  d.availableRem = (gridRef.current?.clientWidth ?? 0) / d.remPx;
-                  d.otherVisibleW = ws.inspectorHidden ? 0 : ws.inspectorW;
-                  d.startW = ws.assetW;
-                }}
-                onDrag={(deltaPx) => {
-                  const d = dividerDrag.current;
-                  layout.setAssetW(nextSidebarW(d.startW, deltaPx, d.remPx, 1, d.otherVisibleW, d.availableRem, ASSET));
-                }}
-                onReset={() => layout.setAssetW(ASSET.def)}
-              />
-            )}
-            <section aria-label="Player" className="panel flex min-h-0 flex-col overflow-hidden">
-              {previewHeader}
-              <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
-                {room}
-                {notes}
-              </div>
-            </section>
-            {!ws.inspectorHidden && (
-              <Divider
-                orientation="vertical"
-                label="Resize the Inspector"
-                value={ws.inspectorW}
-                min={INSPECTOR.min}
-                max={INSPECTOR.max}
-                style={{ right: `calc(0.75rem + ${ws.inspectorW}rem + 0.375rem)` }}
-                onStart={() => {
-                  const d = dividerDrag.current;
-                  d.remPx = remPx();
-                  d.availableRem = (gridRef.current?.clientWidth ?? 0) / d.remPx;
-                  d.otherVisibleW = ws.assetHidden ? 0 : ws.assetW;
-                  d.startW = ws.inspectorW;
-                }}
-                onDrag={(deltaPx) => {
-                  const d = dividerDrag.current;
-                  layout.setInspectorW(
-                    nextSidebarW(d.startW, deltaPx, d.remPx, -1, d.otherVisibleW, d.availableRem, INSPECTOR),
+              </section>
+              {!ws.inspectorHidden && (
+                <Divider
+                  orientation="vertical"
+                  label="Resize the Inspector"
+                  value={ws.inspectorW}
+                  min={INSPECTOR.min}
+                  max={INSPECTOR.max}
+                  style={{ right: `calc(0.75rem + ${ws.inspectorW}rem + 0.375rem)` }}
+                  onStart={() => {
+                    const d = dividerDrag.current;
+                    d.remPx = remPx();
+                    d.availableRem = (gridRef.current?.clientWidth ?? 0) / d.remPx;
+                    d.otherVisibleW = ws.assetHidden ? 0 : ws.assetW;
+                    d.startW = ws.inspectorW;
+                  }}
+                  onDrag={(deltaPx) => {
+                    const d = dividerDrag.current;
+                    layout.setInspectorW(
+                      nextSidebarW(d.startW, deltaPx, d.remPx, -1, d.otherVisibleW, d.availableRem, INSPECTOR),
+                    );
+                  }}
+                  onReset={() => layout.setInspectorW(INSPECTOR.def)}
+                />
+              )}
+              {!ws.inspectorHidden && (
+                <aside aria-label="Inspector" className="panel min-h-0 overflow-y-auto p-4">
+                  {inspector}
+                </aside>
+              )}
+            </div>
+            {/* One remembered height for every bottom tab (ADR 0024), the Meters' column beside them. */}
+            <div className="mx-3 flex min-h-0 gap-3" style={{ height: bottomHeightCss(ws) }}>
+              <section
+                aria-label="Timeline and Keyframes"
+                className="panel relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+              >
+                <BottomTabs value={bottomTab} onChange={setBottomTab} />
+                {/* The bottom Divider: a grab strip along this section's top edge (the section is clipped, so
+                    it sits just inside rather than up in the gutter). It comes after the Bottom tabs in
+                    source order so Tab reaches it last (ticket 05). */}
+                <Divider
+                  orientation="horizontal"
+                  label="Resize the Bottom tabs"
+                  value={ws.bottomH}
+                  min={BOTTOM.min}
+                  max={BOTTOM.max}
+                  onStart={() => {
+                    const d = dividerDrag.current;
+                    d.vhPx = window.innerHeight;
+                    d.startH = ws.bottomH;
+                  }}
+                  onDrag={(deltaPx) => {
+                    const d = dividerDrag.current;
+                    layout.setBottomH(nextBottomH(d.startH, deltaPx, d.vhPx));
+                  }}
+                  onReset={() => layout.setBottomH(BOTTOM.def)}
+                />
+                {/* Each registered tab's panel (BOTTOM_TABS, ADR 0024): a later tab — Meters with #14 —
+                    needs only a registry entry, no edit here. A panel's body renders while it is active or
+                    `keepMounted` (the Timeline, so its zoom and scroll survive hidden under another tab);
+                    others mount on first activation. */}
+                {BOTTOM_TABS.map((tab) => {
+                  const active = bottomTab === tab.value;
+                  return (
+                    <div
+                      key={tab.value}
+                      id={bottomPanelId(tab.value)}
+                      role="tabpanel"
+                      aria-label={tab.label}
+                      hidden={!active}
+                      className={cx("min-h-0 flex-1 flex-col", active ? "flex" : "hidden")}
+                    >
+                      {(active || tab.keepMounted) && tab.render(bottomTabContext)}
+                    </div>
                   );
-                }}
-                onReset={() => layout.setInspectorW(INSPECTOR.def)}
-              />
-            )}
-            {!ws.inspectorHidden && (
-              <aside aria-label="Inspector" className="panel min-h-0 overflow-y-auto p-4">
-                {inspector}
-              </aside>
-            )}
+                })}
+              </section>
+              <Meters playback={playback} />
+            </div>
           </div>
-          {/* One remembered height for every bottom tab (ADR 0024), the Meters' column beside them. */}
-          <div className="mx-3 flex min-h-0 gap-3" style={{ height: bottomHeightCss(ws) }}>
-            <section
-              aria-label="Timeline and Keyframes"
-              className="panel relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-            >
-              <BottomTabs value={bottomTab} onChange={setBottomTab} />
-              {/* The bottom Divider: a grab strip along this section's top edge (the section is clipped, so
-                  it sits just inside rather than up in the gutter). It comes after the Bottom tabs in
-                  source order so Tab reaches it last (ticket 05). */}
-              <Divider
-                orientation="horizontal"
-                label="Resize the Bottom tabs"
-                value={ws.bottomH}
-                min={BOTTOM.min}
-                max={BOTTOM.max}
-                onStart={() => {
-                  const d = dividerDrag.current;
-                  d.vhPx = window.innerHeight;
-                  d.startH = ws.bottomH;
-                }}
-                onDrag={(deltaPx) => {
-                  const d = dividerDrag.current;
-                  layout.setBottomH(nextBottomH(d.startH, deltaPx, d.vhPx));
-                }}
-                onReset={() => layout.setBottomH(BOTTOM.def)}
-              />
-              {/* Each registered tab's panel (BOTTOM_TABS, ADR 0024): a later tab — Meters with #14 —
-                  needs only a registry entry, no edit here. A panel's body renders while it is active or
-                  `keepMounted` (the Timeline, so its zoom and scroll survive hidden under another tab);
-                  others mount on first activation. */}
-              {BOTTOM_TABS.map((tab) => {
-                const active = bottomTab === tab.value;
-                return (
-                  <div
-                    key={tab.value}
-                    id={bottomPanelId(tab.value)}
-                    role="tabpanel"
-                    aria-label={tab.label}
-                    hidden={!active}
-                    className={cx("min-h-0 flex-1 flex-col", active ? "flex" : "hidden")}
-                  >
-                    {(active || tab.keepMounted) && tab.render(bottomTabContext)}
-                  </div>
-                );
-              })}
-            </section>
-            <Meters playback={playback} />
-          </div>
-        </div>
+        </PresenceContext.Provider>
       </CanvasContext.Provider>
     );
   }
 
   return (
     <CanvasContext.Provider value={canvas}>
-      <div className="flex h-dvh flex-col overflow-hidden bg-bg">
-        {bar}
-        {/* The desktop's player panel, flat (ADR 0025), its header and deck Transport the same. */}
-        <section aria-label="Player" className="flex min-h-0 flex-1 flex-col px-3 pt-1 pb-2">
-          <div className="panel flex min-h-0 flex-1 flex-col overflow-hidden">
-            {previewHeader}
-            <div className="flex min-h-0 flex-1 flex-col gap-1 p-2">
-              {room}
-              {notes}
-            </div>
-          </div>
-        </section>
-        <section aria-label="Timeline" className="flex h-[30dvh] min-h-44 flex-col border-t border-border">
-          {timeline}
-        </section>
-        <Toolbar
-          pick={pick}
-          actions={actions}
-          splitter={splits}
-          freezer={freezes}
-          playback={playback}
-          onAsset={(tab) => {
-            setAssetTab(tab);
-            setSheet(tab);
-          }}
-          picking={picking}
-          paste={pasteHere}
-          mute={muting}
-          onInspect={() => setSheet("inspector")}
-          onTransform={() => setSheet("transform")}
-          onSpeed={speedSheet && (() => setSheet("speed"))}
-          onFilters={colorable ? () => setSheet("filters") : null}
-          onAdjust={colorable ? () => setSheet("adjust") : null}
-          onAudioEffects={audioEffects && (() => setSheet("effects"))}
-          onTracks={() => setSheet("tracks")}
-          onPlayback={() => setSheet("playback")}
-          onPicking={() => setPickingMode(true)}
-          onDeselect={() => {
-            select(null);
-            setPickingMode(false);
-            setSheet(null);
-          }}
-        />
-        {sheet && (
-          <Sheet
-            title={
-              sheet === "inspector"
-                ? "Edit"
-                : sheet === "transform"
-                  ? "Transform"
-                  : sheet === "speed"
-                    ? "Speed"
-                    : sheet === "adjust"
-                      ? "Adjust"
-                    : sheet === "effects"
-                      ? "Audio effects"
-                    : sheet === "tracks"
-                      ? "Tracks"
-                        : sheet === "playback"
-                          ? "Playback"
-                          : ASSET_TABS.find((tab) => tab.value === sheet)!.label
-            }
-            onClose={() => setSheet(null)}
-          >
-            {/* The Keyframes pane is the desktop's: here, the Ease of the Keyframe at the playhead heads the sheet. */}
-            {sheet === "inspector" ? (
-              <>
-                <KeyingContext.Provider value={keying}>
-                  <SheetEase mediaById={mediaById} />
-                </KeyingContext.Provider>
-                {inspector}
-                {/* The desktop's context menu entry, here at the foot of the item's sheet. */}
-                {savable && (
-                  <div className="flex flex-col gap-1 border-t border-border pt-3">
-                    <Button className="self-start" disabled={!!savable.silent || savingSound} onClick={() => saveSound(savable)}>
-                      <Download aria-hidden size={16} />
-                      Save sound as WAV
-                    </Button>
-                    {savable.silent && <p className="text-sm text-muted">{savable.silent}</p>}
-                  </div>
-                )}
-              </>
-            ) : sheet === "transform" ? (
-              <KeyingContext.Provider value={keying}>
-                <SheetEase mediaById={mediaById} shown={PICTURE_KEYS} />
-                <TransformPanel
-                  pick={pick}
-                  edits={edits}
-                  preview={preview}
-                  mediaById={mediaById}
-                  playback={playback}
-                  onEdits={history.set}
-                  onOverlay={updateOverlay}
-                  onSegment={updateSegment}
-                  cropMode={cropMode}
-                />
-              </KeyingContext.Provider>
-            ) : sheet === "speed" ? (
-              speedSheet ? (
-                <SpeedPanel
-                  item={speedSheet}
-                  edits={edits}
-                  mediaById={mediaById}
-                  copyOf={copyOf}
-                  onSpeed={setItemSpeed}
-                  onReverse={setItemReverse}
-                  onHold={setFreezeHold}
-                  onSegment={updateSegment}
-                  onOverlay={updateOverlay}
-                  onMusic={updateMusic}
-                />
-              ) : (
-                <p className="text-sm text-pretty text-muted">Pick a Segment, a video Overlay or a Music Clip to change its Speed.</p>
-              )
-            ) : sheet === "filters" ? (
-              <PhoneFilters
-                playback={playback}
-                frameAt={lookFrameAt}
-                edits={edits}
-                pick={pick}
-                onEdits={history.set}
-                onAddLayer={(look) => addAdjustment(look, playback.time)}
-              />
-            ) : sheet === "adjust" ? (
-              <AdjustPanel edits={edits} pick={pick} onEdits={history.set} />
-            ) : sheet === "effects" ? (
-              audioEffects ? (
-                <AudioEffectsFields {...audioEffects} />
-              ) : (
-                <p className="text-sm text-pretty text-muted">Pick a Segment, a video Overlay or a Music Clip with sound to change its Audio effects.</p>
-              )
-            ) : sheet === "tracks" ? (
-              <TracksPanel tracks={tracks} onTrack={toggleTrack} />
-            ) : sheet === "playback" ? (
-              <PlaybackPanel playback={playback} commands={commands} region={region} looping={looping} editPoints={points} fps={fps} />
-            ) : sheet === "media" ? (
-              <div className="flex flex-col gap-3">
-                <MediaCategories value={mediaCategory} onChange={setMediaCategory} />
-                {assets(sheet)}
+      <PresenceContext.Provider value={presence}>
+        <div className="flex h-dvh flex-col overflow-hidden bg-bg">
+          {bar}
+          {/* The desktop's player panel, flat (ADR 0025), its header and deck Transport the same. */}
+          <section aria-label="Player" className="flex min-h-0 flex-1 flex-col px-3 pt-1 pb-2">
+            <div className="panel flex min-h-0 flex-1 flex-col overflow-hidden">
+              {previewHeader}
+              <div className="flex min-h-0 flex-1 flex-col gap-1 p-2">
+                {room}
+                {notes}
               </div>
-            ) : (
-              assets(sheet)
-            )}
-          </Sheet>
-        )}
-      </div>
+            </div>
+          </section>
+          <section aria-label="Timeline" className="flex h-[30dvh] min-h-44 flex-col border-t border-border">
+            {timeline}
+          </section>
+          <Toolbar
+            pick={pick}
+            actions={actions}
+            splitter={splits}
+            freezer={freezes}
+            playback={playback}
+            onAsset={(tab) => {
+              setAssetTab(tab);
+              setSheet(tab);
+            }}
+            picking={picking}
+            paste={pasteHere}
+            mute={muting}
+            onInspect={() => setSheet("inspector")}
+            onTransform={() => setSheet("transform")}
+            onSpeed={speedSheet && (() => setSheet("speed"))}
+            onFilters={colorable ? () => setSheet("filters") : null}
+            onAdjust={colorable ? () => setSheet("adjust") : null}
+            onAudioEffects={audioEffects && (() => setSheet("effects"))}
+            onTracks={() => setSheet("tracks")}
+            onPlayback={() => setSheet("playback")}
+            onPicking={() => setPickingMode(true)}
+            onDeselect={() => {
+              select(null);
+              setPickingMode(false);
+              setSheet(null);
+            }}
+          />
+          {sheet && (
+            <Sheet
+              title={
+                sheet === "inspector"
+                  ? "Edit"
+                  : sheet === "transform"
+                    ? "Transform"
+                    : sheet === "speed"
+                      ? "Speed"
+                      : sheet === "adjust"
+                        ? "Adjust"
+                      : sheet === "effects"
+                        ? "Audio effects"
+                      : sheet === "tracks"
+                        ? "Tracks"
+                          : sheet === "playback"
+                            ? "Playback"
+                            : ASSET_TABS.find((tab) => tab.value === sheet)!.label
+              }
+              onClose={() => setSheet(null)}
+            >
+              {/* The Keyframes pane is the desktop's: here, the Ease of the Keyframe at the playhead heads the sheet. */}
+              {sheet === "inspector" ? (
+                <>
+                  <KeyingContext.Provider value={keying}>
+                    <SheetEase mediaById={mediaById} />
+                  </KeyingContext.Provider>
+                  {inspector}
+                  {/* The desktop's context menu entry, here at the foot of the item's sheet. */}
+                  {savable && (
+                    <div className="flex flex-col gap-1 border-t border-border pt-3">
+                      <Button className="self-start" disabled={!!savable.silent || savingSound} onClick={() => saveSound(savable)}>
+                        <Download aria-hidden size={16} />
+                        Save sound as WAV
+                      </Button>
+                      {savable.silent && <p className="text-sm text-muted">{savable.silent}</p>}
+                    </div>
+                  )}
+                </>
+              ) : sheet === "transform" ? (
+                <KeyingContext.Provider value={keying}>
+                  <SheetEase mediaById={mediaById} shown={PICTURE_KEYS} />
+                  <TransformPanel
+                    pick={pick}
+                    edits={edits}
+                    preview={preview}
+                    mediaById={mediaById}
+                    playback={playback}
+                    onEdits={history.set}
+                    onOverlay={updateOverlay}
+                    onSegment={updateSegment}
+                    cropMode={cropMode}
+                  />
+                </KeyingContext.Provider>
+              ) : sheet === "speed" ? (
+                speedSheet ? (
+                  <SpeedPanel
+                    item={speedSheet}
+                    edits={edits}
+                    mediaById={mediaById}
+                    copyOf={copyOf}
+                    onSpeed={setItemSpeed}
+                    onReverse={setItemReverse}
+                    onHold={setFreezeHold}
+                    onSegment={updateSegment}
+                    onOverlay={updateOverlay}
+                    onMusic={updateMusic}
+                  />
+                ) : (
+                  <p className="text-sm text-pretty text-muted">Pick a Segment, a video Overlay or a Music Clip to change its Speed.</p>
+                )
+              ) : sheet === "filters" ? (
+                <PhoneFilters
+                  playback={playback}
+                  frameAt={lookFrameAt}
+                  edits={edits}
+                  pick={pick}
+                  onEdits={history.set}
+                  onAddLayer={(look) => addAdjustment(look, playback.time)}
+                />
+              ) : sheet === "adjust" ? (
+                <AdjustPanel edits={edits} pick={pick} onEdits={history.set} />
+              ) : sheet === "effects" ? (
+                audioEffects ? (
+                  <AudioEffectsFields {...audioEffects} />
+                ) : (
+                  <p className="text-sm text-pretty text-muted">Pick a Segment, a video Overlay or a Music Clip with sound to change its Audio effects.</p>
+                )
+              ) : sheet === "tracks" ? (
+                <TracksPanel tracks={tracks} onTrack={toggleTrack} />
+              ) : sheet === "playback" ? (
+                <PlaybackPanel playback={playback} commands={commands} region={region} looping={looping} editPoints={points} fps={fps} />
+              ) : sheet === "media" ? (
+                <div className="flex flex-col gap-3">
+                  <MediaCategories value={mediaCategory} onChange={setMediaCategory} />
+                  {assets(sheet)}
+                </div>
+              ) : (
+                assets(sheet)
+              )}
+            </Sheet>
+          )}
+        </div>
+      </PresenceContext.Provider>
     </CanvasContext.Provider>
   );
 }

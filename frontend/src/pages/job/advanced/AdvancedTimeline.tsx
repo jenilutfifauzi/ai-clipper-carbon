@@ -18,6 +18,7 @@ import { Button } from "../../../components/Button";
 import { cx, formatClock } from "../../../format";
 import type { LoopRegion } from "../editor/loop";
 import { usePlayback, type Playback } from "../editor/playback";
+import { useAgentMark } from "./agent/presence";
 import { ToolDivider } from "./Chrome";
 import { onFrame, revealScroll, type LoopMarks } from "./playhead";
 import { setSkim, setSkimSound, useSkim, useSkimSound } from "./skim";
@@ -797,6 +798,7 @@ export function TimelineItem({
   selected,
   pickKey,
   changed = false,
+  agent,
   label,
   onSelect,
   onChange,
@@ -824,6 +826,9 @@ export function TimelineItem({
   pickKey?: string;
   // Just changed in another editor (another tab, the agent): shown for a moment.
   changed?: boolean;
+  // Its id as the Agent's presence names it (ADR 0029): marked while a tool call pulses it or a
+  // Revision flashes it.
+  agent?: string;
   // What a screen reader calls it.
   label: string;
   // Picked alone, or (`toggle`) added to the Pick or taken out of it.
@@ -852,6 +857,7 @@ export function TimelineItem({
     timer?: ReturnType<typeof setTimeout>;
   } | null>(null);
   const { pps, snap } = geometry;
+  const mark = useAgentMark(agent);
 
   // A lifted item's drag isn't a scroll.
   useEffect(() => {
@@ -999,6 +1005,8 @@ export function TimelineItem({
       aria-label={label}
       aria-pressed={selected}
       data-pick={pickKey}
+      data-agent-id={agent}
+      data-agent={mark ?? undefined}
       {...handlers}
       className={cx(
         "group absolute inset-y-1 overflow-hidden rounded-md text-left text-xs leading-none ring-1",

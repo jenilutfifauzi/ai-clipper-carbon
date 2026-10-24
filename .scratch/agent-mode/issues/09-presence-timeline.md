@@ -27,9 +27,9 @@
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `touchedItems`: an added Text Layer, a trimmed Segment, a removed Music Clip and a changed grade come back as such; equal edits give nothing.
-- [ ] Presence store: the event sequence gives thinking → editing → thinking → idle, flashing expires after 700 ms (fake timers), and `target` follows the first touched item.
-- [ ] `AgentCursor` renders nothing when idle and the label when thinking (renderToStaticMarkup with a seeded store).
-- [ ] Only the new test files and touched timeline tests are run.
+- [x] `touchedItems`: an added Text Layer, a trimmed Segment, a removed Music Clip and a changed grade come back as such; equal edits give nothing.
+- [x] Presence store: the event sequence gives thinking → editing → thinking → idle, flashing expires after 700 ms (fake timers), and `target` follows the first touched item.
+- [x] `AgentCursor` renders nothing when idle and the label when thinking (renderToStaticMarkup with a seeded store).
+- [x] Only the new test files and touched timeline tests are run.
