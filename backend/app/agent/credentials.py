@@ -66,11 +66,17 @@ def credential_for(settings: Settings, provider_id: str) -> Credential | None:
     """The saved key, else the environment's; the saved base URL and model either way. None without a key."""
     saved = saved_credentials(settings).get(provider_id, SavedCredential())
     if saved.api_key:
-        return Credential(api_key=saved.api_key, base_url=saved.base_url, model=saved.model, source="saved")
+        model = saved.model or _app_model(settings, provider_id)
+        return Credential(api_key=saved.api_key, base_url=saved.base_url, model=model, source="saved")
     env = _env_credential(settings, provider_id)
     if env is None:
         return None
     return env.model_copy(update={"base_url": saved.base_url or env.base_url, "model": saved.model or env.model})
+
+
+def _app_model(settings: Settings, provider_id: str) -> str | None:
+    """The model the rest of the app runs for a provider: Gemini's GEMINI_MODEL."""
+    return settings.gemini_model if provider_id == "gemini" else None
 
 
 def _env_credential(settings: Settings, provider_id: str) -> Credential | None:
@@ -85,7 +91,7 @@ def _env_credential(settings: Settings, provider_id: str) -> Credential | None:
     if provider_id == "anthropic" and settings.anthropic_api_key:
         return Credential(api_key=settings.anthropic_api_key, source="env")
     if provider_id == "gemini" and settings.gemini_api_key:
-        return Credential(api_key=settings.gemini_api_key, source="env")
+        return Credential(api_key=settings.gemini_api_key, model=_app_model(settings, provider_id), source="env")
     return None
 
 

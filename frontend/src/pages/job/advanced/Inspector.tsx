@@ -1,8 +1,9 @@
 import { ClipboardCopy, Copy, LayoutTemplate, RotateCcw, Trash2 } from "lucide-react";
-import { useContext, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useContext, useMemo, useState, type ReactNode } from "react";
 import type { AdjustmentLayer, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TemplateInfo, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
+import { cx } from "../../../format";
 import { InspectorLayout } from "../../../components/inspectorLayout";
 import { canvasOf, useCanvas } from "../editor/canvas";
 import { CaptionStylePanel } from "../editor/CaptionStylePanel";
@@ -41,15 +42,76 @@ import { layout } from "./workspaceLayout";
  * rows, in groups that fold, each group's fold remembered by the browser (inspectorLayout.ts) — on a
  * phone's sheet too, whose width fits them.
  */
-export function Inspector({ templates = null, ...fields }: Parameters<typeof InspectorFields>[0] & { templates?: TemplateInfo[] | null }) {
+export function Inspector({
+  templates = null,
+  agent,
+  ...fields
+}: Parameters<typeof InspectorFields>[0] & {
+  templates?: TemplateInfo[] | null;
+  // The Job and Candidate the Agent tab chats about; without it there is no Agent tab.
+  agent?: { job: string; candidate: string };
+}) {
+  const [tab, setTab] = useState<InspectorTab>("properties");
   const marked = pickedTemplate(fields.edits, fields.pick);
   const { foldedGroups } = layout.use();
   const inline = useMemo(() => ({ folded: foldedGroups, onFold: layout.setGroupFolded }), [foldedGroups]);
-  return (
+  const properties = (
     <InspectorLayout.Provider value={inline}>
       {marked && <TemplateNote templateId={marked} templates={templates} />}
       <InspectorFields {...fields} />
     </InspectorLayout.Provider>
+  );
+  if (!agent) return properties;
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <InspectorTabs value={tab} onChange={setTab} />
+      <div role="tabpanel" id={inspectorPanelId(tab)} className={tab === "agent" ? "min-h-0 flex-1" : undefined}>
+        {tab === "agent" ? (
+          <Suspense fallback={<p className="text-sm text-muted">Loading the Agent…</p>}>
+            <AgentTab jobId={agent.job} candidateId={agent.candidate} />
+          </Suspense>
+        ) : (
+          properties
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The chat's code loads only when its tab is first opened.
+const AgentTab = lazy(() => import("./agent/AgentTab").then((module) => ({ default: module.AgentTab })));
+
+type InspectorTab = "properties" | "agent";
+
+const INSPECTOR_TABS: { value: InspectorTab; label: string }[] = [
+  { value: "properties", label: "Properties" },
+  { value: "agent", label: "Agent" },
+];
+
+const inspectorPanelId = (tab: InspectorTab) => `inspector-${tab}`;
+
+/** The Inspector's tabs, in the Bottom tabs' hand-built look (ADR 0024/0025): the picked item's properties, and the Agent. */
+function InspectorTabs({ value, onChange }: { value: InspectorTab; onChange: (tab: InspectorTab) => void }) {
+  return (
+    <div role="tablist" aria-label="Inspector" className="-mt-1.5 flex shrink-0 gap-1">
+      {INSPECTOR_TABS.map((tab) => (
+        <button
+          key={tab.value}
+          type="button"
+          role="tab"
+          aria-selected={value === tab.value}
+          aria-controls={inspectorPanelId(tab.value)}
+          onClick={() => onChange(tab.value)}
+          className={cx(
+            "min-h-8 rounded-[10px] px-3 text-sm font-medium",
+            "focus-visible:outline-2 focus-visible:outline-focus",
+            value === tab.value ? "raised text-text" : "text-muted hover:bg-fill hover:text-text",
+          )}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
   );
 }
 

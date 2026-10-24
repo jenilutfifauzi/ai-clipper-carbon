@@ -1,8 +1,11 @@
 """The API tool loop: an Agent Turn run against a model's HTTP API, whose tool calls go through the
-scoped MCP server. This is its OpenAI Chat Completions adapter (DeepSeek, OpenAI-compatible)."""
+scoped MCP server. The loop is the same for every API; an `ApiAdapter` speaks one of them
+(api_chat.py, api_anthropic.py, api_gemini.py): it streams one model step from the turn's exchange so
+far, and the loop runs the tool calls the step asked for and adds their results."""
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -10,8 +13,8 @@ import httpx
 from mcp import Client
 from mcp_types import CallToolResult, TextContent, Tool
 
-from app.agent.driver import TurnContext
-from app.agent.events import AgentEvent, TextDelta, ThoughtDelta, ToolFinished, ToolStarted, TurnFinished
+from app.agent.driver import ChatMessage, Driver, TurnContext
+from app.agent.events import AgentEvent, ToolFinished, ToolStarted, TurnFinished
 
 # Model replies a turn may make before it is stopped: each but the last runs tool calls.
 MAX_STEPS = 30
@@ -28,56 +31,93 @@ class ProviderFailed(Exception):
 
 
 @dataclass
-class _ToolCall:
+class ToolCall:
     id: str = ""
     name: str = ""
+    # As JSON text, as the model wrote it.
     arguments: str = ""
 
 
 @dataclass
-class _Reply:
-    """One streamed reply as it builds up."""
+class ToolResult:
+    call: ToolCall
+    ok: bool
+    # Trimmed to MAX_RESULT_BYTES; why it failed when it did.
+    text: str
+
+
+@dataclass
+class Reply:
+    """One model step, as an adapter streams it in: its words, its thinking and its tool calls, and
+    `native`, the reply as its API gave it, which the adapter sends back as is (thinking signatures)."""
 
     text: str = ""
-    reasoning: str = ""
-    calls: dict[int, _ToolCall] = field(default_factory=dict)
+    thoughts: str = ""
+    calls: list[ToolCall] = field(default_factory=list)
+    native: Any = None
 
 
-async def run_chat_turn(context: TurnContext) -> AsyncIterator[AgentEvent]:
-    """The Chat Completions driver (driver.py): ask, run the tool calls asked for, feed their results
-    back, until a reply calls none or MAX_STEPS replies have been made."""
-    credential = context.credential
-    if credential is None:
+# What the turn has said so far, oldest first: earlier turns' words and the owner's prompt, the
+# model's replies, and the results of each reply's tool calls.
+Entry = ChatMessage | Reply | list[ToolResult]
+
+
+@dataclass
+class Exchange:
+    turn: str
+    model: str | None
+    system: str
+    tools: list[Tool]
+    entries: list[Entry]
+
+
+Step = Callable[[Exchange, Reply], AsyncIterator[AgentEvent]]
+"""Stream the model's next reply to the exchange into `Reply`, yielding its text and thoughts as they
+come. Raises ProviderFailed when the API refuses."""
+
+ApiAdapter = Callable[[TurnContext], AbstractAsyncContextManager[Step]]
+"""An API's client, opened for one turn with its credential, as the step that calls it."""
+
+
+def api_driver(adapter: ApiAdapter) -> Driver:
+    """The driver (driver.py) running a turn through `adapter`."""
+
+    async def run(context: TurnContext) -> AsyncIterator[AgentEvent]:
+        async for event in run_api_turn(context, adapter):
+            yield event
+
+    return run
+
+
+async def run_api_turn(context: TurnContext, adapter: ApiAdapter) -> AsyncIterator[AgentEvent]:
+    """Ask, run the tool calls asked for, feed their results back, until a reply calls none or
+    MAX_STEPS replies have been made."""
+    if context.credential is None:
         raise ProviderFailed(f"{context.provider.label} has no key")
-    base_url = (credential.base_url or context.provider.base_url).rstrip("/")
-    headers = {"Authorization": f"Bearer {credential.api_key}"}
-    http = httpx.AsyncClient(transport=context.http_transport, base_url=base_url, headers=headers, timeout=HTTP_TIMEOUT)
-    async with http, context.tools.connect() as mcp:
-        tools = [chat_tool(tool) for tool in (await mcp.list_tools()).tools]
-        messages = [
-            {"role": "system", "content": context.system},
-            *({"role": message.role, "content": message.text} for message in context.history),
-            {"role": "user", "content": context.prompt},
-        ]
+    async with adapter(context) as step, context.tools.connect() as mcp:
+        exchange = Exchange(
+            turn=context.turn,
+            model=context.model,
+            system=context.system,
+            tools=(await mcp.list_tools()).tools,
+            entries=[*context.history, ChatMessage(role="user", text=context.prompt)],
+        )
         for _ in range(MAX_STEPS):
-            reply = _Reply()
-            async for event in _stream_reply(http, context, messages, tools, reply):
+            reply = Reply()
+            async for event in step(exchange, reply):
                 yield event
-            messages.append(_assistant_message(reply))
+            exchange.entries.append(reply)
             if not reply.calls:
                 yield TurnFinished(turn=context.turn, stop="end_turn")
                 return
-            for call in reply.calls.values():
-                yield ToolStarted(turn=context.turn, call=call.id, tool=call.name, summary=tool_summary(call.name, _arguments(call)))
+            results: list[ToolResult] = []
+            for call in reply.calls:
+                yield ToolStarted(turn=context.turn, call=call.id, tool=call.name, summary=tool_summary(call.name, arguments(call)))
                 ok, text = await _run_tool(mcp, call)
-                messages.append({"role": "tool", "tool_call_id": call.id, "content": trimmed(text)})
+                results.append(ToolResult(call=call, ok=ok, text=trimmed(text)))
                 yield ToolFinished(turn=context.turn, call=call.id, ok=ok, error=None if ok else text)
+            exchange.entries.append(results)
         yield TurnFinished(turn=context.turn, stop="step_limit")
-
-
-def chat_tool(tool: Tool) -> dict:
-    """An MCP tool as a Chat Completions `tools` entry."""
-    return {"type": "function", "function": {"name": tool.name, "description": tool.description or "", "parameters": tool.input_schema}}
 
 
 def tool_summary(name: str, arguments: dict[str, Any] | None) -> str:
@@ -103,67 +143,26 @@ def trimmed(text: str) -> str:
     return f"{kept}\n[trimmed: the result was {len(data)} bytes, of which the first {MAX_RESULT_BYTES} are shown; ask for less]"
 
 
-async def _stream_reply(
-    http: httpx.AsyncClient, context: TurnContext, messages: list[dict], tools: list[dict], reply: _Reply
-) -> AsyncIterator[AgentEvent]:
-    """Stream one reply into `reply`, yielding its text and reasoning as they come."""
-    body = {"model": context.model, "messages": messages, "tools": tools, "stream": True}
-    async with http.stream("POST", "/chat/completions", json=body) as response:
-        if response.is_error:
-            said = (await response.aread()).decode(errors="replace")[:500]
-            raise ProviderFailed(f"{context.provider.label} answered {response.status_code}: {said}")
-        async for line in response.aiter_lines():
-            data = line.removeprefix("data:").strip() if line.startswith("data:") else None
-            if not data or data == "[DONE]":
-                continue
-            for choice in json.loads(data).get("choices") or []:
-                delta = choice.get("delta") or {}
-                if thought := delta.get("reasoning_content"):
-                    reply.reasoning += thought
-                    yield ThoughtDelta(turn=context.turn, delta=thought)
-                if text := delta.get("content"):
-                    reply.text += text
-                    yield TextDelta(turn=context.turn, delta=text)
-                for piece in delta.get("tool_calls") or []:
-                    call = reply.calls.setdefault(piece.get("index", 0), _ToolCall())
-                    function = piece.get("function") or {}
-                    call.id = piece.get("id") or call.id
-                    call.name = function.get("name") or call.name
-                    call.arguments += function.get("arguments") or ""
+def arguments(call: ToolCall) -> dict[str, Any] | None:
+    """The call's arguments, or None when they aren't a JSON object."""
+    try:
+        parsed = json.loads(call.arguments or "{}")
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
-def _assistant_message(reply: _Reply) -> dict:
-    message: dict[str, Any] = {"role": "assistant", "content": reply.text or None}
-    # DeepSeek's thinking mode wants a turn's reasoning back while its tool calls run.
-    if reply.reasoning:
-        message["reasoning_content"] = reply.reasoning
-    if reply.calls:
-        message["tool_calls"] = [
-            {"id": call.id, "type": "function", "function": {"name": call.name, "arguments": call.arguments or "{}"}}
-            for call in reply.calls.values()
-        ]
-    return message
-
-
-async def _run_tool(mcp: Client, call: _ToolCall) -> tuple[bool, str]:
+async def _run_tool(mcp: Client, call: ToolCall) -> tuple[bool, str]:
     """Whether the call succeeded, and its result's text (or why it failed) for the model."""
-    arguments = _arguments(call)
-    if arguments is None:
+    parsed = arguments(call)
+    if parsed is None:
         return False, f"The arguments of {call.name} weren't a JSON object: {call.arguments[:200]}"
     try:
-        result: CallToolResult = await mcp.call_tool(call.name, arguments)
+        result: CallToolResult = await mcp.call_tool(call.name, parsed)
     except Exception as error:  # an MCP or transport error: the model is told, and the turn goes on
         return False, f"{call.name} failed: {error}"
     text = "\n".join(block.text for block in result.content if isinstance(block, TextContent))
     return not result.is_error, text
-
-
-def _arguments(call: _ToolCall) -> dict[str, Any] | None:
-    try:
-        arguments = json.loads(call.arguments or "{}")
-    except json.JSONDecodeError:
-        return None
-    return arguments if isinstance(arguments, dict) else None
 
 
 def _short(value: Any) -> str:
