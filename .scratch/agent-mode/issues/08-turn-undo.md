@@ -19,9 +19,9 @@
 
 **Blocked by:** 03, 04
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Backend: revert and restore produce the expected Candidate and a `restore` Revision; a turn with no Revisions is a 409.
-- [ ] `useEditHistory`: after `adopt`, undo returns the value before it and redo brings it back; `elsewhere` behaviour is unchanged (existing tests pass).
-- [ ] The routing function that chooses `adopt` vs `elsewhere` is pure and tested: own turn → adopt, other tab's turn → elsewhere, non-agent source → elsewhere.
-- [ ] Only the touched test files are run.
+- [x] Backend: revert and restore produce the expected Candidate and a `restore` Revision; a turn with no Revisions is a 409.
+- [x] `useEditHistory`: after `adopt`, undo returns the value before it and redo brings it back; `elsewhere` behaviour is unchanged (existing tests pass).
+- [x] The routing function that chooses `adopt` vs `elsewhere` is pure and tested: own turn → adopt, other tab's turn → elsewhere, non-agent source → elsewhere.
+- [x] Only the touched test files are run.

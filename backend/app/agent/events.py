@@ -22,6 +22,8 @@ class TurnStarted(BaseModel):
     tab: str
     provider: str
     model: str | None
+    # What the owner asked, so that every open chat shows it while the turn runs.
+    prompt: str
 
 
 class TextDelta(BaseModel):

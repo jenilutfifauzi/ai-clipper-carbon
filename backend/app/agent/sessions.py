@@ -153,7 +153,7 @@ class AgentSessionManager:
             self.feed.publish(name, event)
 
         self._scopes.set_turn(session.token, turn)
-        publish(TurnStarted(turn=turn, tab=session.tab, provider=session.provider.id, model=model))
+        publish(TurnStarted(turn=turn, tab=session.tab, provider=session.provider.id, model=model, prompt=prompt))
         try:
             context = await self._context(session, turn, model, prompt)
             async for event in driver(context):
@@ -177,12 +177,13 @@ class AgentSessionManager:
         finally:
             self._scopes.set_turn(session.token, None)
         first, last = (revisions[0], revisions[-1]) if revisions else (None, None)
-        publish(TurnFinished(turn=turn, stop=stop, first_revision=first, last_revision=last))
         record = TranscriptTurn(
             id=turn, provider=session.provider.id, model=model, prompt=prompt, parts=parts,
             first_revision=first, last_revision=last, stop=stop, started_at=started_at,
         )
+        # Kept before it is announced, so that whoever hears it finished can Revert it at once.
         await asyncio.to_thread(append_turn, self._store.job_dir(session.job_id), session.candidate_id, record)
+        publish(TurnFinished(turn=turn, stop=stop, first_revision=first, last_revision=last))
 
     async def _context(self, session: AgentSession, turn: str, model: str | None, prompt: str) -> TurnContext:
         candidates = await asyncio.to_thread(self._store.load_candidates, session.job_id)

@@ -6,8 +6,8 @@ import { Select } from "../../../../components/Select";
 import { rememberedValue } from "../../../../remembered";
 import type { AgentTurnView } from "./agentStream";
 import { ProviderSetup } from "./ProviderSetup";
-import { TurnView } from "./TurnView";
-import { useAgentStream } from "./useAgentStream";
+import { TurnView, type UndoTurn } from "./TurnView";
+import type { AgentStream } from "./useAgentStream";
 
 // The provider and model last chosen, per browser; versioned so a later shape starts afresh.
 export const rememberedAgentChoice = rememberedValue<{ provider: string; model: string | null } | null>("agent.choice.v1", null);
@@ -28,16 +28,28 @@ export function modelOptions({ provider, status }: AgentProviderListing): string
 
 /**
  * The Inspector's Agent tab (loaded only when opened): pick an Agent Provider and model, set it up
- * until it is ready, and chat with it about this Candidate, each Agent Turn streaming in.
+ * until it is ready, and chat with it about this Candidate, each Agent Turn streaming in. The chat's
+ * `stream` is the editor's (it outlives the tab), and `onUndo` reverts or restores a finished turn.
  */
-export function AgentTab({ jobId, candidateId, initialProviders = null }: { jobId: string; candidateId: string; initialProviders?: AgentProviderListing[] | null }) {
+export function AgentTab({
+  jobId,
+  candidateId,
+  stream,
+  onUndo,
+  initialProviders = null,
+}: {
+  jobId: string;
+  candidateId: string;
+  stream: AgentStream;
+  onUndo?: UndoTurn;
+  initialProviders?: AgentProviderListing[] | null;
+}) {
   const [providers, setProviders] = useState(initialProviders);
   const [providersError, setProvidersError] = useState<string | null>(null);
   const [choice, setChoice] = useState(rememberedAgentChoice.read);
   const [setupOpen, setSetupOpen] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const stream = useAgentStream(jobId, candidateId);
 
   useEffect(() => {
     api.listAgentProviders().then(setProviders, (reason) => setProvidersError(reason instanceof Error ? reason.message : "Couldn't list the providers"));
@@ -107,7 +119,7 @@ export function AgentTab({ jobId, candidateId, initialProviders = null }: { jobI
         <ProviderSetup listing={listing} onSaved={saved} />
       ) : (
         <>
-          <Transcript turns={stream.state.turns} onExample={send} />
+          <Transcript turns={stream.state.turns} onExample={send} onUndo={onUndo} />
           {(sendError ?? stream.state.error) && <p className="text-sm text-danger">{sendError ?? stream.state.error}</p>}
           <Composer busy={busy} running={stream.running !== null} onSend={send} onStop={stop} />
         </>
@@ -117,7 +129,7 @@ export function AgentTab({ jobId, candidateId, initialProviders = null }: { jobI
 }
 
 /** The chat's turns, kept scrolled to the newest until the owner scrolls up; three examples while empty. */
-function Transcript({ turns, onExample }: { turns: AgentTurnView[]; onExample: (prompt: string) => void }) {
+function Transcript({ turns, onExample, onUndo }: { turns: AgentTurnView[]; onExample: (prompt: string) => void; onUndo?: UndoTurn }) {
   const ref = useRef<HTMLDivElement>(null);
   // Whether the view follows the newest words: until scrolled up from the bottom.
   const following = useRef(true);
@@ -155,7 +167,7 @@ function Transcript({ turns, onExample }: { turns: AgentTurnView[]; onExample: (
       className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto"
     >
       {turns.map((turn) => (
-        <TurnView key={turn.id} turn={turn} />
+        <TurnView key={turn.id} turn={turn} onUndo={onUndo} />
       ))}
     </div>
   );

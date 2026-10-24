@@ -21,6 +21,8 @@ import { AdjustmentLayerFields } from "./AdjustmentLayers";
 import { colorChanges, ColorFields } from "./ColorFields";
 import { backgroundRemovalChanges, RemoveBackground } from "./RemoveBackgroundFields";
 import type { AdvancedEdits } from "./edits";
+import type { UndoTurn } from "./agent/TurnView";
+import type { AgentStream } from "./agent/useAgentStream";
 import { KeyingContext, useKeyTime } from "./KeyCluster";
 import { keyedGroup, keyedInPick, keyedItem, segmentSpan, writeItemKey } from "./keying";
 import { SegmentFields } from "./MainTrack";
@@ -48,8 +50,9 @@ export function Inspector({
   ...fields
 }: Parameters<typeof InspectorFields>[0] & {
   templates?: TemplateInfo[] | null;
-  // The Job and Candidate the Agent tab chats about; without it there is no Agent tab.
-  agent?: { job: string; candidate: string };
+  // The Job and Candidate the Agent tab chats about, the editor's Agent stream, and how a turn is
+  // undone; without it there is no Agent tab.
+  agent?: { job: string; candidate: string; stream: AgentStream; onUndo: UndoTurn };
 }) {
   const [tab, setTab] = useState<InspectorTab>("properties");
   const marked = pickedTemplate(fields.edits, fields.pick);
@@ -68,7 +71,7 @@ export function Inspector({
       <div role="tabpanel" id={inspectorPanelId(tab)} className={tab === "agent" ? "min-h-0 flex-1" : undefined}>
         {tab === "agent" ? (
           <Suspense fallback={<p className="text-sm text-muted">Loading the Agent…</p>}>
-            <AgentTab jobId={agent.job} candidateId={agent.candidate} />
+            <AgentTab jobId={agent.job} candidateId={agent.candidate} stream={agent.stream} onUndo={agent.onUndo} />
           </Suspense>
         ) : (
           properties
