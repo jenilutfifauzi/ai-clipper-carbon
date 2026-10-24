@@ -27,6 +27,7 @@ KEYS = (
     "TTS_STYLE",
     "ELEVENLABS_API_KEY",
     "ELEVENLABS_MODEL",
+    "ANTHROPIC_API_KEY",
 )
 
 

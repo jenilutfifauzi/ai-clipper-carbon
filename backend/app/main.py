@@ -7,6 +7,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from app import api, fonts, looks
+from app.agent import routes as agent_routes
+from app.agent.scope import ScopeRegistry
+from app.agent.sessions import AgentSessionManager
 from app.config import Settings, load_settings
 from app.jobs import JobStore
 from app.kokoro import KokoroSpeech
@@ -50,10 +53,12 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # The MCP server's sessions: a mounted app's own lifespan doesn't run.
-        async with app.state.mcp.session_manager.run():
+        async with app.state.mcp.session_manager.run(), app.state.agent_mcp.session_manager.run():
+            app.state.agent_sessions = AgentSessionManager(app, ports.agent_transport)
             worker.start()
             yield
             worker.stop()
+            await app.state.agent_sessions.close()
 
     app = FastAPI(title="AI Clipper", lifespan=lifespan)
     app.state.settings = settings
@@ -82,10 +87,16 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.looks = looks.use(settings.data_dir / looks.IMPORTED_DIR)
     app.include_router(api.router)
     app.include_router(api.media)
+    app.include_router(agent_routes.router)
+    app.include_router(agent_routes.candidate_router)
     # The MCP server at /mcp (streamable HTTP; localhost only), ahead of the frontend's catch-all. Its
     # route is added as it is, not mounted: a mount at /mcp wouldn't match /mcp itself.
     app.state.mcp = build_mcp(app)
     app.router.routes.extend(app.state.mcp.streamable_http_app(streamable_http_path="/mcp", stateless_http=True).routes)
+    # The Agent's at /mcp/agent (localhost only too): its tools only, bound by a bearer token to one Candidate.
+    app.state.agent_scopes = ScopeRegistry()
+    app.state.agent_mcp = build_mcp(app, scoped=True)
+    app.router.routes.extend(app.state.agent_mcp.streamable_http_app(streamable_http_path="/mcp/agent", stateless_http=True).routes)
     if (settings.frontend_dir / "index.html").is_file():
         _serve_frontend(app, settings.frontend_dir)
     return app

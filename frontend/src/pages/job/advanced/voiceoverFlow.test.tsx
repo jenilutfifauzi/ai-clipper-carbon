@@ -780,6 +780,7 @@ describe("the editing lock", () => {
       flush: async () => {},
       waiting: () => false,
       elsewhere: (value: number) => void calls.push(`elsewhere ${value}`),
+      adopt: (value: number) => void calls.push(`adopt ${value}`),
     };
     const refused: string[] = [];
     const hands = lockedWhile(history, () => {
@@ -790,12 +791,14 @@ describe("the editing lock", () => {
     hands.undo();
     hands.redo();
     hands.elsewhere(2, (step) => step, false);
-    expect(calls).toEqual(["elsewhere 2"]);
+    // The Agent's Revision is no hand edit: it is taken while locked too.
+    hands.adopt(4, "agent:t1:4");
+    expect(calls).toEqual(["elsewhere 2", "adopt 4"]);
     expect(refused).toEqual(["told", "told", "told"]);
     locked = false;
     hands.set(3);
     hands.undo();
-    expect(calls).toEqual(["elsewhere 2", "set 3", "undo"]);
+    expect(calls).toEqual(["elsewhere 2", "adopt 4", "set 3", "undo"]);
   });
 
   test("it holds from the press until the Take has landed", async () => {

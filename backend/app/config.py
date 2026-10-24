@@ -37,6 +37,8 @@ DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 DEFAULT_TTS_GEMINI_MODEL = "gemini-3.8-flash-lite-tts"
 DEFAULT_ELEVENLABS_MODEL = "eleven_multilingual_v2"
 DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
+# Where `make dev` serves the backend (Makefile).
+DEFAULT_BACKEND_ORIGIN = "http://127.0.0.1:8000"
 DEFAULT_LLM_MODEL = "deepseek-flash"
 DEFAULT_WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
 DEFAULT_FFMPEG_BIN = "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"
@@ -323,6 +325,11 @@ class Settings:
     # ElevenLabs for Narrations, offered when its key is set (docs/adr/0026): its Voices are the account's.
     elevenlabs_api_key: str | None = field(default=None, repr=False)
     elevenlabs_model: str = DEFAULT_ELEVENLABS_MODEL
+    # The Anthropic Agent Provider's key when none is saved from its setup (app/agent/credentials.py).
+    anthropic_api_key: str | None = field(default=None, repr=False)
+    # Where this backend answers, as an ACP agent's subprocess reaches the scoped MCP server
+    # (<origin>/mcp/agent). Its routes take localhost only.
+    backend_origin: str = DEFAULT_BACKEND_ORIGIN
     # Not read from the environment: the eval points it at the Reference Set it measures against.
     reference_set: Path = REFERENCE_SET
     transcription: TranscriptionTuning = TranscriptionTuning()
@@ -397,6 +404,8 @@ def load_settings(env_file: Path = ENV_FILE) -> Settings:
         tts_style=_parse_bool("TTS_STYLE", get("TTS_STYLE")) if get("TTS_STYLE") else None,
         elevenlabs_api_key=get("ELEVENLABS_API_KEY") or None,
         elevenlabs_model=get("ELEVENLABS_MODEL", DEFAULT_ELEVENLABS_MODEL),
+        anthropic_api_key=get("ANTHROPIC_API_KEY") or None,
+        backend_origin=get("BACKEND_ORIGIN", DEFAULT_BACKEND_ORIGIN).rstrip("/"),
         quota=QuotaTuning(
             request_interval_secs=_parse_secs("LLM_REQUEST_INTERVAL_SECS", interval)
             if interval

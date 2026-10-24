@@ -26,6 +26,11 @@ export interface EditHistory<T> {
   // with the changes here), and `rebase` is applied to every step of the history, so that undo takes
   // back only this editor's own. With `save`, `value` is saved once changes pause.
   elsewhere: (value: T, rebase: (step: T) => T, save: boolean) => void;
+  // Takes a Revision saved outside (the Agent's, for a turn this tab started, ADR 0028) as a new undo
+  // step of `group`, so that undo takes it back like an edit here. It isn't saved again: the Revision
+  // exists, and the next save here carries it. With `save` (it was merged with changes waiting here),
+  // `value` is saved once changes pause.
+  adopt: (value: T, group: string, save?: boolean) => void;
 }
 
 /**
@@ -48,6 +53,11 @@ export interface Steps<T> {
 /** `old` with `value` made: a new step, or (`merge`) the last step changed; nothing left to redo. */
 export function stepped<T>(old: Steps<T>, value: T, merge: boolean): Steps<T> {
   return { past: merge ? old.past : [...old.past, old.value].slice(-MAX_STEPS), value, future: [] };
+}
+
+/** `old` with `value`, taken from outside, as a step of its own: undone like any other, and nothing left to redo. */
+export function adopted<T>(old: Steps<T>, value: T): Steps<T> {
+  return stepped(old, value, false);
 }
 
 /** `old` with its last step undone; null when there is none. */
@@ -125,6 +135,12 @@ export function useEditHistory<T>(saved: T, save: (value: T) => Promise<unknown>
     if (save) persist(value);
   }
 
+  function adopt(value: T, group: string, save = false) {
+    last.current = { group, at: performance.now() };
+    setState((old) => adopted(old, value));
+    if (save) persist(value);
+  }
+
   return {
     value: state.value,
     set,
@@ -135,6 +151,7 @@ export function useEditHistory<T>(saved: T, save: (value: T) => Promise<unknown>
     flush,
     waiting: () => pending.current !== null,
     elsewhere,
+    adopt,
   };
 }
 

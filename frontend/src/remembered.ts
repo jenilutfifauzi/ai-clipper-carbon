@@ -41,7 +41,8 @@ export function rememberedSwitch(key: string, initial: boolean) {
     };
   };
 
-  return { read, set, use: () => useSyncExternalStore(subscribe, read) };
+  // Read on a server render too (renderToStaticMarkup), as the browser has it.
+  return { read, set, use: () => useSyncExternalStore(subscribe, read, read) };
 }
 
 /**

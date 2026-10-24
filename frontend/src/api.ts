@@ -2130,7 +2130,162 @@ export const api = {
     send(`/voices/${encodeURIComponent(engine)}/${encodeURIComponent(voice)}/sample?lang=${encodeURIComponent(language)}`).then((response) =>
       response.blob(),
     ),
+  // The Agent Providers and whether each is ready (backend/app/agent/routes.py). Never carries a key.
+  listAgentProviders: () => request<AgentProviderListing[]>("/agent/providers"),
+  // Saves an API provider's key, base URL or model; a field left out keeps what was saved. Rejects with
+  // a 404 for an unknown provider, a 400 for an ACP one or a base URL that can't be changed.
+  saveAgentCredential: (providerId: string, credential: AgentCredentialUpdate) =>
+    request<AgentProviderListing>(`/agent/credentials/${encodeURIComponent(providerId)}`, {
+      method: "PUT",
+      body: JSON.stringify(credential),
+    }),
+  // Forgets what was saved for an API provider: its key comes from the backend's .env again, if there.
+  deleteAgentCredential: (providerId: string) =>
+    request<void>(`/agent/credentials/${encodeURIComponent(providerId)}`, { method: "DELETE" }),
+  // Signs an ACP provider in: the browser opens on the backend's Mac, or the answer names a command to
+  // run in a terminal. Rejects with a 400 for an agent that isn't installed, a 502 when it can't start
+  // a sign-in.
+  loginAgentProvider: (providerId: string) =>
+    request<AgentLogin>(`/agent/providers/${encodeURIComponent(providerId)}/login`, { method: "POST" }),
+  // Starts an Agent Turn on the Candidate from this tab: its id, whose events come on agentEventsUrl.
+  // Rejects with a 409 while this tab's turn runs, a 400 for a provider that isn't ready.
+  sendAgentTurn: (jobId: string, candidateId: string, body: AgentTurnRequest) =>
+    request<{ turn: string }>(`${agentPath(jobId, candidateId)}/turns`, { method: "POST", body: JSON.stringify(body) }).then(
+      (answer) => answer.turn,
+    ),
+  // Stops the tab's turn, if one runs: it ends with what it had done so far.
+  cancelAgentTurn: (jobId: string, candidateId: string, tab: string) =>
+    request<void>(`${agentPath(jobId, candidateId)}/cancel`, { method: "POST", body: JSON.stringify({ tab }) }),
+  // The Candidate's chat: its finished Agent Turns, oldest first.
+  agentTranscript: (jobId: string, candidateId: string) => request<AgentTranscriptTurn[]>(`${agentPath(jobId, candidateId)}/transcript`),
+  // Undoes a finished Agent Turn (ADR 0028): `revert` restores the Revision before it, `restore` its
+  // last. Either is a Restore, saved as the Candidate's next Revision; 409 for a turn that saved nothing.
+  undoAgentTurn: (jobId: string, candidateId: string, turn: string, how: AgentTurnUndo, source: EditSource) =>
+    request<Candidate>(`${agentPath(jobId, candidateId)}/turns/${encodeURIComponent(turn)}/${how}`, {
+      method: "POST",
+      headers: { "X-Edit-Source": source, "X-Edit-Tab": TAB_ID },
+    }),
 };
+
+export type AgentTurnUndo = "revert" | "restore";
+
+const agentPath = (jobId: string, candidateId: string) =>
+  `/jobs/${encodeURIComponent(jobId)}/candidates/${encodeURIComponent(candidateId)}/agent`;
+
+// `ready` with the turns running now (`{running: {tab: turn}}`), then each AgentEvent named by its type.
+export const agentEventsUrl = (jobId: string, candidateId: string) => `/api${agentPath(jobId, candidateId)}/events`;
+
+// What signing an ACP provider in asks of the owner: a command to run in a terminal, or a note.
+// (backend/app/agent/routes.py's LoginStarted: `login: "acp"` opened the browser on the backend's Mac.)
+export interface AgentLogin {
+  provider: string;
+  login: "acp" | "terminal";
+  command: string[] | null;
+  message: string;
+}
+
+export interface AgentTurnRequest {
+  provider: string;
+  // Else the provider's saved or default model.
+  model?: string;
+  prompt: string;
+  tab: string;
+}
+
+// Why an Agent Turn ended (backend/app/agent/events.py).
+export type AgentStop = "end_turn" | "step_limit" | "cancelled" | "error";
+
+// What an Agent Turn tells the editor as it runs, on agentEventsUrl.
+export type AgentEvent =
+  | { type: "turn_started"; turn: string; tab: string; provider: string; model: string | null; prompt: string }
+  | { type: "text"; turn: string; delta: string }
+  | { type: "thought"; turn: string; delta: string }
+  // `tool` comes without any `mcp__…__` prefix.
+  | { type: "tool_started"; turn: string; call: string; tool: string; summary: string }
+  | { type: "tool_finished"; turn: string; call: string; ok: boolean; error?: string | null; revision?: number | null }
+  | { type: "turn_finished"; turn: string; stop: AgentStop; first_revision?: number | null; last_revision?: number | null }
+  | { type: "error"; turn?: string | null; message: string };
+
+// A part of a turn: a run of text or of thought, or a tool call (ok null while it runs).
+export type AgentTurnPart =
+  | { type: "text"; text: string }
+  | { type: "thought"; text: string }
+  | { type: "tool"; call: string; tool: string; summary: string; ok: boolean | null; error: string | null; revision: number | null };
+
+// A finished turn of the Candidate's chat (backend/app/agent/transcript_store.py).
+export interface AgentTranscriptTurn {
+  id: string;
+  provider: string;
+  model: string | null;
+  prompt: string;
+  parts: AgentTurnPart[];
+  first_revision: number | null;
+  last_revision: number | null;
+  stop: AgentStop;
+  started_at: string;
+}
+
+// A coding agent the backend launches over the Agent Client Protocol (backend/app/agent/providers.py).
+export interface AcpAgentProvider {
+  kind: "acp";
+  id: string;
+  label: string;
+  command: string[];
+  // Run through `npx -y` when `command` isn't installed but npx is.
+  npx_package: string | null;
+  install_hint: string;
+  // Signed in through ACP, or by running `login_command` in a terminal.
+  login: "acp" | "terminal";
+  login_command: string[] | null;
+  docs_url: string;
+  // Shown in its setup, such as Antigravity's terms note.
+  warning: string | null;
+  // What to do before its first turn, such as choosing Antigravity's sign-in in its own settings.
+  setup_note: string | null;
+}
+
+// A model the backend's own tool loop calls over its API.
+export interface ApiAgentProvider {
+  kind: "api";
+  id: string;
+  label: string;
+  base_url: string;
+  base_url_editable: boolean;
+  models: string[];
+  default_model: string | null;
+  // The .env names its key is read from when none is saved.
+  key_env: string[];
+  docs_url: string;
+}
+
+export type AgentProvider = AcpAgentProvider | ApiAgentProvider;
+
+// Whether a provider can run an Agent Turn now. ACP fields are null for an API provider, and the other way round.
+export interface ProviderStatus {
+  id: string;
+  ready: boolean;
+  installed: boolean | null;
+  // The command it would be launched with, the npx fallback included.
+  command: string[] | null;
+  version: string | null;
+  login: "unknown" | "signed_in" | "signed_out" | null;
+  has_key: boolean | null;
+  key_source: "saved" | "env" | null;
+  base_url: string | null;
+  model: string | null;
+}
+
+export interface AgentProviderListing {
+  provider: AgentProvider;
+  status: ProviderStatus;
+}
+
+export interface AgentCredentialUpdate {
+  api_key?: string;
+  // Only for a provider whose base_url_editable is true.
+  base_url?: string;
+  model?: string;
+}
 
 export const logoUrl = (id: string) => `/api/logos/${encodeURIComponent(id)}`;
 // A picture layer's picture (a Text Layer's or a Shape's), by the name its event gives: never stale.
