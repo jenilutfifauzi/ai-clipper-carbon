@@ -32,10 +32,10 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Reducer: a scripted event sequence gives one turn with text, a thought, and a tool row that goes from running to done with its revision.
-- [ ] Reducer: `tool_finished` with an error marks the row failed with the message; `turn_finished` with `cancelled` marks the turn stopped.
-- [ ] `ToolRow` strips `mcp__ai-clipper__` and shows `edit candidate` (renderToStaticMarkup).
-- [ ] `AgentTab` with no ready provider renders `ProviderSetup`; with one, it renders the composer (renderToStaticMarkup).
-- [ ] Typecheck passes; only the new test files are run.
+- [x] Reducer: a scripted event sequence gives one turn with text, a thought, and a tool row that goes from running to done with its revision.
+- [x] Reducer: `tool_finished` with an error marks the row failed with the message; `turn_finished` with `cancelled` marks the turn stopped.
+- [x] `ToolRow` strips `mcp__ai-clipper__` and shows `edit candidate` (renderToStaticMarkup).
+- [x] `AgentTab` with no ready provider renders `ProviderSetup`; with one, it renders the composer (renderToStaticMarkup).
+- [x] Typecheck passes; only the new test files are run.

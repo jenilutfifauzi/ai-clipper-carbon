@@ -1525,6 +1525,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           effectsElsewhere={!wide}
           videoEffectsShown={wide}
           matte={here}
+          agent={here}
           pick={pick}
           edits={edits}
           duration={duration}
