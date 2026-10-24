@@ -18,9 +18,10 @@ from pydantic import BaseModel
 from app.agent.credentials import Credential
 from app.agent.events import AgentEvent
 from app.agent.providers import AcpProvider, ApiProvider
+from app.config import DEFAULT_BACKEND_ORIGIN
 
 # Where the scoped MCP server answers. Its routes take localhost only, so this is also the Host sent.
-SCOPED_MCP_ORIGIN = "http://127.0.0.1:8000"
+SCOPED_MCP_ORIGIN = DEFAULT_BACKEND_ORIGIN
 SCOPED_MCP_PATH = "/mcp/agent"
 
 
@@ -37,10 +38,12 @@ class ScopedEndpoint:
 
     app: FastAPI
     token: str
+    # Where the backend answers, for a subprocess (an ACP agent) to reach it: Settings.backend_origin.
+    origin: str = SCOPED_MCP_ORIGIN
 
     @property
     def url(self) -> str:
-        return SCOPED_MCP_ORIGIN + SCOPED_MCP_PATH
+        return self.origin + SCOPED_MCP_PATH
 
     @property
     def headers(self) -> dict[str, str]:
@@ -51,7 +54,7 @@ class ScopedEndpoint:
         """An MCP client of the scoped server, over streamable HTTP into the app in-process: the
         server reads the token from the request's headers, which an in-memory client has none of."""
         transport = httpx2.ASGITransport(app=self.app)
-        async with httpx2.AsyncClient(transport=transport, base_url=SCOPED_MCP_ORIGIN, headers=self.headers) as http:
+        async with httpx2.AsyncClient(transport=transport, base_url=self.origin, headers=self.headers) as http:
             async with Client(streamable_http_client(self.url, http_client=http)) as client:
                 yield client
 

@@ -2,11 +2,14 @@
 its own tool loop calls, and whether each is ready to run an Agent Turn."""
 
 import asyncio
+import json
+import os
 import shutil
 import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
@@ -68,7 +71,7 @@ class ProviderStatus(BaseModel):
     # The command it would be launched with, its fallback included; None when neither is installed.
     command: list[str] | None = None
     version: str | None = None
-    # ACP sign-in, which issue 05 finds out; "unknown" until then.
+    # ACP sign-in, as far as a known login file tells (`login_state`); "unknown" otherwise.
     login: Literal["unknown", "signed_in", "signed_out"] | None = None
     # API: whether a key is saved or found in the environment, where from, and the base URL and model used.
     has_key: bool | None = None
@@ -89,8 +92,9 @@ PROVIDERS: list[AcpProvider | ApiProvider] = [
         command=["claude-agent-acp"],
         npx_package="@agentclientprotocol/claude-agent-acp",
         install_hint="npm install -g @agentclientprotocol/claude-agent-acp (and Claude Code itself)",
+        # Its adapter offers terminal sign-ins only (`claude auth login`).
         login="terminal",
-        login_command=["claude", "/login"],
+        login_command=["claude", "auth", "login"],
         docs_url="https://docs.claude.com/en/docs/claude-code",
     ),
     AcpProvider(
@@ -99,7 +103,8 @@ PROVIDERS: list[AcpProvider | ApiProvider] = [
         command=["codex-acp"],
         npx_package="@agentclientprotocol/codex-acp",
         install_hint="npm install -g @agentclientprotocol/codex-acp (and the Codex CLI)",
-        login="terminal",
+        # Its adapter's `authenticate` with ChatGPT opens the browser; `codex login` does the same by hand.
+        login="acp",
         login_command=["codex", "login"],
         docs_url="https://developers.openai.com/codex/cli",
     ),
@@ -184,7 +189,30 @@ def detect_acp(provider: AcpProvider) -> ProviderStatus:
     if command is None:
         return ProviderStatus(id=provider.id, ready=False, installed=False, login="unknown")
     version = _version(command[0]) if command == provider.command else None
-    return ProviderStatus(id=provider.id, ready=True, installed=True, command=command, version=version, login="unknown")
+    return ProviderStatus(id=provider.id, ready=True, installed=True, command=command, version=version, login=login_state(provider))
+
+
+def login_state(provider: AcpProvider) -> Literal["unknown", "signed_in"]:
+    """"signed_in" when the agent's CLI has left its login where it keeps it: Codex's auth.json, Claude
+    Code's credentials file or its account in ~/.claude.json (macOS keeps the token in the Keychain),
+    or an API key in the environment. Anything else is "unknown": a login may live elsewhere."""
+    home = Path.home()
+    if provider.id == "codex":
+        codex_home = Path(os.environ.get("CODEX_HOME") or home / ".codex")
+        return "signed_in" if (codex_home / "auth.json").is_file() else "unknown"
+    if provider.id == "claude-code":
+        config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR") or home / ".claude")
+        if os.environ.get("ANTHROPIC_API_KEY") or (config_dir / ".credentials.json").is_file():
+            return "signed_in"
+        return "signed_in" if _has_oauth_account(home / ".claude.json") else "unknown"
+    return "unknown"
+
+
+def _has_oauth_account(path: Path) -> bool:
+    try:
+        return bool(json.loads(path.read_text()).get("oauthAccount"))
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def api_status(provider: ApiProvider, credential: Credential | None) -> ProviderStatus:
@@ -219,6 +247,10 @@ class DetectionCache:
         status = await asyncio.to_thread(detect_acp, provider)
         self._entries[provider.id] = (now, status)
         return status
+
+    def forget(self, provider_id: str) -> None:
+        """Detect it afresh next time: its sign-in may have changed."""
+        self._entries.pop(provider_id, None)
 
 
 def _version(binary: str) -> str | None:

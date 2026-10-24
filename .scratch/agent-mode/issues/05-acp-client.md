@@ -31,10 +31,10 @@
 
 **Blocked by:** 01, 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A fake ACP agent (a small Python script under `backend/tests/` speaking NDJSON) receives `initialize`, `session/new` with the `/mcp/agent` server and bearer header, and `session/prompt` with the system prompt in front.
-- [ ] The fake agent's message chunks, thought chunks and tool calls arrive as `text`, `thought`, `tool_started` and `tool_finished` events.
-- [ ] Permission requests for `mcp__ai-clipper__edit_candidate` are allowed; for a shell tool they are rejected.
-- [ ] Cancel sends `session/cancel` and the turn ends `cancelled`; a crash mid-turn ends it with `error`, and the next send works.
-- [ ] Tests in `backend/tests/test_agent_acp.py`; only it is run.
+- [x] A fake ACP agent (a small Python script under `backend/tests/` speaking NDJSON) receives `initialize`, `session/new` with the `/mcp/agent` server and bearer header, and `session/prompt` with the system prompt in front.
+- [x] The fake agent's message chunks, thought chunks and tool calls arrive as `text`, `thought`, `tool_started` and `tool_finished` events.
+- [x] Permission requests for `mcp__ai-clipper__edit_candidate` are allowed; for a shell tool they are rejected.
+- [x] Cancel sends `session/cancel` and the turn ends `cancelled`; a crash mid-turn ends it with `error`, and the next send works.
+- [x] Tests in `backend/tests/test_agent_acp.py`; only it is run.

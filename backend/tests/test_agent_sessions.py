@@ -102,12 +102,13 @@ def test_the_chat_is_kept_and_sent_back_as_history(served, chat, job):
     ]
 
 
-def test_a_provider_without_a_key_or_one_that_signs_in_is_refused_clearly(served, job):
+def test_a_provider_without_a_key_or_one_that_cant_run_a_turn_yet_is_refused_clearly(served, job):
     candidate = job["candidates"][0]
     url = f"{agent_url(job, candidate)}/turns"
 
     no_key = served.post(url, json={"provider": "anthropic", "prompt": "Hi", "tab": "tab-a"})
-    acp = served.post(url, json={"provider": "claude-code", "prompt": "Hi", "tab": "tab-a"})
+    # An ACP agent the client doesn't drive yet (issue 06); Claude Code and Codex are test_agent_acp's.
+    acp = served.post(url, json={"provider": "gemini-cli", "prompt": "Hi", "tab": "tab-a"})
     unknown = served.post(url, json={"provider": "nope", "prompt": "Hi", "tab": "tab-a"})
     missing = served.post(f"/api/jobs/{job['id']}/candidates/nope/agent/turns", json={"provider": "deepseek", "prompt": "Hi", "tab": "t"})
 

@@ -2142,7 +2142,20 @@ export const api = {
   // Forgets what was saved for an API provider: its key comes from the backend's .env again, if there.
   deleteAgentCredential: (providerId: string) =>
     request<void>(`/agent/credentials/${encodeURIComponent(providerId)}`, { method: "DELETE" }),
+  // Starts signing in to an ACP agent: the browser opens on the backend's Mac (`login: "acp"`), or the
+  // answer names a command to run in a terminal. Rejects with a 400 for an API provider or an agent
+  // that isn't installed, a 502 when the agent can't start a sign-in.
+  loginAgentProvider: (providerId: string) =>
+    request<AgentLoginStarted>(`/agent/providers/${encodeURIComponent(providerId)}/login`, { method: "POST" }),
 };
+
+// What the setup shows after Login: `message`, and `command` to run when it is a terminal sign-in.
+export interface AgentLoginStarted {
+  provider: string;
+  login: "acp" | "terminal";
+  command: string[] | null;
+  message: string;
+}
 
 // A coding agent the backend launches over the Agent Client Protocol (backend/app/agent/providers.py).
 export interface AcpAgentProvider {

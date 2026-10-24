@@ -3,11 +3,13 @@ under /api/jobs/{job}/candidates/{candidate}/agent. Included from `create_app`."
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field
 
+from app.agent.acp_client import AcpError, AcpExited
 from app.agent.credentials import SavedCredential, credential_for, delete_credential, save_credential
 from app.agent.events import agent_events, topic
 from app.agent.sessions import AgentSessionManager, TurnRunning
@@ -53,6 +55,40 @@ async def list_providers(request: Request) -> list[ProviderListing]:
     ]
 
 
+class LoginStarted(BaseModel):
+    """How the owner signs in: in the browser that `authenticate` opened (`acp`), or by running
+    `command` in a terminal. `message` says which, for the setup to show."""
+
+    provider: str
+    login: Literal["acp", "terminal"]
+    command: list[str] | None
+    message: str
+
+
+@router.post("/providers/{provider_id}/login")
+async def login_provider(provider_id: str, request: Request) -> LoginStarted:
+    provider = provider_by_id(provider_id)
+    if provider is None:
+        raise HTTPException(404, f"No Agent Provider {provider_id!r}")
+    if not isinstance(provider, AcpProvider):
+        raise HTTPException(400, f"{provider.label} takes a key, not a sign-in")
+    if provider.login == "terminal":
+        command = provider.login_command or []
+        return LoginStarted(
+            provider=provider.id, login="terminal", command=command, message=f"Run {' '.join(command)} in a terminal, then come back."
+        )
+    try:
+        await _sessions(request).login(provider)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    except (AcpError, AcpExited, TimeoutError, OSError) as error:
+        raise HTTPException(502, f"{provider.label} couldn't start signing in: {error}") from error
+    _detection(request).forget(provider.id)
+    return LoginStarted(
+        provider=provider.id, login="acp", command=None, message=f"Finish signing in to {provider.label} in the browser that opened."
+    )
+
+
 @router.put("/credentials/{provider_id}")
 async def put_credential(provider_id: str, update: CredentialUpdate, request: Request) -> ProviderListing:
     provider = _api_provider(provider_id)
@@ -93,14 +129,14 @@ async def send_turn(job_id: str, candidate_id: str, request: TurnRequest, http: 
     provider = provider_by_id(request.provider)
     if provider is None:
         raise HTTPException(404, f"No Agent Provider {request.provider!r}")
-    if isinstance(provider, AcpProvider):
-        raise HTTPException(400, f"{provider.label} can't run an Agent Turn yet")
-    credential = credential_for(_settings(http), provider.id)
-    if credential is None:
-        raise HTTPException(400, f"{provider.label} has no key: add one in the Agent tab's setup")
-    model = request.model or credential.model or provider.default_model
-    if model is None:
-        raise HTTPException(400, f"Choose a model for {provider.label}")
+    credential, model = None, request.model
+    if isinstance(provider, ApiProvider):
+        credential = credential_for(_settings(http), provider.id)
+        if credential is None:
+            raise HTTPException(400, f"{provider.label} has no key: add one in the Agent tab's setup")
+        model = request.model or credential.model or provider.default_model
+        if model is None:
+            raise HTTPException(400, f"Choose a model for {provider.label}")
     try:
         turn = await _sessions(http).send(job_id, candidate_id, request.tab, provider, model, credential, request.prompt)
     except TurnRunning as error:

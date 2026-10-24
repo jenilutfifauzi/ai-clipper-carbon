@@ -8,16 +8,18 @@ import secrets
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI
 
+from app.agent.acp_client import AcpAgent, start_login
 from app.agent.api_loop import HISTORY_TURNS, run_chat_turn
 from app.agent.credentials import Credential
 from app.agent.driver import ChatMessage, Driver, ScopedEndpoint, TurnContext
 from app.agent.events import AgentError, AgentEvent, AgentFeed, Stop, ToolFinished, TurnFinished, TurnStarted, topic
 from app.agent.prompt import system_prompt
-from app.agent.providers import AcpProvider, ApiProvider
+from app.agent.providers import AcpProvider, ApiProvider, launch_command
 from app.agent.scope import AgentScope, ScopeRegistry
 from app.agent.transcript_store import TranscriptTurn, TurnPart, append_turn, load_transcript, turn_text, with_event
 from app.jobs import JobStore
@@ -25,6 +27,10 @@ from app.jobs import JobStore
 logger = logging.getLogger(__name__)
 
 SessionKey = tuple[str, str, str]
+# The ACP agents an Agent Turn runs on so far (acp_client.py); Gemini CLI and Antigravity come later.
+ACP_DRIVEN = ("claude-code", "codex")
+# Where each Agent Session's ACP agent runs: an empty folder of its own under DATA_DIR.
+SANDBOX_DIR = Path("agent") / "sandbox"
 
 
 class TurnRunning(Exception):
@@ -43,6 +49,8 @@ class AgentSession:
     token: str
     turn: str | None = None
     task: asyncio.Task | None = None
+    # Its ACP agent's process, kept between turns; None for an API provider.
+    acp: AcpAgent | None = None
 
     @property
     def busy(self) -> bool:
@@ -56,6 +64,16 @@ def driver_for(provider: ApiProvider | AcpProvider) -> Driver:
     raise ValueError(f"{provider.label} can't run an Agent Turn yet")
 
 
+def acp_command(provider: AcpProvider) -> list[str]:
+    """What an ACP provider's agent is launched with. Raises ValueError when it can't run a turn."""
+    if provider.id not in ACP_DRIVEN:
+        raise ValueError(f"{provider.label} can't run an Agent Turn yet")
+    command = launch_command(provider)
+    if command is None:
+        raise ValueError(f"{provider.label} isn't installed: {provider.install_hint}")
+    return command
+
+
 class AgentSessionManager:
     """On app.state.agent_sessions, made in the lifespan; `close` ends every session."""
 
@@ -63,6 +81,8 @@ class AgentSessionManager:
         self._app = app
         self._http_transport = http_transport
         self._sessions: dict[SessionKey, AgentSession] = {}
+        # Sign-ins under way: each waits for the owner to finish in the browser.
+        self._logins: set[asyncio.Task] = set()
         self.feed = AgentFeed()
 
     @property
@@ -93,10 +113,13 @@ class AgentSessionManager:
     ) -> str:
         """Start a turn of the tab's session (opened now if it isn't) and return its id. Raises
         TurnRunning while the session runs one, and ValueError for a provider that can't run one."""
-        driver = driver_for(provider)
+        command = acp_command(provider) if isinstance(provider, AcpProvider) else None
+        driver = driver_for(provider) if command is None else None
         session = self._session(job_id, candidate_id, tab, provider, model, credential)
         if session.busy:
             raise TurnRunning(f"An Agent Turn is running in tab {tab}")
+        if command is not None:
+            driver = (await self._acp_agent(session, provider, command)).run_turn
         session.provider, session.model, session.credential = provider, model, credential
         session.turn = secrets.token_hex(6)
         session.task = asyncio.create_task(self._run(session, session.turn, driver, prompt))
@@ -112,15 +135,27 @@ class AgentSessionManager:
             await session.task
         return True
 
+    async def login(self, provider: AcpProvider) -> None:
+        """Start signing in to `provider` through ACP's `authenticate`: the browser opens on this Mac.
+        Raises ValueError when it isn't installed; acp_client's errors when it can't start a sign-in."""
+        command = launch_command(provider)
+        if command is None:
+            raise ValueError(f"{provider.label} isn't installed: {provider.install_hint}")
+        sandbox = self._app.state.settings.data_dir / SANDBOX_DIR / f"login-{secrets.token_hex(6)}"
+        task = await start_login(command, sandbox, provider.label)
+        self._logins.add(task)
+        task.add_done_callback(self._logins.discard)
+
     def transcript(self, job_id: str, candidate_id: str) -> list[TranscriptTurn]:
         return load_transcript(self._store.job_dir(job_id), candidate_id)
 
     async def close(self) -> None:
         """Cancel every turn, forget every session's token and end the event streams."""
-        tasks = [session.task for session in self._sessions.values() if session.busy]
+        tasks = [session.task for session in self._sessions.values() if session.busy] + list(self._logins)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*(session.acp.close() for session in self._sessions.values() if session.acp), return_exceptions=True)
         for session in self._sessions.values():
             self._scopes.revoke(session.token)
         self._sessions.clear()
@@ -137,6 +172,18 @@ class AgentSessionManager:
         session = AgentSession(job_id, candidate_id, tab, provider, model, credential, token)
         self._sessions[key] = session
         return session
+
+    async def _acp_agent(self, session: AgentSession, provider: AcpProvider, command: list[str]) -> AcpAgent:
+        """The session's ACP agent: its own, unless the tab has switched to another provider, whose
+        process then replaces it."""
+        if session.acp is not None and session.acp.provider_id == provider.id:
+            return session.acp
+        if session.acp is not None:
+            await session.acp.close()
+        scope = self._scopes.resolve(session.token)
+        sandbox = self._app.state.settings.data_dir / SANDBOX_DIR / scope.session_id
+        session.acp = AcpAgent(provider.id, provider.label, command, sandbox)
+        return session.acp
 
     async def _run(self, session: AgentSession, turn: str, driver: Driver, prompt: str) -> None:
         """Run the turn to its end, whatever ends it, and keep it in the chat."""
@@ -204,7 +251,7 @@ class AgentSessionManager:
             system=system_prompt(self._app.state.agent_mcp.instructions or "", session.job_id, candidate),
             history=history,
             prompt=prompt,
-            tools=ScopedEndpoint(self._app, session.token),
+            tools=ScopedEndpoint(self._app, session.token, self._app.state.settings.backend_origin),
             http_transport=self._http_transport,
         )
 
