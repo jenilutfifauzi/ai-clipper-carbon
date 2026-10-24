@@ -323,6 +323,8 @@ class Settings:
     # ElevenLabs for Narrations, offered when its key is set (docs/adr/0026): its Voices are the account's.
     elevenlabs_api_key: str | None = field(default=None, repr=False)
     elevenlabs_model: str = DEFAULT_ELEVENLABS_MODEL
+    # The Anthropic Agent Provider's key when none is saved from its setup (app/agent/credentials.py).
+    anthropic_api_key: str | None = field(default=None, repr=False)
     # Not read from the environment: the eval points it at the Reference Set it measures against.
     reference_set: Path = REFERENCE_SET
     transcription: TranscriptionTuning = TranscriptionTuning()
@@ -397,6 +399,7 @@ def load_settings(env_file: Path = ENV_FILE) -> Settings:
         tts_style=_parse_bool("TTS_STYLE", get("TTS_STYLE")) if get("TTS_STYLE") else None,
         elevenlabs_api_key=get("ELEVENLABS_API_KEY") or None,
         elevenlabs_model=get("ELEVENLABS_MODEL", DEFAULT_ELEVENLABS_MODEL),
+        anthropic_api_key=get("ANTHROPIC_API_KEY") or None,
         quota=QuotaTuning(
             request_interval_secs=_parse_secs("LLM_REQUEST_INTERVAL_SECS", interval)
             if interval

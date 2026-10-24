@@ -28,10 +28,10 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `GET /api/agent/providers` lists all eight providers; the response carries no key material even when a key is saved.
-- [ ] Saving a DeepSeek key marks it ready; deleting it falls back to `LLM_API_KEY` when `LLM_BASE_URL` is DeepSeek's.
-- [ ] The credentials file is mode 600.
-- [ ] An ACP provider whose command and npx are both missing reads `installed: false` with its install hint.
-- [ ] Tests in `backend/tests/test_agent_providers.py`; only that file is run.
+- [x] `GET /api/agent/providers` lists all eight providers; the response carries no key material even when a key is saved.
+- [x] Saving a DeepSeek key marks it ready; deleting it falls back to `LLM_API_KEY` when `LLM_BASE_URL` is DeepSeek's.
+- [x] The credentials file is mode 600.
+- [x] An ACP provider whose command and npx are both missing reads `installed: false` with its install hint.
+- [x] Tests in `backend/tests/test_agent_providers.py`; only that file is run.
