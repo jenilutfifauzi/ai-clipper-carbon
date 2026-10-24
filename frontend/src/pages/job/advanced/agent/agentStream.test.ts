@@ -6,7 +6,7 @@ import { agentStream, EMPTY_STREAM, loadTranscript, ownTurns, runningTurn, type 
 
 const fold = (actions: AgentStreamAction[], from: AgentStreamState = EMPTY_STREAM) => actions.reduce(agentStream, from);
 
-const started: AgentEvent = { type: "turn_started", turn: "t1", tab: "tab-a", provider: "deepseek", model: "deepseek-chat" };
+const started: AgentEvent = { type: "turn_started", turn: "t1", tab: "tab-a", provider: "deepseek", model: "deepseek-chat", prompt: "Add a title" };
 
 describe("agentStream", () => {
   test("a scripted turn gives one turn with text, a thought, and a tool row that goes from running to done", () => {
@@ -60,9 +60,14 @@ describe("agentStream", () => {
   });
 
   test("the prompt sent may come before the turn starts", () => {
-    const state = fold([{ type: "prompted", turn: "t1", prompt: "Hi" }, started]);
+    const state = fold([{ type: "prompted", turn: "t1", prompt: "Hi" }, { ...started, prompt: "Hi" }]);
     expect(state.turns).toHaveLength(1);
     expect(state.turns[0]).toMatchObject({ prompt: "Hi", provider: "deepseek", tab: "tab-a" });
+  });
+
+  test("a turn started in another tab shows its prompt", () => {
+    const state = fold([{ ...started, tab: "tab-b", prompt: "Tighten the pauses" }]);
+    expect(state.turns[0]).toMatchObject({ tab: "tab-b", prompt: "Tighten the pauses" });
   });
 
   test("ready says which turns run, by tab", () => {

@@ -7,6 +7,11 @@ import type { AgentProviderListing } from "../../../../api";
 import { AgentTab } from "./AgentTab";
 import { toolLabel, ToolRow } from "./ToolRow";
 import { TurnView } from "./TurnView";
+import { EMPTY_STREAM, type AgentTurnView } from "./agentStream";
+import type { AgentStream } from "./useAgentStream";
+
+// The editor's stream, with no turns yet.
+const idle: AgentStream = { state: EMPTY_STREAM, running: null, ownTurns: new Set(), lost: false, prompted: () => {}, subscribe: () => () => {} };
 
 const deepseek = (ready: boolean): AgentProviderListing => ({
   provider: {
@@ -94,25 +99,56 @@ describe("TurnView", () => {
     expect(html).toMatch(/<details[^>]*>.*Hmm/s);
     expect(html).toContain("whitespace-pre-wrap");
   });
+
+  // .scratch/agent-mode/issues/08: a finished turn that saved Revisions can be reverted and restored.
+  const turn = (change: Partial<AgentTurnView>): AgentTurnView => ({
+    id: "t1",
+    tab: null,
+    provider: "deepseek",
+    model: null,
+    prompt: "Add a title",
+    parts: [],
+    stop: "end_turn",
+    first_revision: 4,
+    last_revision: 6,
+    error: null,
+    ...change,
+  });
+
+  test("a finished turn that saved Revisions offers Revert and Restore", () => {
+    const html = renderToStaticMarkup(<TurnView turn={turn({})} onUndo={async () => {}} />);
+    expect(html).toContain("Revert");
+    expect(html).toContain("Restore");
+  });
+
+  test("no Revert or Restore on a running turn, one that saved nothing, or without a handler", () => {
+    for (const html of [
+      renderToStaticMarkup(<TurnView turn={turn({ stop: null })} onUndo={async () => {}} />),
+      renderToStaticMarkup(<TurnView turn={turn({ first_revision: null, last_revision: null })} onUndo={async () => {}} />),
+      renderToStaticMarkup(<TurnView turn={turn({})} />),
+    ]) {
+      expect(html).not.toContain("Revert");
+    }
+  });
 });
 
 describe("AgentTab", () => {
   test("with no ready provider, the provider's setup", () => {
-    const html = renderToStaticMarkup(<AgentTab jobId="j" candidateId="c" initialProviders={[deepseek(false)]} />);
+    const html = renderToStaticMarkup(<AgentTab jobId="j" candidateId="c" stream={idle} initialProviders={[deepseek(false)]} />);
     expect(html).toContain("data-provider-setup");
     expect(html).toContain('type="password"');
     expect(html).not.toContain("data-composer");
   });
 
   test("with a ready provider, the composer and the example prompts", () => {
-    const html = renderToStaticMarkup(<AgentTab jobId="j" candidateId="c" initialProviders={[deepseek(true)]} />);
+    const html = renderToStaticMarkup(<AgentTab jobId="j" candidateId="c" stream={idle} initialProviders={[deepseek(true)]} />);
     expect(html).toContain("data-composer");
     expect(html).not.toContain("data-provider-setup");
     expect(html.match(/data-example/g)).toHaveLength(3);
   });
 
   test("an ACP provider's setup: its install hint, Login, its warning and what to do first", () => {
-    const html = renderToStaticMarkup(<AgentTab jobId="j" candidateId="c" initialProviders={[antigravity]} />);
+    const html = renderToStaticMarkup(<AgentTab jobId="j" candidateId="c" stream={idle} initialProviders={[antigravity]} />);
     expect(html).toContain("brew install antigravity");
     expect(html).toContain("Log in");
     expect(html).toContain("Google&#x27;s terms may not allow a personal Antigravity login to be used from other apps.");
