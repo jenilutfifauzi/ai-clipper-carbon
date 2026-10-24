@@ -34,12 +34,12 @@
 
 **Blocked by:** 01, 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] With a fake OpenAI-compatible server (an `httpx.MockTransport` or a tiny ASGI app) scripted to call `edit_candidate` then answer, a turn streams `turn_started`, `tool_started`, `tool_finished` (with the new revision), `text` and `turn_finished` (with first and last revision), in that order.
-- [ ] The Candidate is changed by the tool call, and its Revision has tab `agent:<turn>`.
-- [ ] A scripted tool call on another Candidate gets an error result fed back to the model; nothing is saved.
-- [ ] Cancel mid-turn ends it with `stop: "cancelled"`.
-- [ ] A second send while a turn runs is a 409.
-- [ ] The transcript is saved and returned by `GET …/agent/transcript`.
-- [ ] Tests in `backend/tests/test_agent_api_loop.py` and `test_agent_sessions.py`; only these are run.
+- [x] With a fake OpenAI-compatible server (an `httpx.MockTransport` or a tiny ASGI app) scripted to call `edit_candidate` then answer, a turn streams `turn_started`, `tool_started`, `tool_finished` (with the new revision), `text` and `turn_finished` (with first and last revision), in that order.
+- [x] The Candidate is changed by the tool call, and its Revision has tab `agent:<turn>`.
+- [x] A scripted tool call on another Candidate gets an error result fed back to the model; nothing is saved.
+- [x] Cancel mid-turn ends it with `stop: "cancelled"`.
+- [x] A second send while a turn runs is a 409.
+- [x] The transcript is saved and returned by `GET …/agent/transcript`.
+- [x] Tests in `backend/tests/test_agent_api_loop.py` and `test_agent_sessions.py`; only these are run.

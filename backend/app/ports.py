@@ -3,6 +3,8 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+import httpx
+
 from app.config import Settings
 from app.kokoro import KokoroModel
 from app.llm import GeminiLlm, Llm, OpenAiLlm
@@ -27,6 +29,8 @@ class Ports:
     person_model: PersonModel | None = None
     # What makes a Matte from the person model's file (app/matte.py's matter seam): RVM through onnxruntime.
     matter: type[Matter] = RvmMatter
+    # What the Agent's API providers are called through (app/agent/api_loop.py): None, the network.
+    agent_transport: httpx.AsyncBaseTransport | None = None
 
 
 def real_ports(settings: Settings) -> Ports:

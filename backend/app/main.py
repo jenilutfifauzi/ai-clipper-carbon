@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 from app import api, fonts, looks
 from app.agent import routes as agent_routes
 from app.agent.scope import ScopeRegistry
+from app.agent.sessions import AgentSessionManager
 from app.config import Settings, load_settings
 from app.jobs import JobStore
 from app.kokoro import KokoroSpeech
@@ -53,9 +54,11 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # The MCP server's sessions: a mounted app's own lifespan doesn't run.
         async with app.state.mcp.session_manager.run(), app.state.agent_mcp.session_manager.run():
+            app.state.agent_sessions = AgentSessionManager(app, ports.agent_transport)
             worker.start()
             yield
             worker.stop()
+            await app.state.agent_sessions.close()
 
     app = FastAPI(title="AI Clipper", lifespan=lifespan)
     app.state.settings = settings
@@ -85,6 +88,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.include_router(api.router)
     app.include_router(api.media)
     app.include_router(agent_routes.router)
+    app.include_router(agent_routes.candidate_router)
     # The MCP server at /mcp (streamable HTTP; localhost only), ahead of the frontend's catch-all. Its
     # route is added as it is, not mounted: a mount at /mcp wouldn't match /mcp itself.
     app.state.mcp = build_mcp(app)
