@@ -239,6 +239,10 @@
   [data-agent="flash"]::after {
     animation: agent-flash 700ms var(--ease-out) forwards;
   }
+  /* The same ring under another name, so a second flash on the same item starts over. */
+  [data-agent="reflash"]::after {
+    animation: agent-reflash 700ms var(--ease-out) forwards;
+  }
 }
 @keyframes agent-pulse {
   0%,
@@ -250,6 +254,11 @@
   }
 }
 @keyframes agent-flash {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes agent-reflash {
   to {
     opacity: 0;
   }

@@ -774,6 +774,7 @@ export function useStageEdit(
 export type StageEdit = ReturnType<typeof useStageEdit>;
 
 const flashingOf = (state: PresenceState) => state.flashing;
+const flashesOf = (state: PresenceState) => state.flashes;
 
 /**
  * A handle over each item on screen now (and over each picked one, faded, when it has one place and
@@ -797,6 +798,8 @@ export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan
   const lifted = (picture: StagePicture) => !picture.under || edit.picked.includes(picture.id);
   // What the Agent's last Revision changed, outlined while it flashes (ADR 0029): never picked by it.
   const flashing = usePresence(flashingOf, NO_IDS);
+  // Keys the outlines by the flash, so an outline flashing again starts its ring over.
+  const flashes = usePresence(flashesOf, 0);
   const outlined = agentOutlines(
     edit.pictures.filter((picture, i) => !picture.behind && picturesOn[i] === 0),
     flashing,
@@ -810,7 +813,7 @@ export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan
       {edit.pictures.map((picture, i) => (lifted(picture) ? null : handle(picture, i)))}
       {edit.pictures.map((picture, i) => (lifted(picture) ? handle(picture, i) : null))}
       {outlined.map(({ id, picture }) => (
-        <div key={`agent:${id}`} aria-hidden data-agent="flash" className="pointer-events-none absolute" style={turnedBox(edit.shownPicture(id, picture), plan)} />
+        <div key={`agent:${id}:${flashes}`} aria-hidden data-agent="flash" className="pointer-events-none absolute" style={turnedBox(edit.shownPicture(id, picture), plan)} />
       ))}
       {edit.items.map((item, i) => {
         const selected = edit.picked.includes(item.id);

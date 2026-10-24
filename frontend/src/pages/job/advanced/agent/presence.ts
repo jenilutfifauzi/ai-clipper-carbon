@@ -14,7 +14,9 @@ export const FLASH_MS = 700;
 export const IDLE_AFTER_MS = 1500;
 
 export type PresenceStatus = "idle" | "thinking" | "editing";
-export type PresenceMark = "pulse" | "flash";
+// A flash and a reflash look the same: they take turns from one Revision to the next, so an item
+// still flashing when the next Revision touches it gets a new mark and its ring starts over.
+export type PresenceMark = "pulse" | "flash" | "reflash";
 
 export interface PresenceState {
   status: PresenceStatus;
@@ -27,6 +29,8 @@ export interface PresenceState {
   // The items a Revision just added or changed, until `flashUntil` (Date.now()).
   flashing: ReadonlySet<string>;
   flashUntil: number | null;
+  // How many Revisions have flashed: odd ones flash, even ones reflash.
+  flashes: number;
   // Follow agent held off for the rest of this turn: the Timeline was scrolled or zoomed by hand.
   followHeld: boolean;
 }
@@ -34,7 +38,7 @@ export interface PresenceState {
 const NONE: ReadonlySet<string> = new Set();
 // No ids: a stable fallback, for a selector read outside the Advanced Edit.
 export const NO_IDS = NONE;
-export const IDLE: PresenceState = { status: "idle", label: "", target: null, pulsing: NONE, flashing: NONE, flashUntil: null, followHeld: false };
+export const IDLE: PresenceState = { status: "idle", label: "", target: null, pulsing: NONE, flashing: NONE, flashUntil: null, flashes: 0, followHeld: false };
 
 export function presenceStore(initial: PresenceState = IDLE) {
   let state = initial;
@@ -84,7 +88,7 @@ export function presenceStore(initial: PresenceState = IDLE) {
     lastTouched = ids;
     clearTimeout(flashTimer);
     if (!ids.size && !target) return;
-    set({ flashing: ids, flashUntil: Date.now() + FLASH_MS, ...(target && { target }) });
+    set({ flashing: ids, flashUntil: Date.now() + FLASH_MS, flashes: state.flashes + 1, ...(target && { target }) });
     flashTimer = setTimeout(() => set({ flashing: NONE, flashUntil: null }), FLASH_MS);
   }
 
@@ -98,7 +102,8 @@ export function presenceStore(initial: PresenceState = IDLE) {
     revised,
     /** How item `id` is marked now: a flash wins over a pulse. */
     markOf(id: string): PresenceMark | null {
-      return state.flashing.has(id) ? "flash" : state.pulsing.has(id) ? "pulse" : null;
+      if (state.flashing.has(id)) return state.flashes % 2 ? "flash" : "reflash";
+      return state.pulsing.has(id) ? "pulse" : null;
     },
     /** The Agent Providers' names, by id, for the cursor's pill. */
     named(byId: Record<string, string>) {

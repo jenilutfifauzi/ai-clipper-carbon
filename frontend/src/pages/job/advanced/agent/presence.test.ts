@@ -71,6 +71,16 @@ describe("presenceStore", () => {
     expect(presence.getSnapshot().target).toEqual(target);
   });
 
+  test("an item flashing again before its flash ends is marked anew, so its ring starts over", () => {
+    const presence = presenceStore();
+    presence.revised(touched, target);
+    vi.advanceTimersByTime(FLASH_MS / 2);
+    presence.revised(touched, target);
+    expect(presence.markOf("t1")).toBe("reflash");
+    presence.revised(touched, target);
+    expect(presence.markOf("t1")).toBe("flash");
+  });
+
   test("a Revision touching nothing with a place leaves the cursor where it was", () => {
     const presence = presenceStore();
     presence.revised(touched, target);
