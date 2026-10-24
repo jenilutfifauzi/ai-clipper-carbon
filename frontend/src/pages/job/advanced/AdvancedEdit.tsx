@@ -27,7 +27,12 @@ import {
   type Transition,
   type TransitionKind,
   type VideoEffectKind,
+  type AgentTurnUndo,
 } from "../../../api";
+import { adoptionGroup } from "./agent/adoption";
+import type { AgentTurnView } from "./agent/agentStream";
+import type { UndoTurn } from "./agent/TurnView";
+import { useAgentStream } from "./agent/useAgentStream";
 import { Button } from "../../../components/Button";
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { Panel } from "../../../components/Panel";
@@ -370,9 +375,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   // Theirs, while the merge of the edits here onto it is being saved: taken as it is if that fails.
   const merging = useRef<AdvancedEdits | null>(null);
   // A change from elsewhere that came while a save was unanswered: taken once it is answered.
-  const postponed = useRef<{ next: Candidate; source: SavedBy; parts: string[] } | null>(null);
+  const postponed = useRef<{ next: Candidate; source: SavedBy; parts: string[]; adopt?: string } | null>(null);
   // This render's handlers, for a save answered after later renders.
-  const latest = useRef({ incoming: (_next: Candidate, _source: SavedBy, _parts: string[], _how: Taken) => {} });
+  const latest = useRef({ incoming: (_next: Candidate, _source: SavedBy, _parts: string[], _how: Taken, _adopt?: string) => {} });
   function save(change: CandidateChange) {
     const asked = taken.current;
     unanswered.current += 1;
@@ -417,9 +422,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         setSaveError("Not saved: changed elsewhere again (another tab or the agent)");
       } else if (refused) {
         const told = waiting && waiting.next.revision >= refused.revision ? waiting : null;
-        latest.current.incoming(told?.next ?? refused, told?.source ?? "unknown", told?.parts ?? [], "refused");
+        latest.current.incoming(told?.next ?? refused, told?.source ?? "unknown", told?.parts ?? [], "refused", told?.adopt);
       } else if (waiting && unanswered.current === 0) {
-        latest.current.incoming(waiting.next, waiting.source, waiting.parts, "elsewhere");
+        latest.current.incoming(waiting.next, waiting.source, waiting.parts, "elsewhere", waiting.adopt);
       } else if (waiting) {
         postponed.current = waiting;
       }
@@ -454,11 +459,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
   // A newer Revision: saved elsewhere, the one a save here was refused for (then all the edits here
   // are unsaved), or a Restore or a change of aspect asked for here. The edits here not yet saved are
-  // merged onto it.
-  function incoming(next: Candidate, source: SavedBy, parts: string[], how: Taken) {
+  // merged onto it. With `adopt` (the Agent's Revision for a turn this tab started, ADR 0028), it is
+  // taken as an undo step of that group instead: Ctrl+Z takes it back.
+  function incoming(next: Candidate, source: SavedBy, parts: string[], how: Taken, adopt?: string) {
     if (next.revision <= revision.current) return;
     if (unanswered.current > 0 && how === "elsewhere") {
-      postponed.current = { next, source, parts };
+      postponed.current = { next, source, parts, adopt };
       return;
     }
     const base = savedEdits.current;
@@ -472,9 +478,12 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     const unsaved = how === "refused" || history.waiting();
     const { merged, collisions } = unsaved ? mergeEdits(base, edits, theirs) : { merged: theirs, collisions: [] };
     merging.current = unsaved ? theirs : null;
-    history.elsewhere(merged, rebase, unsaved);
+    if (adopt) history.adopt(merged, adopt, unsaved);
+    else history.elsewhere(merged, rebase, unsaved);
     setChanged(changedItems(edits, merged));
     if (how === "restored" || how === "reshaped") return;
+    // The chat says what the Agent did; only a collision with the edits here needs a notice.
+    if (adopt && !collisions.length) return;
     if (collisions.length) {
       const who = source === "unknown" ? "a change made elsewhere" : `${savedByLabel(source, null, "advanced-edit")}'s change`;
       setNotice({
@@ -532,6 +541,28 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     }
   }
 
+  // The Agent's chat of this clip: one stream per editor, handed to the Inspector's Agent tab. The
+  // turns it says this tab started have their Revisions adopted as undo steps (`onCandidate` below).
+  const agentChat = useAgentStream(job.id, initial.id);
+  // A turn's Revert or Restore (ADR 0028), once the edits waiting here are saved: a Restore, taken
+  // as one, with a notice saying how it went.
+  async function undoTurn(turn: AgentTurnView, how: AgentTurnUndo) {
+    await history.flush();
+    await sending.current;
+    try {
+      const answer = await api.undoAgentTurn(job.id, initial.id, turn.id, how, "advanced-edit");
+      setSaveError(null);
+      latest.current.incoming(answer, "restore", [], "restored");
+      setNotice({ id: Date.now(), text: how === "revert" ? "Reverted the Agent's turn: the clip is as it was before it" : "Restored what the Agent's turn made" });
+    } catch (reason) {
+      setNotice({ id: Date.now(), text: `Couldn't ${how} the Agent's turn: ${(reason as Error).message}` });
+    }
+  }
+  const undoTurnRef = useRef(undoTurn);
+  undoTurnRef.current = undoTurn;
+  // Stable, so that the chat's finished turns don't render again with each edit.
+  const onUndoTurn = useCallback<UndoTurn>((turn, how) => undoTurnRef.current(turn, how), []);
+
   // A notice's Restore: of the state before Revision `revision` came in, or of theirs from it on.
   function restoreButton(which: "before" | "theirs", revision: number) {
     async function click() {
@@ -557,7 +588,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       else end("removed");
     },
     onCandidate: (event) => {
-      if (event.candidate.id === initial.id) incoming(event.candidate, event.source, event.parts, "elsewhere");
+      if (event.candidate.id !== initial.id) return;
+      const adopt = adoptionGroup({ source: event.source, tab: event.tab, revision: event.candidate.revision }, agentChat.ownTurns);
+      incoming(event.candidate, event.source, event.parts, "elsewhere", adopt ?? undefined);
     },
     onRemoved: (id) => id === initial.id && end("removed"),
     onDeleted: () => end("deleted"),
@@ -1525,7 +1558,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           effectsElsewhere={!wide}
           videoEffectsShown={wide}
           matte={here}
-          agent={here}
+          agent={{ ...here, stream: agentChat, onUndo: onUndoTurn }}
           pick={pick}
           edits={edits}
           duration={duration}

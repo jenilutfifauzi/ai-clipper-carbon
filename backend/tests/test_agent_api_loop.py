@@ -147,7 +147,7 @@ def test_a_turn_streams_its_tool_call_and_answer_and_its_revisions_name_it(serve
     received = until_finished(stream)
     assert [name for name, _ in received] == ["turn_started", "tool_started", "tool_finished", "text", "turn_finished"]
     started, tool_started, tool_finished, text, finished = (data for _, data in received)
-    assert started == {"type": "turn_started", "turn": turn, "tab": "tab-a", "provider": "deepseek", "model": "deepseek-chat"}
+    assert started == {"type": "turn_started", "turn": turn, "tab": "tab-a", "provider": "deepseek", "model": "deepseek-chat", "prompt": "Set the hook"}
     assert tool_started == {"type": "tool_started", "turn": turn, "call": "call-0", "tool": "edit_candidate", "summary": "sets hook_text"}
     saved = served.get(f"/api/jobs/{job['id']}").json()["candidates"][0]
     assert saved["hook_text"] == "Agent hook"

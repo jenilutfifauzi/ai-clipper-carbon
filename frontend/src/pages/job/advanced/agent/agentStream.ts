@@ -12,7 +12,7 @@ export interface AgentTurnView {
   tab: string | null;
   provider: string;
   model: string | null;
-  // The owner's message: known to the tab that sent it and from the chat, else empty.
+  // The owner's message: from turn_started, the tab that sent it, or the chat; empty for a turn joined midway.
   prompt: string;
   parts: AgentTurnPart[];
   // Null while it runs.
@@ -85,6 +85,7 @@ export function agentStream(state: AgentStreamState, action: AgentStreamAction):
         tab: action.tab,
         provider: action.provider,
         model: action.model,
+        prompt: action.prompt || turn.prompt,
       }));
     case "text":
     case "thought":

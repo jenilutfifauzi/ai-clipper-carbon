@@ -23,6 +23,8 @@ from app.agent.providers import (
     api_status,
     provider_by_id,
 )
+from app.api import AfterSave, AppSettings, EditBy, ExistingJob, Logos, Media, Presets, Store, restore_revision
+from app.candidates import Candidate
 from app.config import Settings
 from app.jobs import JobNotFound
 
@@ -153,6 +155,52 @@ async def cancel_turn(job_id: str, candidate_id: str, request: CancelRequest, ht
     return Response(status_code=204)
 
 
+@candidate_router.post("/turns/{turn}/revert")
+def revert_turn(
+    job_id: str,
+    candidate_id: str,
+    turn: str,
+    http: Request,
+    job: ExistingJob,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    logos: Logos,
+    library: Media,
+    edit: EditBy,
+    after_save: AfterSave,
+) -> Candidate:
+    """Restore the Revision before the finished turn's first (ADR 0028), as the Candidate's next
+    Revision. 404 for a turn not in the chat, 409 for one that saved nothing."""
+    first, _ = _turn_revisions(http, job_id, candidate_id, turn)
+    history = store.revision_history(job_id, candidate_id)
+    before = next((entry for entry in reversed(history) if entry.revision < first), None)
+    if before is None:
+        raise HTTPException(409, f"The Revision History no longer keeps the state before Agent Turn {turn}")
+    return restore_revision(job_id, candidate_id, before.revision, job, store, settings, presets, logos, library, edit, after_save)
+
+
+@candidate_router.post("/turns/{turn}/restore")
+def restore_turn(
+    job_id: str,
+    candidate_id: str,
+    turn: str,
+    http: Request,
+    job: ExistingJob,
+    store: Store,
+    settings: AppSettings,
+    presets: Presets,
+    logos: Logos,
+    library: Media,
+    edit: EditBy,
+    after_save: AfterSave,
+) -> Candidate:
+    """Bring back the finished turn's last Revision, as the Candidate's next Revision. 404 for a turn
+    not in the chat, 409 for one that saved nothing."""
+    _, last = _turn_revisions(http, job_id, candidate_id, turn)
+    return restore_revision(job_id, candidate_id, last, job, store, settings, presets, logos, library, edit, after_save)
+
+
 @candidate_router.get("/transcript")
 async def get_transcript(job_id: str, candidate_id: str, http: Request) -> list[TranscriptTurn]:
     """The Candidate's chat: its finished turns, oldest first."""
@@ -178,6 +226,16 @@ async def _existing_candidate(request: Request, job_id: str, candidate_id: str) 
     candidates = await asyncio.to_thread(store.load_candidates, job_id) or []
     if not any(candidate.id == candidate_id for candidate in candidates):
         raise HTTPException(404, f"Job {job_id} has no Candidate {candidate_id}")
+
+
+def _turn_revisions(request: Request, job_id: str, candidate_id: str, turn: str) -> tuple[int, int]:
+    """The first and last Revision a finished turn of the Candidate's chat saved."""
+    kept = next((kept for kept in _sessions(request).transcript(job_id, candidate_id) if kept.id == turn), None)
+    if kept is None:
+        raise HTTPException(404, f"Candidate {candidate_id} has no finished Agent Turn {turn}")
+    if kept.first_revision is None or kept.last_revision is None:
+        raise HTTPException(409, f"Agent Turn {turn} saved no Revision")
+    return kept.first_revision, kept.last_revision
 
 
 def _sessions(request: Request) -> AgentSessionManager:

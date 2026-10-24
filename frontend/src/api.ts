@@ -2158,7 +2158,16 @@ export const api = {
     request<void>(`${agentPath(jobId, candidateId)}/cancel`, { method: "POST", body: JSON.stringify({ tab }) }),
   // The Candidate's chat: its finished Agent Turns, oldest first.
   agentTranscript: (jobId: string, candidateId: string) => request<AgentTranscriptTurn[]>(`${agentPath(jobId, candidateId)}/transcript`),
+  // Undoes a finished Agent Turn (ADR 0028): `revert` restores the Revision before it, `restore` its
+  // last. Either is a Restore, saved as the Candidate's next Revision; 409 for a turn that saved nothing.
+  undoAgentTurn: (jobId: string, candidateId: string, turn: string, how: AgentTurnUndo, source: EditSource) =>
+    request<Candidate>(`${agentPath(jobId, candidateId)}/turns/${encodeURIComponent(turn)}/${how}`, {
+      method: "POST",
+      headers: { "X-Edit-Source": source, "X-Edit-Tab": TAB_ID },
+    }),
 };
+
+export type AgentTurnUndo = "revert" | "restore";
 
 const agentPath = (jobId: string, candidateId: string) =>
   `/jobs/${encodeURIComponent(jobId)}/candidates/${encodeURIComponent(candidateId)}/agent`;
@@ -2188,7 +2197,7 @@ export type AgentStop = "end_turn" | "step_limit" | "cancelled" | "error";
 
 // What an Agent Turn tells the editor as it runs, on agentEventsUrl.
 export type AgentEvent =
-  | { type: "turn_started"; turn: string; tab: string; provider: string; model: string | null }
+  | { type: "turn_started"; turn: string; tab: string; provider: string; model: string | null; prompt: string }
   | { type: "text"; turn: string; delta: string }
   | { type: "thought"; turn: string; delta: string }
   // `tool` comes without any `mcp__…__` prefix.
