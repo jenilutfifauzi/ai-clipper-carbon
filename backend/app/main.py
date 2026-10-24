@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from app import api, fonts, looks
+from app.agent import routes as agent_routes
 from app.config import Settings, load_settings
 from app.jobs import JobStore
 from app.kokoro import KokoroSpeech
@@ -82,6 +83,7 @@ def create_app(settings: Settings | None = None, ports: Ports | None = None) -> 
     app.state.looks = looks.use(settings.data_dir / looks.IMPORTED_DIR)
     app.include_router(api.router)
     app.include_router(api.media)
+    app.include_router(agent_routes.router)
     # The MCP server at /mcp (streamable HTTP; localhost only), ahead of the frontend's catch-all. Its
     # route is added as it is, not mounted: a mount at /mcp wouldn't match /mcp itself.
     app.state.mcp = build_mcp(app)
