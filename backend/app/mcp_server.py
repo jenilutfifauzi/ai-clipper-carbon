@@ -16,6 +16,7 @@ import logging
 import types
 from collections.abc import Callable
 from contextlib import aclosing
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Annotated, Any, Literal, Union, get_args, get_origin, get_type_hints
 
@@ -27,6 +28,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError, WithJsonSchema, create_model
 
+from app.agent.scope import ALLOWED_TOOLS, AgentScope, ScopeRegistry
 from app.api import (
     PICTURES_ROUTE,
     SHAPES_MAX,
@@ -104,6 +106,8 @@ MODEL_POLL_SECS = 0.25
 STALE_RETRIES = 5
 # Who makes the edits the tools save (ADR 0003): the editors send their own.
 EDIT_SOURCE = {"X-Edit-Source": "agent"}
+# The headers the tools' saves send now: EDIT_SOURCE, or on the scoped server its Agent Turn's (`_ScopedServer`).
+_edit_headers: ContextVar[dict[str, str]] = ContextVar("edit_headers", default=EDIT_SOURCE)
 # The API's routes of each kind of asset.
 ASSET_ROUTES = {"logo": "logos", "media": "media", "font": "fonts", "look": "looks"}
 # The lists of a Candidate's items, which edit_candidate replaces whole and merge_candidate_items
@@ -527,17 +531,27 @@ _SHAPE = TypeAdapter(ShapeEvent)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-def build_mcp(app: FastAPI) -> MCPServer:
-    """The MCP server for `app`, whose services (app.state) its tools use."""
-    mcp = MCPServer("AI Clipper", instructions=INSTRUCTIONS)
+AGENT_INSTRUCTIONS = f"""\
+You work on one Candidate of one Job: their ids are given in your first message. Every tool here
+takes that Job and that Candidate only, and refuses any other; you can't create or delete Jobs,
+render, or touch other Candidates. Of the workflow below, only the tools this server lists are yours.
+
+{INSTRUCTIONS}"""
+
+
+def build_mcp(app: FastAPI, scoped: bool = False) -> MCPServer:
+    """The MCP server for `app`, whose services (app.state) its tools use. `scoped`, the Agent's: only
+    ALLOWED_TOOLS, each call bound to the scope its bearer token names in app.state.agent_scopes."""
+    mcp = _ScopedServer(app.state.agent_scopes) if scoped else MCPServer("AI Clipper", instructions=INSTRUCTIONS)
 
     def tool(*, read_only: bool = False, destructive: bool = False):
         # Unstructured: the result's JSON is sent once, as text, rather than twice. Each tool returns an
         # object, since a list would be sent as a block per item (and an empty one as nothing).
-        return mcp.tool(
+        register = mcp.tool(
             structured_output=False,
             annotations=ToolAnnotations(readOnlyHint=read_only, destructiveHint=destructive),
         )
+        return lambda function: register(function) if not scoped or function.__name__ in ALLOWED_TOOLS else function
 
     async def api(
         method: str, path: str, *, json: Any = None, params: dict | None = None, files: dict | None = None, text: bool = False
@@ -545,7 +559,7 @@ def build_mcp(app: FastAPI) -> MCPServer:
         """The API route's response (None for 204; with `text`, its body as text), or a ToolError with its message."""
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://ai-clipper") as client:
-            response = await client.request(method, f"/api{path}", json=json, params=params, files=files, headers=EDIT_SOURCE)
+            response = await client.request(method, f"/api{path}", json=json, params=params, files=files, headers=_edit_headers.get())
         if response.is_success:
             return None if response.status_code == 204 else response.text if text else response.json()
         if (current := _stale_candidate(response)) is not None:
@@ -1199,6 +1213,48 @@ def build_mcp(app: FastAPI) -> MCPServer:
     for registered in mcp._tool_manager.list_tools():
         registered.parameters = _untitled(registered.parameters)
     return mcp
+
+
+class _ScopedServer(MCPServer):
+    """The Agent's MCP server: a call is refused unless its bearer token names an open scope and the
+    Job and Candidates it names are that scope's; its saves name the scope's Agent Turn (ADR 0003)."""
+
+    def __init__(self, scopes: ScopeRegistry):
+        super().__init__("AI Clipper", instructions=AGENT_INSTRUCTIONS)
+        self._scopes = scopes
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], context: Context | None = None) -> Any:
+        scope = self._scopes.resolve(_bearer(context))
+        if scope is None:
+            raise ToolError("Refused: this server takes only the bearer token of an open Agent Session")
+        if (refusal := _out_of_scope(scope, arguments)) is not None:
+            raise ToolError(refusal)
+        edit = _edit_headers.set({"X-Edit-Source": "agent", "X-Edit-Tab": scope.edit_tab})
+        try:
+            return await super().call_tool(name, arguments, context)
+        finally:
+            _edit_headers.reset(edit)
+
+
+def _bearer(context: Context | None) -> str | None:
+    """The bearer token of the HTTP request a call came in (None in-process, or without one)."""
+    headers = context.headers if context is not None else None
+    if headers is None:
+        return None
+    kind, _, token = (headers.get("authorization") or "").partition(" ")
+    return (token.strip() or None) if kind.lower() == "bearer" else None
+
+
+def _out_of_scope(scope: AgentScope, arguments: dict[str, Any]) -> str | None:
+    """Why a call's arguments reach past `scope` (a Job or Candidate not its own), or None."""
+    job_id = arguments.get("job_id")
+    if job_id is not None and job_id != scope.job_id:
+        return f"Refused: this Agent works on Job {scope.job_id} only"
+    named = arguments.get("candidate_ids")
+    candidate_ids = [arguments.get("candidate_id"), *(named if isinstance(named, list) else [named])]
+    if any(candidate_id is not None and candidate_id != scope.candidate_id for candidate_id in candidate_ids):
+        return f"Refused: this Agent works on Candidate {scope.candidate_id} only"
+    return None
 
 
 def _untitled(schema: Any) -> Any:

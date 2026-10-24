@@ -19,11 +19,11 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The scoped server lists only `ALLOWED_TOOLS`; `create_job_from_url`, `render_clips` and `delete_job` aren't listed.
-- [ ] A call without a token, or with a revoked one, is refused.
-- [ ] `edit_candidate` on the scoped Candidate saves; on another Candidate of the same Job, or another Job, it is refused and nothing is saved.
-- [ ] A save through the scoped server is recorded in Revision History with source `agent` and tab `agent:<turn_id>`.
-- [ ] `/mcp` still lists every tool (existing `test_mcp.py` unchanged and passing).
-- [ ] Tests live in `backend/tests/test_agent_scope.py`; only it and `test_mcp.py` are run.
+- [x] The scoped server lists only `ALLOWED_TOOLS`; `create_job_from_url`, `render_clips` and `delete_job` aren't listed.
+- [x] A call without a token, or with a revoked one, is refused.
+- [x] `edit_candidate` on the scoped Candidate saves; on another Candidate of the same Job, or another Job, it is refused and nothing is saved.
+- [x] A save through the scoped server is recorded in Revision History with source `agent` and tab `agent:<turn_id>`.
+- [x] `/mcp` still lists every tool (existing `test_mcp.py` unchanged and passing).
+- [x] Tests live in `backend/tests/test_agent_scope.py`; only it and `test_mcp.py` are run.
