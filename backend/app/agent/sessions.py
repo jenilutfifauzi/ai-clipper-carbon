@@ -12,7 +12,10 @@ from datetime import UTC, datetime
 import httpx
 from fastapi import FastAPI
 
-from app.agent.api_loop import HISTORY_TURNS, run_chat_turn
+from app.agent.api_anthropic import run_anthropic_turn
+from app.agent.api_chat import run_chat_turn
+from app.agent.api_gemini import run_gemini_turn
+from app.agent.api_loop import HISTORY_TURNS
 from app.agent.credentials import Credential
 from app.agent.driver import ChatMessage, Driver, ScopedEndpoint, TurnContext
 from app.agent.events import AgentError, AgentEvent, AgentFeed, Stop, ToolFinished, TurnFinished, TurnStarted, topic
@@ -49,10 +52,19 @@ class AgentSession:
         return self.task is not None and not self.task.done()
 
 
+# The API providers' drivers, by provider id.
+API_DRIVERS: dict[str, Driver] = {
+    "deepseek": run_chat_turn,
+    "openai-compatible": run_chat_turn,
+    "anthropic": run_anthropic_turn,
+    "gemini": run_gemini_turn,
+}
+
+
 def driver_for(provider: ApiProvider | AcpProvider) -> Driver:
-    """What runs a turn for `provider`: the Chat Completions loop for DeepSeek and OpenAI-compatible."""
-    if isinstance(provider, ApiProvider) and provider.id in ("deepseek", "openai-compatible"):
-        return run_chat_turn
+    """What runs a turn for `provider`: the API tool loop through its adapter for an API provider."""
+    if isinstance(provider, ApiProvider) and provider.id in API_DRIVERS:
+        return API_DRIVERS[provider.id]
     raise ValueError(f"{provider.label} can't run an Agent Turn yet")
 
 

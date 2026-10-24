@@ -15,8 +15,8 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Each adapter, given a scripted stream (fake transport / fake client), produces the same event sequence as the OpenAI test in 03.
-- [ ] A Gemini schema with `additionalProperties` / `$defs` is cleaned before sending.
-- [ ] Tests in `backend/tests/test_agent_api_adapters.py`; only it is run.
+- [x] Each adapter, given a scripted stream (fake transport / fake client), produces the same event sequence as the OpenAI test in 03.
+- [x] A Gemini schema with `additionalProperties` / `$defs` is cleaned before sending.
+- [x] Tests in `backend/tests/test_agent_api_adapters.py`; only it is run.
