@@ -1,10 +1,11 @@
-import { ArrowUp, Settings2, Square } from "lucide-react";
+import { ArrowUp, LocateFixed, Settings2, Square } from "lucide-react";
 import { useContext, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, TAB_ID, type AgentProviderListing } from "../../../../api";
 import { Button } from "../../../../components/Button";
 import { Select } from "../../../../components/Select";
 import { rememberedValue } from "../../../../remembered";
 import type { AgentTurnView } from "./agentStream";
+import { rememberedFollow } from "./follow";
 import { PresenceContext } from "./presence";
 import { ProviderSetup } from "./ProviderSetup";
 import { TurnView, type UndoTurn } from "./TurnView";
@@ -56,6 +57,7 @@ export function AgentTab({
     api.listAgentProviders().then(setProviders, (reason) => setProvidersError(reason instanceof Error ? reason.message : "Couldn't list the providers"));
   }, []);
 
+  const follow = rememberedFollow.use();
   // The Agent's cursor names its provider as listed here.
   const presence = useContext(PresenceContext);
   useEffect(() => {
@@ -121,6 +123,17 @@ export function AgentTab({
             <Settings2 aria-hidden size={17} />
           </Button>
         )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="aria-pressed:text-accent-text"
+          aria-label="Follow agent"
+          aria-pressed={follow}
+          title="Follow agent: the Timeline goes to what the Agent changes (until you scroll or zoom it in that turn)"
+          onClick={() => rememberedFollow.set(!follow)}
+        >
+          <LocateFixed aria-hidden size={17} />
+        </Button>
       </div>
       {settingUp ? (
         <ProviderSetup listing={listing} onSaved={saved} />

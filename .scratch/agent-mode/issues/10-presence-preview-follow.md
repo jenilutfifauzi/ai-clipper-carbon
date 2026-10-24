@@ -18,8 +18,8 @@
 
 **Blocked by:** 09
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A pure `followStep(view, target, playhead)` returns the scroll and seek to apply (or none) and is tested for in-view, out-of-view, and Follow-off.
-- [ ] The stage outline list for flashing ids is a pure function, tested.
-- [ ] Only the new test files are run.
+- [x] A pure `followStep(view, target, playhead)` returns the scroll and seek to apply (or none) and is tested for in-view, out-of-view, and Follow-off.
+- [x] The stage outline list for flashing ids is a pure function, tested.
+- [x] Only the new test files are run.

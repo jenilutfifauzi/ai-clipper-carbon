@@ -23,6 +23,8 @@ import {
   type Size,
   type Sized,
 } from "./pictureGestures";
+import { agentOutlines } from "../advanced/agent/follow";
+import { NO_IDS, usePresence, type PresenceState } from "../advanced/agent/presence";
 import { useShown, type Playback } from "./playback";
 import { fixedGuides, guideTargets, snapMoved, snapScaled, SNAP_CSS_PX, type GuideLines, type SmartGuides } from "./smartGuides";
 import { croppedPicture, cropKept, fittedOf, gripCursor, gripsIn, gripsOnFrame, heldPicture, pressTogglesPick, tidyTransform, wholeOnStage, type GripSet } from "./stagePicture";
@@ -771,6 +773,8 @@ export function useStageEdit(
 
 export type StageEdit = ReturnType<typeof useStageEdit>;
 
+const flashingOf = (state: PresenceState) => state.flashing;
+
 /**
  * A handle over each item on screen now (and over each picked one, faded, when it has one place and
  * isn't on screen), to pick, move, nudge and edit it; the picked ones outlined, and one picked alone
@@ -791,6 +795,12 @@ export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan
   const gripped = edit.picked.length === 1 ? edit.pictures.find((picture) => picture.id === edit.picked[0] && picture.transform && picture.picture) : undefined;
   // A Behind Overlay's handle is under the picture behind's (which covers the frame), but while it is picked.
   const lifted = (picture: StagePicture) => !picture.under || edit.picked.includes(picture.id);
+  // What the Agent's last Revision changed, outlined while it flashes (ADR 0029): never picked by it.
+  const flashing = usePresence(flashingOf, NO_IDS);
+  const outlined = agentOutlines(
+    edit.pictures.filter((picture, i) => !picture.behind && picturesOn[i] === 0),
+    flashing,
+  );
   const handle = (picture: StagePicture, i: number) => (
     // The picture behind keeps its handle from one Scene to the next, and so the pointer it holds.
     <PictureHandle key={picture.behind ? "behind" : picture.id} plan={plan} edit={edit} item={picture} on={picturesOn[i] === 0} />
@@ -799,6 +809,9 @@ export function StageHandles({ plan, playback, edit, scale }: { plan: RenderPlan
     <>
       {edit.pictures.map((picture, i) => (lifted(picture) ? null : handle(picture, i)))}
       {edit.pictures.map((picture, i) => (lifted(picture) ? handle(picture, i) : null))}
+      {outlined.map(({ id, picture }) => (
+        <div key={`agent:${id}`} aria-hidden data-agent="flash" className="pointer-events-none absolute" style={turnedBox(edit.shownPicture(id, picture), plan)} />
+      ))}
       {edit.items.map((item, i) => {
         const selected = edit.picked.includes(item.id);
         const index = shownAt[i] ?? -1;

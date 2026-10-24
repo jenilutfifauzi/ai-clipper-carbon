@@ -31,6 +31,7 @@ import {
 } from "../../../api";
 import { adoptionGroup } from "./agent/adoption";
 import { AgentCursor } from "./agent/AgentCursor";
+import { AgentFollow } from "./agent/follow";
 import { PresenceContext, presenceStore } from "./agent/presence";
 import { touchedItems, touchedTarget } from "./agent/touched";
 import type { AgentTurnView } from "./agent/agentStream";
@@ -1559,6 +1560,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             }}
           />
           <AgentCursor pps={geometry.pps} />
+          <AgentFollow view={geometry.view} pps={geometry.pps} playback={playback} />
         </>
       )}
     </AdvancedTimeline>

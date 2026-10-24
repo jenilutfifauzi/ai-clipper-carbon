@@ -60,6 +60,11 @@ export interface TimelineView {
   visible: () => { left: number; right: number };
   // Calls `listener` whenever it scrolls; returns what stops it.
   subscribe: (listener: () => void) => () => void;
+  // Scrolled to `left` pixels from 0 s: smoothly, but with reduced motion.
+  scrollTo: (left: number) => void;
+  // Calls `listener` whenever it is scrolled or zoomed by hand (the wheel, a swipe, its scrollbar,
+  // a pinch, the zoom buttons and keys, Zoom to fit); returns what stops it.
+  byHand: (listener: () => void) => () => void;
 }
 
 // An area on screen, in CSS pixels.
@@ -157,6 +162,10 @@ export function AdvancedTimeline({
   const total = Math.max(duration * pps, 0);
   const labels = useRef(labelWidth);
   labels.current = labelWidth;
+  const [byHand] = useState(() => new Set<() => void>());
+  const movedByHand = () => {
+    for (const listener of byHand) listener();
+  };
   const view = useMemo<TimelineView>(
     () => ({
       visible: () => {
@@ -169,9 +178,36 @@ export function AdvancedTimeline({
         element?.addEventListener("scroll", listener, { passive: true });
         return () => element?.removeEventListener("scroll", listener);
       },
+      scrollTo: (left) => {
+        const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+        scroller.current?.scrollTo({ left, behavior: still ? "auto" : "smooth" });
+      },
+      byHand: (listener) => {
+        byHand.add(listener);
+        return () => void byHand.delete(listener);
+      },
     }),
-    [],
+    [byHand],
   );
+
+  // Scrolled or zoomed by hand: told to whoever follows something else (Follow agent). Passive: it
+  // never holds the scroll up. A press on the scroller itself is one on its scrollbar.
+  useEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    const tell = () => {
+      for (const listener of byHand) listener();
+    };
+    const onPointerDown = (event: Event) => event.target === element && tell();
+    element.addEventListener("wheel", tell, { passive: true });
+    element.addEventListener("touchmove", tell, { passive: true });
+    element.addEventListener("pointerdown", onPointerDown, { passive: true });
+    return () => {
+      element.removeEventListener("wheel", tell);
+      element.removeEventListener("touchmove", tell);
+      element.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [byHand]);
 
   useEffect(() => {
     const element = scroller.current;
@@ -206,6 +242,7 @@ export function AdvancedTimeline({
   const zoomRef = useRef({ zoom, timeAt });
   zoomRef.current = { zoom, timeAt };
   function zoomTo(next: number, clientX?: number) {
+    movedByHand();
     const element = scroller.current;
     const clamped = Math.min(Math.max(next, 1), MAX_ZOOM);
     if (element) {
@@ -262,6 +299,7 @@ export function AdvancedTimeline({
 
   // Zoom to fit: at a new zoom, the scroll is kept for once it is drawn.
   function fitView() {
+    movedByHand();
     const view = toFit({ width: usable, zoom });
     if (view.zoom === zoom) {
       scroller.current?.scrollTo({ left: view.scroll });
@@ -274,6 +312,7 @@ export function AdvancedTimeline({
 
   // A zoom key's: about the playhead, the scroll kept for once it is drawn.
   function zoomAbout(direction: 1 | -1) {
+    movedByHand();
     const scroll = scroller.current?.scrollLeft ?? 0;
     const factor = direction > 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
     const view = zoomAboutPlayhead({ zoom, scroll, width: usable, duration, playhead: playback.time, factor });

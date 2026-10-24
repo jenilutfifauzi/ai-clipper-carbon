@@ -32,6 +32,8 @@ export interface PresenceState {
 }
 
 const NONE: ReadonlySet<string> = new Set();
+// No ids: a stable fallback, for a selector read outside the Advanced Edit.
+export const NO_IDS = NONE;
 export const IDLE: PresenceState = { status: "idle", label: "", target: null, pulsing: NONE, flashing: NONE, flashUntil: null, followHeld: false };
 
 export function presenceStore(initial: PresenceState = IDLE) {
