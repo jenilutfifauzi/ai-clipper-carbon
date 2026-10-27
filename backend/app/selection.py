@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from uuid import uuid4
 
-from app.candidates import HOOK_MAX_CHARS, KICKER_MAX_CHARS, Candidate, Descriptions
+from app.candidates import HOOK_MAX_CHARS, Candidate, Descriptions
 from app.config import LlmChoice, SelectionTuning
 from app.fewshot import Example
 from app.llm import (
@@ -417,23 +417,6 @@ def _cut(text: str, limit: int) -> str:
     return kept
 
 
-def _words(text: str) -> set[str]:
-    """The words of `text`, in lower case, without punctuation or Emphasis marks."""
-    return set(re.findall(r"\w+", text.lower()))
-
-
-# Moods and cheers the AI offers as a Kicker though they say nothing of the clip.
-MOOD_KICKERS = frozenset({"semangat", "motivasi", "keren", "inspirasi", "wow", "viral", "mantap"})
-
-
-def _kicker(text: str, hook: str) -> str:
-    """The AI's Kicker as kept: cut to KICKER_MAX_CHARS, and "" when every word of it is in the
-    `hook` (it would only say the hook twice) or it is only a mood (MOOD_KICKERS)."""
-    kicker = _cut(without_emoji(text), KICKER_MAX_CHARS)
-    words = _words(kicker)
-    return "" if words <= _words(hook) or words <= MOOD_KICKERS else kicker
-
-
 def _hook(text: str) -> str:
     """The AI's hook as kept: without emoji, cut to HOOK_MAX_CHARS, and without its Emphasis when
     that covers every word (it then stands out from nothing)."""
@@ -456,7 +439,6 @@ def _candidate(proposal: ClipProposal, start: float, end: float, window_score: i
         reason=proposal.reason.strip(),
         retention_notes=proposal.retention_notes.strip(),
         hook_text=hook,
-        hook_kicker=_kicker(proposal.hook_kicker, hook),
         title=proposal.title.strip(),
         descriptions=Descriptions(
             tiktok=proposal.tiktok_description.strip(),

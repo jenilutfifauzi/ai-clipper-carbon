@@ -17,6 +17,7 @@ import httpx
 from google import genai
 from google.genai import errors, types
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
+from pydantic.json_schema import SkipJsonSchema
 
 from app.config import Settings
 
@@ -68,8 +69,9 @@ class ScoreResponse(BaseModel):
 # A clip as the Detail pass proposes it, before Selection snaps and checks it. (No docstring:
 # pydantic would put it in the JSON schema, which the model reads.)
 class ClipProposal(BaseModel):
-    # topic and the quotes default to "" so that proposals saved before prompt v3 still load, and
-    # hook_kicker before v4; the schema sent to the model still requires every field.
+    # topic and the quotes default to "" so that proposals saved before prompt v3 still load; the
+    # schema sent to the model still requires every field. hook_kicker is only read from proposals
+    # saved from v4 to v5: from v6 the model isn't asked for one.
     model_config = ConfigDict(json_schema_extra=lambda schema: schema.update(required=list(schema["properties"])))
 
     window_id: str
@@ -85,7 +87,7 @@ class ClipProposal(BaseModel):
     predicted_score: Score
     # May mark its key words *like this*.
     viral_hook_text: str
-    hook_kicker: str = ""
+    hook_kicker: SkipJsonSchema[str] = ""
     title: str
     tiktok_description: str
     instagram_description: str

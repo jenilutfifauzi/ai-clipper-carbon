@@ -417,10 +417,10 @@ def test_llm_errors_that_persist_put_the_job_in_error(client, llm, wait_for_stat
     assert job["candidates"] is None
 
 
-# Emphasis and the Kicker from the AI (hook-styles ticket 06).
+# Emphasis from the AI (hook-styles ticket 06); from prompt v6 it gives no Kicker.
 
 
-def test_the_ais_hook_keeps_its_emphasis_and_its_kicker_is_kept_short_both_without_emoji(
+def test_the_ais_hook_keeps_its_emphasis_without_emoji_and_any_kicker_it_gives_is_left_out(
     client, from_episode, llm, wait_for_status
 ):
     llm.clips = [
@@ -430,16 +430,17 @@ def test_the_ais_hook_keeps_its_emphasis_and_its_kicker_is_kept_short_both_witho
     ]
     job = analyzed(client, wait_for_status)
     first, second, third = job["candidates"]
-    assert (first["hook_text"], first["hook_kicker"]) == ("Gue *rugi 500 juta* gara-gara ini", "Fakta")
-    assert second["hook_kicker"] == "Ini kicker yang terlalu"
-    assert third["hook_kicker"] == ""
+    assert (first["hook_text"], first["hook_kicker"]) == ("Gue *rugi 500 juta* gara-gara ini", "")
+    assert second["hook_kicker"] == third["hook_kicker"] == ""
 
 
-def test_the_detail_schema_asks_for_a_kicker():
+def test_the_detail_schema_asks_for_no_kicker():
     from app.llm import ClipProposal
 
-    assert "hook_kicker" in ClipProposal.model_json_schema()["required"]
-    # Proposals saved before it still load, without one.
+    schema = ClipProposal.model_json_schema()
+    assert "hook_kicker" not in schema["properties"] and "hook_kicker" not in schema["required"]
+    # Proposals saved from v4 to v5 still load with theirs, the others without one.
+    assert ClipProposal.model_validate(clip("10:00", "10:44", hook_kicker="FAKTA")).hook_kicker == "FAKTA"
     assert ClipProposal.model_validate(clip("10:00", "10:44")).hook_kicker == ""
 
 
@@ -462,16 +463,7 @@ def test_the_ais_text_is_cut_to_whole_words_and_never_leaves_an_unpaired_asteris
     assert _cut("Ini *kata kata kata*", 14) == "Ini kata kata"
 
 
-def test_a_kicker_that_only_repeats_the_hook_is_left_out(client, from_episode, llm, wait_for_status):
-    llm.clips = [
-        clip("10:00", "10:44", 80, viral_hook_text="Terima kasih, *orang baik*", hook_kicker="TERIMA KASIH"),
-        clip("20:00", "20:40", 70, viral_hook_text="Gue *rugi 500 juta*", hook_kicker="Kisah nyata"),
-    ]
-    repeated, kept = analyzed(client, wait_for_status)["candidates"]
-    assert (repeated["hook_kicker"], kept["hook_kicker"]) == ("", "Kisah nyata")
-
-
-def test_emphasis_of_the_whole_hook_and_a_mood_for_a_kicker_are_left_out(client, from_episode, llm, wait_for_status):
+def test_emphasis_of_the_whole_hook_is_left_out(client, from_episode, llm, wait_for_status):
     llm.clips = [
         clip("10:00", "10:44", 80, viral_hook_text="*Gojek adalah kita*", hook_kicker="SEMANGAT"),
         clip("20:00", "20:40", 70, viral_hook_text="*Gojek* *adalah kita!*", hook_kicker="Keren!"),
@@ -480,4 +472,4 @@ def test_emphasis_of_the_whole_hook_and_a_mood_for_a_kicker_are_left_out(client,
     whole, split, kept = analyzed(client, wait_for_status)["candidates"]
     assert (whole["hook_text"], whole["hook_kicker"]) == ("Gojek adalah kita", "")
     assert (split["hook_text"], split["hook_kicker"]) == ("Gojek adalah kita!", "")
-    assert (kept["hook_text"], kept["hook_kicker"]) == ("*Orang baik* itu masih ada", "KISAH NYATA")
+    assert (kept["hook_text"], kept["hook_kicker"]) == ("*Orang baik* itu masih ada", "")

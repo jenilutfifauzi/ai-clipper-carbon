@@ -12,7 +12,7 @@ the answer. Added: the Channel Profile and the Brief, in both passes so that a B
 shortlist (the Score pass gets the profile in short), few-shot examples in the Detail pass, and
 in v3 the whole-sentence rule, a distinct `topic` per clip and spare clips; in v4 Emphasis in the
 hook, a `hook_kicker`, and no emoji in either; in v5 which words take the Emphasis, and an empty
-Kicker over a generic one.
+Kicker over a generic one; in v6 no Kicker: the clips arrive without one.
 Each of these sections is left out when there is nothing to put in it.
 
 Audio-signal mode (SELECTION_AUDIO_SIGNAL) sends the shortlisted Windows' audio with the Detail
@@ -35,7 +35,7 @@ from app.transcript import timestamp
 if TYPE_CHECKING:
     from app.selection import ScoredWindow, Window
 
-PROMPT_VERSION = "v5"
+PROMPT_VERSION = "v6"
 # Added to PROMPT_VERSION for a run whose Detail request carried audio.
 AUDIO_SUFFIX = "-audio"
 
@@ -159,7 +159,7 @@ HOOK PLAYBOOK for `viral_hook_text`, the overlay shown over the clip's first 3 s
   "Terima kasih, *orang baik*"). Never a connective or filler ("*Untungnya* ada orang baik",
   "*Karena kita* bersama" are wrong: karena, untungnya, tapi, jadi, yang, ini, itu, ternyata
   carry nothing). One run of words in a short hook, never the whole hook.
-- No emoji, in the hook or the kicker: they can't be drawn on the video.
+- No emoji in the hook: they can't be drawn on the video.
 - Pick the strongest fitting pattern:
   - Open question: "Kenapa semua orang salah soal ini?"
   - Hot take: "Berhenti lakuin ini. Serius."
@@ -170,11 +170,6 @@ HOOK PLAYBOOK for `viral_hook_text`, the overlay shown over the clip's first 3 s
 - ABOUT THIS MOMENT, NOT THE EPISODE: name the concrete thing that happens in this clip: the
   claim, the number, the name, the confession. A line that could sit on any clip of this episode
   is wrong. If nothing concrete can be named, quote the clip's strongest phrase.
-- `hook_kicker`: a label of 1 or 2 words shown in a pill above the hook, at most 24 characters,
-  in TRANSCRIPT_LANGUAGE, that tells what kind of moment this is and the hook doesn't
-  ("TERBONGKAR!", "FAKTA", "PLOT TWIST", "KISAH NYATA"). A mood or a cheer ("SEMANGAT",
-  "MOTIVASI", "KEREN") is not a label: leave it "". Most clips need none; never repeat the hook's
-  words (a Kicker made only of them is dropped).
 
 COPY RULES, all written in {language}:
 - `title`: at most 100 characters, curiosity-driven, no claim the clip doesn't deliver. It is also
