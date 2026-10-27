@@ -1,7 +1,7 @@
 [project]
 name = "ai-clipper"
 version = "0.1.0"
-description = "Local podcast-to-shorts clipper for Apple Silicon"
+description = "Local podcast-to-shorts clipper for Apple Silicon and Linux"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "anthropic>=2.3.0",
@@ -12,7 +12,9 @@ dependencies = [
     "huggingface-hub>=2.2.0",
     "mcp>=2.3,<3",
     "mediapipe>=1.1.0",
-    "mlx-whisper>=0.4.3",
+    "mlx-whisper>=0.4.3; sys_platform == 'darwin'",
+    # Whisper off the Mac (app/whisper_worker.py): CTranslate2 on the CPU.
+    "faster-whisper>=1.2.0; sys_platform == 'linux'",
     "numpy>=2.5.4",
     "onnx>=1.23.2",
     "onnxruntime>=1.31.0",
@@ -46,8 +48,12 @@ module-name = "app"
 module-root = ""
 
 [tool.uv]
-# Apple Silicon Macs only. Resolving for that platform alone also keeps torch out of uv.lock.
-environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+# Apple Silicon Macs and x86-64 / arm64 Linux. Resolving for these alone also keeps torch out of uv.lock.
+environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
 # mlx-whisper declares torch but only imports it for model conversion
 # (mlx_whisper/torch_whisper.py). A marker that never matches drops it.
 override-dependencies = ["torch; sys_platform == 'never'"]

@@ -66,7 +66,7 @@ def test_an_uploaded_file_is_transcribed_locally_and_reaches_review(
     created = response.json()
     assert created["url"] == ""
     assert created["upload"] == {"name": "Episode 12 (final).mp4", "size": speech.video.stat().st_size, "file": "master.mp4"}
-    assert created["options"] == OPTIONS | {"transcribe_locally": False}
+    assert created["options"] == OPTIONS | {"transcribe_locally": False, "aspect": "9:16", "template": None}
 
     job = wait_for_status(created["id"], "review", "error")
     assert job["status"] == "review", job["error"]

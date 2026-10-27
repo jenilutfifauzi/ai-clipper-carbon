@@ -9,6 +9,7 @@ deleted, here or (after a crash) when the app next starts.
 
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -122,8 +123,9 @@ def stage(file: Path, folder: Path, reserve: int) -> Received:
     check_room(folder, file.stat().st_size, reserve)
     path = folder / f"{uuid4().hex}.part"
     try:
-        # -c clones (clonefile(2)), and copies where the volume can't clone.
-        done = subprocess.run(["cp", "-c", str(file), str(path)], capture_output=True, text=True)
+        # Clone where the volume can (clonefile(2) with -c on the Mac, a reflink with GNU cp), and copy where it can't.
+        clone = ["-c"] if sys.platform == "darwin" else ["--reflink=auto"]
+        done = subprocess.run(["cp", *clone, str(file), str(path)], capture_output=True, text=True)
         if done.returncode != 0:
             raise BadUpload(f"Can't copy {file}: {done.stderr.strip()}")
     except BaseException:

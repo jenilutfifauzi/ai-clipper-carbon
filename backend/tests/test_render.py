@@ -209,7 +209,7 @@ def test_selected_candidates_render_into_clips_ranked_like_their_candidates(clie
     assert [clip["candidate_id"] for clip in done["clips"]] == [first["id"], second["id"]]
     for clip, candidate in zip(done["clips"], [first, second]):
         check_clip(settings, job_dir, clip, candidate)
-        assert clip["output"]["encoder"] == "h264_videotoolbox"
+        assert clip["output"]["encoder"] == RenderTuning().encoders[0]
         # The Render Plan is kept with the Job: one scene without faces, so Blur: the whole frame over
         # its blurred full-height 9:16 crop from the middle.
         plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
@@ -397,7 +397,7 @@ def test_the_cli_renders_the_named_candidates(settings, video_source, transcribe
 
     assert cli.main(["render", job["id"], chosen["id"]]) == 0
     output = capsys.readouterr().out
-    assert re.search(rf"^{chosen['id']} 2\.\d s Clip in [\d.]+ s with h264_videotoolbox, [\d.]+ MB: .*\.mp4", output, re.M)
+    assert re.search(rf"^{chosen['id']} 2\.\d s Clip in [\d.]+ s with {RenderTuning().encoders[0]}, [\d.]+ MB: .*\.mp4", output, re.M)
     store = JobStore(settings.data_dir / "jobs")
     [clip] = store.load_clips(job["id"])
     assert (clip.candidate_id, clip.status) == (chosen["id"], ClipStatus.DONE)

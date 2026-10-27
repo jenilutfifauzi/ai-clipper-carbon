@@ -61,8 +61,8 @@ def test_an_uploaded_video_has_its_peaks_ready(client, settings, files):
     assert chunk.status_code == 200 and chunk.headers["content-type"] == "application/octet-stream"
     assert "immutable" in chunk.headers["cache-control"]
     per_second, mins, maxes = read(chunk.content)
-    # A millisecond a bucket: 2 s is 2000.
-    assert per_second == 1000 and len(mins) == 2000
+    # A millisecond a bucket: 2 s is 2000 (an AAC frame, 21 ms, more with some ffmpeg builds).
+    assert per_second == 1000 and 2000 <= len(mins) <= 2025
     assert all(low <= 0 for low in mins) and all(high >= 0 for high in maxes)
     # A 440 Hz tone peaks up and down in every 10 ms (four periods) near its amplitude, an eighth of
     # full scale (127): about 16, away from the encoder's ramps at either end.
@@ -78,7 +78,7 @@ def test_a_song_has_a_chunk_of_peaks_per_30_seconds(client, settings, files):
         chunk = client.get(f"/api/media/{song['id']}/peaks/v1/{start}.peaks")
         assert chunk.status_code == 200, start
         counts.append(len(read(chunk.content)[1]))
-    assert counts == [30000, 30000, 5000]
+    assert counts[:2] == [30000, 30000] and 5000 <= counts[2] <= 5025
 
     # Off the grid, past the end, before the start.
     for start in (15, 90, -30):

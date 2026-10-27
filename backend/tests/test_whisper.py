@@ -1,14 +1,20 @@
 import multiprocessing
 import subprocess
+import sys
 import wave
 from pathlib import Path
 
-import mlx_whisper
 import numpy as np
 import pytest
 
 from app.config import TranscriptionTuning, load_settings
 from app.transcriber import TranscriptionStalled, Watchdog, WhisperTranscriber
+
+# The speech is made with the Mac's `say`, and the model compared with is mlx-whisper.
+if sys.platform != "darwin":
+    pytest.skip("needs macOS: `say` and mlx-whisper", allow_module_level=True)
+
+import mlx_whisper  # noqa: E402
 
 SENTENCE = "The quick brown fox jumps over the lazy dog."
 
