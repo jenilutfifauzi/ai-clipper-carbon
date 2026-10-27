@@ -1188,7 +1188,7 @@ def test_a_cue_placed_and_scaled_alone_is_burned_at_its_place_and_the_next_at_th
     candidate = patch(client, job, candidate, cue_edits=[{"at": first["key"]["at"], "x": 360, "y": 600, "scale": 1.5}])
     assert candidate["cue_edits"] == [{
         "at": first["key"]["at"], "media": None, "shift": 0.0, "start_delta": 0.0, "end_delta": 0.0,
-        "x": 360, "y": 600, "scale": 1.5, "join": False,
+        "x": 360, "y": 600, "scale": 1.5, "join": False, "template": None,
     }]
     plan = preview(client, job, candidate)["plan"]
     moved, after = plan["captions"][:2]

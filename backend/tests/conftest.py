@@ -246,18 +246,16 @@ def wait_for_status(client) -> Callable[..., dict]:
     return lambda job_id, *statuses, timeout=5: wait_for(client, job_id, *statuses, timeout=timeout)
 
 
-# Off the Mac these are known to differ with the ffmpeg that distros ship (6.1 on Ubuntu 24.04; the Mac's is
-# newer): pixel values a few levels off (a PNG's range, a blend or a grade), a frame more or fewer in a
-# retimed copy, and render-time budgets set on a faster machine. xfail, not skip, so that a host where they
-# pass says so (non-strict).
+# Off the Mac these fail here, and are xfail (not skip, and non-strict, so that a host where they pass says
+# so). Checked with ffmpeg 7.0.2 (.scratch/linux-host/issues/05): the segment-background colour passes with it,
+# so that one is the distro ffmpeg 6.1's; the others still fail there and their cause is not found.
 LINUX_KNOWN_DIFFERENCES = {
-    "test_overlay_blend_modes.py::test_a_half_transparent_multiply_overlay_counts_the_frame_beneath_once": "blend rounding",
-    "test_overlay_grades.py::test_an_overlays_grade_changes_its_picture_but_not_its_border_nor_the_segment_under_it": "grade rounding",
-    "test_segment_backgrounds.py::test_an_image_of_another_aspect_covers_the_frame_behind_a_cut_out_segment": "a PNG's colour range",
-    "test_background_removal.py::test_a_cut_out_segment_under_a_transition_keeps_its_timing": "a frame more in a transition",
-    "test_render.py::test_a_cue_placed_and_scaled_alone_is_burned_at_its_place_and_the_next_at_the_styles": "libass rendering",
-    "test_retimed_copies.py::test_at_4x_the_render_shows_the_same_frames_as_the_preview_copy": "frames of a retimed copy",
-    "test_reversed_source_segments.py::test_a_split_scene_renders_both_panels_backwards_and_in_step_from_the_sources_copy": "frames of a reversed copy",
+    "test_overlay_blend_modes.py::test_a_half_transparent_multiply_overlay_counts_the_frame_beneath_once": "a colour 4.02 levels off a bound of 4 (also with ffmpeg 7.0.2)",
+    "test_overlay_grades.py::test_an_overlays_grade_changes_its_picture_but_not_its_border_nor_the_segment_under_it": "a graded red half 88.9 against a bound of 87.5 (also with ffmpeg 7.0.2)",
+    "test_segment_backgrounds.py::test_an_image_of_another_aspect_covers_the_frame_behind_a_cut_out_segment": "a PNG's colour range (ffmpeg 6.1; passes with 7.0.2)",
+    "test_background_removal.py::test_a_cut_out_segment_under_a_transition_keeps_its_timing": "a frame more in a transition (unexplained; also with ffmpeg 7.0.2)",
+    "test_retimed_copies.py::test_at_4x_the_render_shows_the_same_frames_as_the_preview_copy": "a frame off in a retimed copy (unexplained; also with ffmpeg 7.0.2)",
+    "test_reversed_source_segments.py::test_a_split_scene_renders_both_panels_backwards_and_in_step_from_the_sources_copy": "uneven frame spacing in a reversed copy (unexplained; also with ffmpeg 7.0.2)",
     "test_transitions.py::test_a_join_of_each_new_look_renders_within_its_budget_of_a_fade": "a render-time budget",
     "test_resilience.py::test_other_jobs_run_while_a_job_waits_for_quota": "timing on a loaded host",
     "test_resilience.py::test_quota_errors_that_go_on_too_long_put_the_job_in_error": "timing on a loaded host",
@@ -270,4 +268,4 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         reason = LINUX_KNOWN_DIFFERENCES.get(f"{item.path.name}::{item.name}")
         if reason:
-            item.add_marker(pytest.mark.xfail(reason=f"known difference off the Mac, with the distro's ffmpeg: {reason}", strict=False))
+            item.add_marker(pytest.mark.xfail(reason=f"fails off the Mac: {reason}", strict=False))
