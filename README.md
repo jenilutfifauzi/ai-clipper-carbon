@@ -41,8 +41,7 @@ SVT-AV1) and Background removal runs on the CPU. Expect slower renders than a Ma
   needs about 2 GB; measured on 4 CPU cores it reads about 10 s of speech in 36 s. For a lighter host set
   `WHISPER_MODEL=Systran/faster-whisper-small` in `.env` (about 1.1 GB, 8 s for the same speech, with
   more mistakes). The server itself idles at about 260 MB; the model is loaded only while transcribing.
-- **Port 8000** busy? `make dev` serves the backend there; stop the other service, or run uvicorn on
-  another port with `uv --directory backend run uvicorn --factory app.main:create_app --port 8765`.
+- **Port 8000** busy? `make dev BACKEND_PORT=8765` serves the backend there (and Vite proxies to it).
 - Leave `WHISPER_MODEL` and `FFMPEG_BIN` empty in `.env` (as `.env.example` lists the Mac's paths).
 - Known differences from the Mac, with Ubuntu's ffmpeg 6.1: a few tests whose pixel values or frame
   counts differ are marked `xfail` off the Mac (`tests/conftest.py`).

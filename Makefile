@@ -1,5 +1,7 @@
 UV := uv --directory backend
 NPM := npm --prefix frontend
+# The backend's port for `make dev`; the frontend proxies to it. Set it when 8000 is taken: make dev BACKEND_PORT=8765
+BACKEND_PORT ?= 8000
 ifeq ($(shell uname -s),Darwin)
 FFMPEG_FULL := /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg
 INSTALL_HINT := brew install ffmpeg-full deno
@@ -37,8 +39,8 @@ check-ffmpeg:
 # (http://localhost:5173, which proxies /api and /media to the backend) together. Ctrl-C stops both.
 dev:
 	@trap 'kill 0' INT TERM; \
-	$(UV) run uvicorn --factory app.main:create_app --reload & \
-	$(NPM) run dev & \
+	BACKEND_ORIGIN=http://127.0.0.1:$(BACKEND_PORT) $(UV) run uvicorn --factory app.main:create_app --port $(BACKEND_PORT) --reload & \
+	BACKEND_PORT=$(BACKEND_PORT) $(NPM) run dev & \
 	wait
 
 # Build the frontend into frontend/dist. The backend serves it at http://127.0.0.1:8000 when it exists.
