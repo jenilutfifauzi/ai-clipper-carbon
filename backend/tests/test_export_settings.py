@@ -10,6 +10,7 @@ from pydantic import TypeAdapter, ValidationError
 from app.canvas import PORTRAIT
 from app.config import RenderTuning
 from app.encoding import (
+    MAX_RATE_FACTOR,
     Bitrate,
     Codec,
     ExportSettings,
@@ -161,6 +162,11 @@ def encode(
     return Renderer(settings.ffmpeg_bin, tuning).render(source, plan, video, tmp_path / "clip.jpg", export=export), video
 
 
+# The first encoder tried: the Mac's VideoToolbox, or libx264 / libx265 where there is none.
+H264_ENCODER = RenderTuning().encoders[0]
+HEVC_ENCODER = RenderTuning().hevc_encoders[0]
+
+
 def picture(settings, video: Path) -> dict:
     """The MP4's video stream, as ffprobe sees it."""
     [stream] = [s for s in probe(settings, video)["streams"] if s["codec_type"] == "video"]
@@ -169,9 +175,17 @@ def picture(settings, video: Path) -> dict:
 
 def test_an_hevc_clip_is_tagged_hvc1_so_that_quicktime_plays_it(settings, busy_video, tmp_path):
     encoded, video = encode(settings, busy_video, tmp_path, ExportSettings(Codec.HEVC), secs=1)
-    assert encoded == Encoded("hevc_videotoolbox", False)
+    assert encoded == Encoded(HEVC_ENCODER, False)
     stream = picture(settings, video)
     assert (stream["codec_name"], stream["codec_tag_string"], stream["width"], stream["height"]) == ("hevc", "hvc1", 1080, 1920)
+
+
+def assert_near_target(settings, video: Path, target: float) -> None:
+    """VideoToolbox encodes at the target; the software encoders at a constant quality under a cap of 1.5x it."""
+    if H264_ENCODER == "h264_videotoolbox":
+        assert video_kbps(settings, video) == pytest.approx(target, rel=0.2)
+    else:
+        assert 0 < video_kbps(settings, video) <= target * MAX_RATE_FACTOR * 1.1
 
 
 def video_kbps(settings, video: Path) -> float:
@@ -179,28 +193,28 @@ def video_kbps(settings, video: Path) -> float:
     return int(picture(settings, video)["bit_rate"]) / 1000
 
 
-def test_the_default_settings_encode_h264_at_8_mbps_and_14_lufs_on_videotoolbox(settings, busy_video, tmp_path):
+def test_the_default_settings_encode_h264_at_8_mbps_and_14_lufs_on_the_default_encoder(settings, busy_video, tmp_path):
     encoded, video = encode(settings, busy_video, tmp_path, ExportSettings())
-    assert encoded == Encoded("h264_videotoolbox", False)
+    assert encoded == Encoded(H264_ENCODER, False)
     stream = picture(settings, video)
     assert (stream["codec_name"], stream["profile"], stream["width"], stream["height"]) == ("h264", "High", 1080, 1920)
-    assert video_kbps(settings, video) == pytest.approx(8_000, rel=0.2)
+    assert_near_target(settings, video, 8_000)
     assert loudness(settings, video) == pytest.approx(-14, abs=1)
 
 
 def test_a_tiers_bitrate_is_scaled_by_its_codec(settings, busy_video, tmp_path):
     _, video = encode(settings, busy_video, tmp_path, ExportSettings(Codec.HEVC, quality=Quality.SMALLEST))
-    assert video_kbps(settings, video) == pytest.approx(2_400, rel=0.2)
+    assert_near_target(settings, video, 2_400)
 
 
-def test_a_cbr_bitrate_is_held_by_libx264_and_falls_back_to_vbr_on_videotoolbox(settings, busy_video, tmp_path):
+def test_a_cbr_bitrate_is_held_by_libx264_and_falls_back_to_vbr_on_the_default_encoder(settings, busy_video, tmp_path):
     cbr = ExportSettings(bitrate=Bitrate(RateMode.CBR, 3_000))
     encoded, video = encode(settings, busy_video, tmp_path, cbr, RenderTuning(encoders=("libx264",)))
     assert encoded == Encoded("libx264", False)
     assert video_kbps(settings, video) == pytest.approx(3_000, rel=0.1)
 
     encoded, video = encode(settings, busy_video, tmp_path, cbr)
-    assert encoded == Encoded("h264_videotoolbox", True)
+    assert encoded == Encoded(H264_ENCODER, H264_ENCODER == "h264_videotoolbox")
     assert video_kbps(settings, video) == pytest.approx(3_000, rel=0.2)
 
 

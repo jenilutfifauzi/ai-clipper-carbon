@@ -1,6 +1,8 @@
 """Settings from the environment, falling back to the repo-root `.env` file."""
 
 import os
+import shutil
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -40,8 +42,14 @@ DEFAULT_LLM_BASE_URL = "https://api.deepseek.com"
 # Where `make dev` serves the backend (Makefile).
 DEFAULT_BACKEND_ORIGIN = "http://127.0.0.1:8000"
 DEFAULT_LLM_MODEL = "deepseek-flash"
-DEFAULT_WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
-DEFAULT_FFMPEG_BIN = "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg"
+# The Mac runs Whisper on MLX; Linux runs faster-whisper (CTranslate2) on the CPU, in int8.
+MAC = sys.platform == "darwin"
+DEFAULT_WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo" if MAC else "deepdml/faster-whisper-large-v3-turbo-ct2"
+# ffmpeg-full is keg-only on the Mac. Elsewhere the first ffmpeg on PATH, which must have libass.
+DEFAULT_FFMPEG_BIN = "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg" if MAC else (shutil.which("ffmpeg") or "ffmpeg")
+# Hardware encoders are the Mac's VideoToolbox; Linux encodes in software.
+_H264 = ("h264_videotoolbox", "libx264") if MAC else ("libx264",)
+_HEVC = ("hevc_videotoolbox", "libx265") if MAC else ("libx265",)
 DEEPSEEK_HOST = "api.deepseek.com"
 # QuotaTuning.request_interval_secs by LLM_PROVIDER, unless LLM_REQUEST_INTERVAL_SECS is set: under 5
 # requests a minute for Gemini's free tier, its per-minute limit for each model; DeepSeek limits only
@@ -183,8 +191,8 @@ class RenderTuning:
 
     # Each codec's encoders, tried in order: an encode that fails (VideoToolbox can be unavailable, say
     # over SSH or in a VM) is run again with the next. `encoders` are H.264's.
-    encoders: tuple[str, ...] = ("h264_videotoolbox", "libx264")
-    hevc_encoders: tuple[str, ...] = ("hevc_videotoolbox", "libx265")
+    encoders: tuple[str, ...] = _H264
+    hevc_encoders: tuple[str, ...] = _HEVC
     # No Mac encodes AV1 in hardware.
     av1_encoders: tuple[str, ...] = ("libsvtav1",)
     # A keyframe at least this often, so that players seek quickly.
@@ -214,7 +222,7 @@ class PreviewTuning:
     read from the environment."""
 
     # Tried in order, as RenderTuning.encoders.
-    encoders: tuple[str, ...] = ("h264_videotoolbox", "libx264")
+    encoders: tuple[str, ...] = _H264
     # The proxy's shorter side, at most (a 1920x1080 master gives 1280x720); a smaller master keeps its size.
     short_side: int = 720
     bitrate: str = "2M"

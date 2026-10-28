@@ -1,9 +1,10 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from dotenv import dotenv_values
 
-from app.config import REPO_ROOT, LlmChoice, load_settings
+from app.config import DEFAULT_FFMPEG_BIN, DEFAULT_WHISPER_MODEL, REPO_ROOT, LlmChoice, load_settings
 
 KEYS = (
     "LLM_PROVIDER",
@@ -49,9 +50,9 @@ def test_defaults_without_env_file(tmp_path):
     assert settings.llm_thinking is False
     assert settings.quota.request_interval_secs == 13
     assert settings.llm == LlmChoice("gemini", "gemini-3.8-flash")
-    assert settings.whisper_model == "mlx-community/whisper-large-v3-turbo"
-    assert settings.ffmpeg_bin == Path("/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg")
-    assert settings.ffprobe_bin == Path("/opt/homebrew/opt/ffmpeg-full/bin/ffprobe")
+    assert settings.whisper_model == DEFAULT_WHISPER_MODEL
+    assert settings.ffmpeg_bin == Path(DEFAULT_FFMPEG_BIN)
+    assert settings.ffprobe_bin == Path(DEFAULT_FFMPEG_BIN).with_name("ffprobe")
     assert settings.data_dir == REPO_ROOT / "data"
     assert settings.ytdlp_cookies_from_browser is None
     assert settings.selection_audio_signal is False
@@ -164,7 +165,9 @@ def test_env_example_lists_every_key_with_the_defaults(tmp_path):
     example = REPO_ROOT / ".env.example"
 
     assert set(dotenv_values(example)) == set(KEYS)
-    assert load_settings(env_file=example) == load_settings(env_file=tmp_path / ".env")
+    # The example lists the Mac's Whisper model and ffmpeg; the defaults are the host's own.
+    listed = replace(load_settings(env_file=example), whisper_model=DEFAULT_WHISPER_MODEL, ffmpeg_bin=Path(DEFAULT_FFMPEG_BIN))
+    assert listed == load_settings(env_file=tmp_path / ".env")
 
 
 @pytest.mark.parametrize(("value", "style"), [("true", True), ("off", False), ("", None)])

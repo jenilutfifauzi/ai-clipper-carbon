@@ -86,7 +86,8 @@ def test_speed_and_pitch_are_saved_and_one_past_its_video_or_on_an_image_is_refu
     still = {"id": "i", "media": image["id"], "start": 0, "secs": 1}
     for overlays, message in (
         # 1 + 5 × 2 = 11 s of a 10 s video.
-        ([sped | {"secs": 5}], "Overlay o runs past the end of its video (10 s) at 2x"),
+        # The video is 10 s, or a frame of AAC more with some ffmpeg builds.
+        ([sped | {"secs": 5}], "Overlay o runs past the end of its video (10"),
         ([sped | {"speed": 17}], "less than or equal to 16"),
         ([still | {"speed": 2}], "Overlay i is an image: it has no Speed, pitch or Reverse"),
         ([still | {"pitch": True}], "Overlay i is an image: it has no Speed, pitch or Reverse"),

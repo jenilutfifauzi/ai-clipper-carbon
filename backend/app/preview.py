@@ -146,6 +146,8 @@ def _run(command: list[str], duration: float, progress: Callable[[float], None])
                 progress(min(1.0, int(value) / 1e6 / duration))
         process.wait()
         if process.returncode == 0:
+            # The last out_time can fall short of the duration, by a frame or by an audio packet's priming.
+            progress(1.0)
             return None
         errors.seek(0)
         return errors.read().decode(errors="replace").strip() or f"exit code {process.returncode}"

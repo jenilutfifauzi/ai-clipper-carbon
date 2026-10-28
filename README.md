@@ -14,7 +14,7 @@ and Reference Set) and one file per ticket are in `.scratch/ai-clipper-v1/`.
 
 ## Prerequisites
 
-- **A Mac with Apple Silicon.** Whisper runs on MLX, and Clips are encoded with VideoToolbox.
+- **A Mac with Apple Silicon, or a [Linux host](#linux).** On the Mac, Whisper runs on MLX, and Clips are encoded with VideoToolbox.
   8 GB of memory is enough (see [Memory on an 8 GB Mac](#memory-on-an-8-gb-mac)).
 - **Homebrew packages:** `brew install ffmpeg-full deno`
   - `ffmpeg-full`, not `ffmpeg`. The standard formula has had no libass (burned captions) since
@@ -24,6 +24,29 @@ and Reference Set) and one file per ticket are in `.scratch/ai-clipper-v1/`.
 - **[uv](https://docs.astral.sh/uv/getting-started/installation/)** for Python. It installs
   Python 3.12 itself.
 - **Node.js 22** (22.12 or later; 20.19+ also works) with npm, for the frontend.
+
+### Linux
+
+A Linux host (x86-64 or arm64) works too, with no Mac-only parts: Whisper runs on the CPU through
+faster-whisper (int8, about 1.5 GB of memory), Clips are encoded in software (libx264, libx265,
+SVT-AV1) and Background removal runs on the CPU. Expect slower renders than a Mac's VideoToolbox.
+
+- **ffmpeg** with libass and scdet on `PATH` (or `FFMPEG_BIN` in `.env`). Ubuntu's `apt install ffmpeg`
+  has both. Without root, `apt-get download ffmpeg` and `dpkg -x` it into `~/.local`, then link
+  `ffmpeg` and `ffprobe` into `~/.local/bin`.
+- **deno** for yt-dlp: `npm install -g deno`, or https://deno.com.
+- **uv** and **Node.js 22**, as above. `make setup` fetches the faster-whisper model
+  (`deepdml/faster-whisper-large-v3-turbo-ct2`, about 1.6 GB) instead of the MLX one.
+- **Whisper's size.** The default `deepdml/faster-whisper-large-v3-turbo-ct2` is the most accurate and
+  needs about 2 GB; measured on 4 CPU cores it reads about 10 s of speech in 36 s. For a lighter host set
+  `WHISPER_MODEL=Systran/faster-whisper-small` in `.env` (about 1.1 GB, 8 s for the same speech, with
+  more mistakes). The server itself idles at about 260 MB; the model is loaded only while transcribing.
+- **Port 8000** busy? `make dev BACKEND_PORT=8765` serves the backend there (and Vite proxies to it).
+- Leave `WHISPER_MODEL` and `FFMPEG_BIN` empty in `.env` (as `.env.example` lists the Mac's paths).
+- Known differences from the Mac, with Ubuntu's ffmpeg 6.1: a few tests whose pixel values or frame
+  counts differ are marked `xfail` off the Mac (`tests/conftest.py`).
+- Tests need `espeak-ng` (`apt install espeak-ng`) for the speech fixture. The mlx Whisper tests are
+  skipped.
 
 ## Setup
 

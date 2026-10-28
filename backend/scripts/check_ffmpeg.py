@@ -18,7 +18,8 @@ FILTERS = (
     "atempo", "asetrate", "aresample", "aformat", "asetpts", "asetnsamples", "atrim", "apad", "areverse",
     "afade", "adelay", "acrossfade", "amix", "volume", "anullsrc", "loudnorm",
 )
-ENCODERS = ("h264_videotoolbox",)
+# The Mac wants its hardware encoder; elsewhere libx264 is the one that is tried.
+ENCODERS = ("h264_videotoolbox",) if sys.platform == "darwin" else ("libx264",)
 
 
 def listed(ffmpeg: Path, option: str) -> set[str]:
@@ -31,7 +32,7 @@ def main() -> int:
     settings = load_settings()
     ffmpeg = settings.ffmpeg_bin
     if not ffmpeg.is_file():
-        print(f"FAIL  ffmpeg not found at {ffmpeg} (brew install ffmpeg-full, or set FFMPEG_BIN)")
+        print(f"FAIL  ffmpeg not found at {ffmpeg} (install ffmpeg with libass, or set FFMPEG_BIN)")
         return 1
 
     filters = listed(ffmpeg, "-filters")

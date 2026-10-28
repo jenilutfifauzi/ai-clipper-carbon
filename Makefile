@@ -1,6 +1,14 @@
 UV := uv --directory backend
 NPM := npm --prefix frontend
+# The backend's port for `make dev`; the frontend proxies to it. Set it when 8000 is taken: make dev BACKEND_PORT=8765
+BACKEND_PORT ?= 8000
+ifeq ($(shell uname -s),Darwin)
 FFMPEG_FULL := /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg
+INSTALL_HINT := brew install ffmpeg-full deno
+else
+FFMPEG_FULL := $(or $(FFMPEG_BIN),$(shell command -v ffmpeg))
+INSTALL_HINT := a static ffmpeg build with libass (e.g. BtbN's GPL build) on PATH or FFMPEG_BIN, and deno (https://deno.com)
+endif
 
 .PHONY: setup prerequisites check-ffmpeg dev build test test-whisper analyze reanalyze retry render eval gate update-ytdlp
 
@@ -18,12 +26,12 @@ prerequisites:
 	[ -x "$(FFMPEG_FULL)" ] || missing="$$missing ffmpeg-full"; \
 	command -v deno >/dev/null || missing="$$missing deno"; \
 	if [ -n "$$missing" ]; then \
-		echo "Missing Homebrew packages:$$missing"; \
-		echo "Install them with: brew install ffmpeg-full deno"; \
+		echo "Missing:$$missing"; \
+		echo "Install: $(INSTALL_HINT)"; \
 		exit 1; \
 	fi
 
-# Report whether the configured ffmpeg has the ass and scdet filters and h264_videotoolbox.
+# Report whether the configured ffmpeg has the ass and scdet filters and an H.264 encoder (VideoToolbox on the Mac, libx264 elsewhere).
 check-ffmpeg:
 	@$(UV) run python scripts/check_ffmpeg.py
 
@@ -31,8 +39,8 @@ check-ffmpeg:
 # (http://localhost:5173, which proxies /api and /media to the backend) together. Ctrl-C stops both.
 dev:
 	@trap 'kill 0' INT TERM; \
-	$(UV) run uvicorn --factory app.main:create_app --reload & \
-	$(NPM) run dev & \
+	BACKEND_ORIGIN=http://127.0.0.1:$(BACKEND_PORT) $(UV) run uvicorn --factory app.main:create_app --port $(BACKEND_PORT) --reload & \
+	BACKEND_PORT=$(BACKEND_PORT) $(NPM) run dev & \
 	wait
 
 # Build the frontend into frontend/dist. The backend serves it at http://127.0.0.1:8000 when it exists.

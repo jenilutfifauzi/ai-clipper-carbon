@@ -301,6 +301,8 @@ class NarrationRunner:
                 raise Cancelled
             self._send(narration, "progress", {"stage": name, "done": done, "of": len(read)})
 
+        # The end is sent once the Narration's slot is free again, so that whoever sees it can start the next.
+        ending: tuple[str, Any] = ("cancelled", {})
         try:
             folder.mkdir(parents=True, exist_ok=True)
             stage(LOADING, 0)
@@ -316,16 +318,17 @@ class NarrationRunner:
             with narrated.open("rb") as file:
                 item = self.media.add(file, name)
         except Cancelled:
-            self._send(narration, "cancelled", {})
+            ending = ("cancelled", {})
         except SpeechError as exc:
-            self._send(narration, "failed", {"message": str(exc)})
+            ending = ("failed", {"message": str(exc)})
         except Exception as exc:  # noqa: BLE001 - told to the owner, not lost in a thread
-            self._send(narration, "failed", {"message": f"The Narration couldn't be made: {exc}"})
+            ending = ("failed", {"message": f"The Narration couldn't be made: {exc}"})
         else:
-            self._send(narration, "done", item)
+            ending = ("done", item)
         finally:
             shutil.rmtree(folder, ignore_errors=True)
             self._busy.release()
+        self._send(narration, *ending)
 
     def _read_all(
         self,

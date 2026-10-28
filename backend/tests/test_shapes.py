@@ -138,7 +138,7 @@ def test_shapes_are_saved_on_the_candidate_with_their_defaults_and_bad_ones_are_
             "kind": "rectangle", "width": 400, "height": 400, "fill": "#FFFFFF", "stroke_colour": "#000000", "stroke_width": 0,
             "radius": 0.0, "shadow": {"colour": "#000000", "opacity": 0.6, "blur": 0.0, "distance": 0.0, "angle": 45.0},
         },
-        "animation_in": "none", "animation_out": "none", "animation_ms": 300, "keys": {},
+        "animation_in": "none", "animation_out": "none", "animation_ms": 300, "keys": {}, "template": None,
     }
     [part] = client.get(f"{candidate_url(job, candidate)}/revisions").json()["revisions"][0]["parts"]
     assert part == "Shapes"
