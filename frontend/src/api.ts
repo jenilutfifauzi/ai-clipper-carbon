@@ -2206,6 +2206,19 @@ export interface AgentTurnRequest {
   tab: string;
   // The Agent Thread it goes to; else the newest.
   thread?: string;
+  // What goes with the prompt, at most 6.
+  attachments?: AgentAttachment[];
+}
+
+// An Agent Attachment as a turn request sends it (backend/app/agent/attachments.py): a text file's
+// text, at most 50 KB.
+export type AgentAttachment = { kind: "text"; name: string; text: string };
+
+// What the chat keeps of an Agent Attachment, for its chip: an image's id names its picture.
+export interface AgentSentAttachment {
+  kind: string;
+  name: string;
+  id?: string | null;
 }
 
 // One chat of a Candidate with the Agent (backend/app/agent/transcript_store.py).
@@ -2222,7 +2235,16 @@ export type AgentStop = "end_turn" | "step_limit" | "cancelled" | "error";
 
 // What an Agent Turn tells the editor as it runs, on agentEventsUrl.
 export type AgentEvent =
-  | { type: "turn_started"; turn: string; tab: string; thread: string; provider: string; model: string | null; prompt: string }
+  | {
+      type: "turn_started";
+      turn: string;
+      tab: string;
+      thread: string;
+      provider: string;
+      model: string | null;
+      prompt: string;
+      attachments?: AgentSentAttachment[];
+    }
   | { type: "text"; turn: string; delta: string }
   | { type: "thought"; turn: string; delta: string }
   // `tool` comes without any `mcp__…__` prefix. `input` and `output` are JSON or text, cut to 4096
@@ -2283,6 +2305,8 @@ export interface AgentTranscriptTurn {
   provider: string;
   model: string | null;
   prompt: string;
+  // None in a chat kept before Agent Attachments.
+  attachments?: AgentSentAttachment[];
   parts: AgentTurnPart[];
   first_revision: number | null;
   last_revision: number | null;

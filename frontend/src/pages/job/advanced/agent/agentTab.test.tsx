@@ -5,7 +5,7 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { AgentProviderListing, AgentUi, Candidate } from "../../../../api";
-import { AgentTab } from "./AgentTab";
+import { AgentTab, turnRequest } from "./AgentTab";
 import { transcriptText } from "./ChatHeader";
 import { ToolGroup } from "./ToolGroup";
 import { prettyJson, toolLabel, ToolRow, type ToolPart } from "./ToolRow";
@@ -77,6 +77,47 @@ describe("ToolRow", () => {
   test("a failed call shows its message", () => {
     const html = renderToStaticMarkup(<ToolRow part={{ type: "tool", call: "c1", tool: "edit_candidate", summary: "", ok: false, error: "No Segment s9", revision: null }} />);
     expect(html).toContain("No Segment s9");
+  });
+});
+
+// .scratch/agent-attachments/issues/01: what goes with a message, and its chips in the chat.
+describe("Agent Attachments", () => {
+  test("the turn sent carries the message's attachments, and none when it has none", () => {
+    const brief = { kind: "text" as const, name: "brief.md", text: "Short hooks only." };
+    expect(turnRequest({ provider: "deepseek", model: "deepseek-chat", prompt: "Follow it", thread: "th1", attachments: [brief] })).toEqual({
+      provider: "deepseek",
+      model: "deepseek-chat",
+      prompt: "Follow it",
+      tab: expect.any(String),
+      thread: "th1",
+      attachments: [brief],
+    });
+    expect(turnRequest({ provider: "deepseek", model: null, prompt: "Hi", thread: null, attachments: [] })).toEqual({ provider: "deepseek", prompt: "Hi", tab: expect.any(String) });
+  });
+
+  test("the owner's bubble shows the turn's attachments as chips, without a ×", () => {
+    const html = renderToStaticMarkup(
+      <TurnView
+        turn={{
+          id: "t1",
+          tab: null,
+          thread: null,
+          provider: "deepseek",
+          model: null,
+          prompt: "Follow the brief",
+          attachments: [{ kind: "text", name: "brief.md", id: null }],
+          parts: [],
+          stop: "end_turn",
+          first_revision: null,
+          last_revision: null,
+          error: null,
+        }}
+      />,
+    );
+    expect(html).toContain("brief.md");
+    expect(html.indexOf("brief.md")).toBeLessThan(html.indexOf("Follow the brief"));
+    expect(html).toContain("lucide-file-text");
+    expect(html).not.toContain("Remove brief.md");
   });
 });
 

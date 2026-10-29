@@ -82,7 +82,7 @@ def test_a_turn_launches_the_agent_with_the_scoped_server_and_the_system_prompt(
     turn = sent.json()["turn"]
     received = until_finished(stream)
     assert received == [
-        ("turn_started", {"type": "turn_started", "turn": turn, "tab": "tab-a", "thread": ANY, "provider": "claude-code", "model": None, "prompt": "Tighten the pauses"}),
+        ("turn_started", {"type": "turn_started", "turn": turn, "tab": "tab-a", "thread": ANY, "provider": "claude-code", "model": None, "prompt": "Tighten the pauses", "attachments": []}),
         ("text", {"type": "text", "turn": turn, "delta": "Done."}),
         ("turn_finished", {"type": "turn_finished", "turn": turn, "stop": "end_turn", "first_revision": None, "last_revision": None}),
     ]

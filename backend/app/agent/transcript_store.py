@@ -12,6 +12,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+from app.agent.attachments import SentAttachment
 from app.agent.events import AgentEvent, Stop, TextDelta, ThoughtDelta, ToolFinished, ToolStarted
 from app.agent.ui_spec import is_show_ui, parsed
 from app.storage import write_atomic
@@ -74,6 +75,8 @@ class TranscriptTurn(BaseModel):
     provider: str
     model: str | None
     prompt: str
+    # What went with the prompt: none in a transcript from before Agent Attachments.
+    attachments: list[SentAttachment] = Field(default_factory=list)
     parts: list[TurnPart] = Field(default_factory=list)
     first_revision: int | None = None
     last_revision: int | None = None

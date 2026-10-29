@@ -90,4 +90,4 @@ def test_turn_started_names_the_prompt(served, chat, job):
 
     _, started = until_finished(stream)[0]
 
-    assert started == {"type": "turn_started", "turn": turn, "tab": "tab-a", "thread": ANY, "provider": "deepseek", "model": "deepseek-chat", "prompt": "Say hello"}
+    assert started == {"type": "turn_started", "turn": turn, "tab": "tab-a", "thread": ANY, "provider": "deepseek", "model": "deepseek-chat", "prompt": "Say hello", "attachments": []}

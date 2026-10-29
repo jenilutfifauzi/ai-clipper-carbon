@@ -1,6 +1,6 @@
 import { ArrowDown } from "lucide-react";
 import { useContext, useEffect, useRef, useState } from "react";
-import { api, TAB_ID, type AgentProviderListing, type Candidate } from "../../../../api";
+import { api, TAB_ID, type AgentAttachment, type AgentProviderListing, type AgentTurnRequest, type Candidate } from "../../../../api";
 import { rememberedValue } from "../../../../remembered";
 import type { AgentTurnView } from "./agentStream";
 import { ChatHeader } from "./ChatHeader";
@@ -20,6 +20,30 @@ export const rememberedAgentChoice = rememberedValue<{ provider: string; model: 
 
 // What the empty chat offers to send.
 export const EXAMPLE_PROMPTS = ["Add a title over the first three seconds", "Tighten the pauses between sentences", "Make the captions bigger and yellow"];
+
+/** The turn request this tab sends: a model, a Thread and attachments only when there are. */
+export function turnRequest({
+  provider,
+  model,
+  prompt,
+  thread,
+  attachments,
+}: {
+  provider: string;
+  model: string | null;
+  prompt: string;
+  thread: string | null;
+  attachments: AgentAttachment[];
+}): AgentTurnRequest {
+  return {
+    provider,
+    ...(model ? { model } : {}),
+    prompt,
+    tab: TAB_ID,
+    ...(thread ? { thread } : {}),
+    ...(attachments.length > 0 ? { attachments } : {}),
+  };
+}
 
 /** The provider to show: the one last chosen while it is listed, else the first ready, else the first. */
 export function chosenListing(listings: AgentProviderListing[], chosen: string | null): AgentProviderListing | null {
@@ -64,8 +88,8 @@ export function AgentTab({
   const [setupOpen, setSetupOpen] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  // The message last sent, for "Try again" when it couldn't be.
-  const [lastPrompt, setLastPrompt] = useState<string | null>(null);
+  // The message last sent and what went with it, for "Try again" when it couldn't be.
+  const [lastSent, setLastSent] = useState<{ prompt: string; attachments: AgentAttachment[] } | null>(null);
   // The choices the owner closed with Escape or ✕, by their call: still answerable from their card.
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
   const root = useRef<HTMLDivElement>(null);
@@ -99,21 +123,19 @@ export function AgentTab({
   };
 
   // Whether it was sent: the composer then empties.
-  async function send(prompt: string): Promise<boolean> {
+  async function send(prompt: string, attachments: AgentAttachment[] = []): Promise<boolean> {
     if (!listing || busy) return false;
-    setLastPrompt(prompt);
+    setLastSent({ prompt, attachments });
     setSending(true);
     setSendError(null);
     try {
-      const thread = threads?.active?.id;
-      const turn = await api.sendAgentTurn(jobId, candidateId, {
-        provider: listing.provider.id,
-        ...(model ? { model } : {}),
+      const thread = threads?.active?.id ?? null;
+      const turn = await api.sendAgentTurn(jobId, candidateId, turnRequest({ provider: listing.provider.id, model, prompt, thread, attachments }));
+      stream.prompted(
+        turn,
         prompt,
-        tab: TAB_ID,
-        ...(thread ? { thread } : {}),
-      });
-      stream.prompted(turn, prompt);
+        attachments.map(({ kind, name }) => ({ kind, name })),
+      );
       return true;
     } catch (reason) {
       setSendError(reason instanceof Error ? reason.message : "Couldn't send it");
@@ -144,11 +166,11 @@ export function AgentTab({
             <ProviderSetup listing={listing} onSaved={saved} />
           </div>
         ) : (
-          <Transcript turns={stream.state.turns} onExample={send} onUndo={onUndo} />
+          <Transcript turns={stream.state.turns} onExample={(prompt) => void send(prompt)} onUndo={onUndo} />
         )}
         {!settingUp && error && (
           <div className="shrink-0 px-3 pb-2">
-            <ErrorNote error={error} onRetry={sendError && lastPrompt && !busy ? () => void send(lastPrompt) : undefined} />
+            <ErrorNote error={error} onRetry={sendError && lastSent && !busy ? () => void send(lastSent.prompt, lastSent.attachments) : undefined} />
           </div>
         )}
         {!settingUp && popup && (

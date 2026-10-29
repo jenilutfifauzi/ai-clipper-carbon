@@ -6,13 +6,13 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] GLOSSARY gains **Agent Attachment** under Agent Mode; the agent-chat-ui and agent-mode specs' "no image buttons / image attachments out of scope" lines point to this spec
-- [ ] The turn request accepts `attachments` (discriminated on `kind`, at most 6); `text` items over 50 KB are refused with 422; a request without `attachments` works as before
-- [ ] A new backend module resolves attachments into context text placed before the prompt the driver sees; the stored prompt stays the owner's text
-- [ ] Agent Turn records keep `attachments` (`kind`, `name`); transcripts without it still load; the transcript API returns them
-- [ ] Composer: a `Plus` ghost icon button first in the toolbar, labelled "Add to message", opens a `Menu` (useMenu) with **Add text file**; a hidden file input; a chip row above the textarea with × per chip; inline error for a file too big or not text; attachments cleared on successful send, kept on failure; limit of 6 told inline
-- [ ] The Agent tab sends `attachments` with `sendAgentTurn`; the owner's bubble shows the turn's chips
-- [ ] Tests at the agreed seams: `/turns` with a fake driver recording the context; transcript round-trip; composer test (menu, chip, remove, error, payload); Agent tab test (payload, bubble chips)
-- [ ] Only the feature's tests run; `npm run typecheck` passes
+- [x] GLOSSARY gains **Agent Attachment** under Agent Mode; the agent-chat-ui and agent-mode specs' "no image buttons / image attachments out of scope" lines point to this spec
+- [x] The turn request accepts `attachments` (discriminated on `kind`, at most 6); `text` items over 50 KB are refused with 422; a request without `attachments` works as before
+- [x] A new backend module resolves attachments into context text placed before the prompt the driver sees; the stored prompt stays the owner's text
+- [x] Agent Turn records keep `attachments` (`kind`, `name`); transcripts without it still load; the transcript API returns them
+- [x] Composer: a `Plus` ghost icon button first in the toolbar, labelled "Add to message", opens a `Menu` (useMenu) with **Add text file**; a hidden file input; a chip row above the textarea with × per chip; inline error for a file too big or not text; attachments cleared on successful send, kept on failure; limit of 6 told inline
+- [x] The Agent tab sends `attachments` with `sendAgentTurn`; the owner's bubble shows the turn's chips
+- [x] Tests at the agreed seams: `/turns` with a fake driver recording the context; transcript round-trip; composer test (menu, chip, remove, error, payload); Agent tab test (payload, bubble chips)
+- [x] Only the feature's tests run; `npm run typecheck` passes

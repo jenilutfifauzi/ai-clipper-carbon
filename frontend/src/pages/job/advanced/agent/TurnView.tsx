@@ -12,6 +12,7 @@ import { StatusLine } from "./StatusLine";
 import { ToolGroup } from "./ToolGroup";
 import type { ToolPart } from "./ToolRow";
 import { AgentUiContext, GenerativeUi } from "./ui/GenerativeUi";
+import { AttachmentChips } from "./AttachmentChips";
 
 // How a turn that didn't simply finish ended, under it.
 const STOPPED: Partial<Record<AgentStop, string>> = {
@@ -76,7 +77,8 @@ export const TurnView = memo(function TurnView({
   return (
     <div className="flex flex-col gap-2">
       {turn.prompt && (
-        <div className="flex justify-end">
+        <div className="flex flex-col items-end gap-1.5">
+          <AttachmentChips attachments={turn.attachments ?? []} className="max-w-[85%] justify-end" />
           <p className="raised max-w-[85%] rounded-xl rounded-br-md px-3 py-2 text-sm text-pretty break-words whitespace-pre-wrap text-text">
             {turn.prompt}
           </p>

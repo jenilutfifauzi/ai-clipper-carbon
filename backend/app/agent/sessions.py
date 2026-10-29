@@ -18,6 +18,7 @@ from app.agent.api_anthropic import run_anthropic_turn
 from app.agent.api_chat import run_chat_turn
 from app.agent.api_gemini import run_gemini_turn
 from app.agent.api_loop import HISTORY_TURNS
+from app.agent.attachments import ResolvedAttachments
 from app.agent.credentials import Credential
 from app.agent.driver import ChatMessage, Driver, ScopedEndpoint, TurnContext
 from app.agent.events import AgentError, AgentEvent, AgentFeed, Stop, ToolFinished, TurnFinished, TurnStarted, topic
@@ -34,6 +35,8 @@ SessionKey = tuple[str, str, str]
 ACP_DRIVEN = ("claude-code", "codex", "gemini-cli", "antigravity")
 # Where each Agent Session's ACP agent runs: an empty folder of its own under DATA_DIR.
 SANDBOX_DIR = Path("agent") / "sandbox"
+# A message sent with nothing attached.
+NOTHING_ATTACHED = ResolvedAttachments()
 
 
 class TurnRunning(Exception):
@@ -132,10 +135,12 @@ class AgentSessionManager:
         credential: Credential | None,
         prompt: str,
         thread: str,
+        attached: ResolvedAttachments = NOTHING_ATTACHED,
     ) -> str:
         """Start a turn of the tab's session (opened now if it isn't) in Agent Thread `thread`, and
         return its id. Raises TurnRunning while the session runs one, and ValueError for a provider that
-        can't run one. Sent to another Thread than its last, the session's ACP agent is closed, so that
+        can't run one. `attached` goes to the Agent before the prompt; the Thread keeps the prompt alone.
+        Sent to another Thread than its last, the session's ACP agent is closed, so that
         the next starts without the other Thread's conversation."""
         # Off the loop: finding its command may read its `--help` once.
         command = await asyncio.to_thread(acp_command, provider) if isinstance(provider, AcpProvider) else None
@@ -151,7 +156,7 @@ class AgentSessionManager:
             driver = (await self._acp_agent(session, provider, command)).run_turn
         session.provider, session.model, session.credential = provider, model, credential
         session.turn = secrets.token_hex(6)
-        session.task = asyncio.create_task(self._run(session, session.turn, driver, prompt))
+        session.task = asyncio.create_task(self._run(session, session.turn, driver, prompt, attached))
         return session.turn
 
     async def cancel(self, job_id: str, candidate_id: str, tab: str) -> bool:
@@ -218,7 +223,7 @@ class AgentSessionManager:
         session.acp = AcpAgent(provider, command, sandbox)
         return session.acp
 
-    async def _run(self, session: AgentSession, turn: str, driver: Driver, prompt: str) -> None:
+    async def _run(self, session: AgentSession, turn: str, driver: Driver, prompt: str, attached: ResolvedAttachments) -> None:
         """Run the turn to its end, whatever ends it, and keep it in its Thread."""
         name = topic(session.job_id, session.candidate_id)
         started_at = datetime.now(UTC)
@@ -238,9 +243,10 @@ class AgentSessionManager:
 
         self._scopes.set_turn(session.token, turn)
         thread = session.thread
-        publish(TurnStarted(turn=turn, tab=session.tab, thread=thread, provider=session.provider.id, model=model, prompt=prompt))
+        publish(TurnStarted(turn=turn, tab=session.tab, thread=thread, provider=session.provider.id, model=model, prompt=prompt,
+                            attachments=attached.sent))
         try:
-            context = await self._context(session, thread, turn, model, prompt)
+            context = await self._context(session, thread, turn, model, attached.prompt(prompt))
             async for event in driver(context):
                 if isinstance(event, TurnFinished):
                     stop = event.stop
@@ -263,7 +269,7 @@ class AgentSessionManager:
             self._scopes.set_turn(session.token, None)
         first, last = (revisions[0], revisions[-1]) if revisions else (None, None)
         record = TranscriptTurn(
-            id=turn, provider=session.provider.id, model=model, prompt=prompt, parts=parts,
+            id=turn, provider=session.provider.id, model=model, prompt=prompt, attachments=attached.sent, parts=parts,
             first_revision=first, last_revision=last, stop=stop, started_at=started_at,
         )
         # Kept before it is announced, so that whoever hears it finished can Revert it at once.

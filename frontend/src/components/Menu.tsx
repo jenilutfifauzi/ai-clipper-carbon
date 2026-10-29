@@ -6,11 +6,11 @@ const EDGE_PX = 8;
 
 /**
  * A menu opened from a button: a popover in the top layer, so that a scrolling panel doesn't clip
- * it, placed under the button (its right edge at the button's) or above it when there is no room,
- * kept in the window. Light dismiss and Escape close it. Give `buttonRef` and the `aria-expanded`
+ * it, placed under the button (its right edge at the button's; its left edge, with `align: "start"`)
+ * or above it when there is no room, kept in the window. Light dismiss and Escape close it. Give `buttonRef` and the `aria-expanded`
  * (`open`) to the button that `toggle`s it, and `menuRef` to its <Menu>.
  */
-export function useMenu() {
+export function useMenu({ align = "end" }: { align?: "start" | "end" } = {}) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -31,12 +31,13 @@ export function useMenu() {
     const element = menu.current;
     if (!anchor || !element) return;
     element.showPopover();
-    const left = Math.min(Math.max(anchor.right - element.offsetWidth, EDGE_PX), window.innerWidth - element.offsetWidth - EDGE_PX);
+    const wanted = align === "start" ? anchor.left : anchor.right - element.offsetWidth;
+    const left = Math.min(Math.max(wanted, EDGE_PX), window.innerWidth - element.offsetWidth - EDGE_PX);
     const below = anchor.bottom + GAP_PX;
     const top = below + element.offsetHeight > window.innerHeight - EDGE_PX ? anchor.top - GAP_PX - element.offsetHeight : below;
     element.style.left = `${left}px`;
     element.style.top = `${Math.max(EDGE_PX, top)}px`;
-  }, []);
+  }, [align]);
   const hide = useCallback(() => {
     if (menu.current?.matches(":popover-open")) menu.current.hidePopover();
   }, []);

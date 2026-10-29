@@ -2,8 +2,9 @@
 // agreed. No jsdom: the markup is checked with renderToStaticMarkup.
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import type { AgentProviderListing, AgentUi } from "../../../../api";
+import type { AgentAttachment, AgentProviderListing, AgentUi } from "../../../../api";
 import type { AgentTurnView } from "./agentStream";
+import { attachTextFiles, MAX_ATTACHMENTS } from "./attachments";
 import { ChatHeader } from "./ChatHeader";
 import { Composer } from "./Composer";
 import { TurnView } from "./TurnView";
@@ -24,7 +25,7 @@ const deepseek: AgentProviderListing = {
   status: { id: "deepseek", ready: true, installed: null, command: null, version: null, login: null, has_key: true, key_source: "saved", base_url: null, model: null },
 };
 
-const composer = (change: { running?: boolean } = {}) =>
+const composer = (change: { running?: boolean; attachments?: AgentAttachment[] } = {}) =>
   renderToStaticMarkup(
     <Composer
       providers={[deepseek]}
@@ -39,6 +40,7 @@ const composer = (change: { running?: boolean } = {}) =>
       running={change.running ?? false}
       onSend={async () => true}
       onStop={() => {}}
+      defaultAttachments={change.attachments}
     />,
   );
 
@@ -82,6 +84,76 @@ describe("Composer", () => {
     expect(area).toContain('aria-label="Message the Agent"');
     expect(area).toMatch(/\btext-base\b/);
     expect(button(form, "Send")).toContain('type="submit"');
+  });
+});
+
+// .scratch/agent-attachments/issues/01: the + menu and text-file Agent Attachments.
+describe("the composer's attachments", () => {
+  const brief: AgentAttachment = { kind: "text", name: "brief.md", text: "Short hooks only." };
+  const button = (html: string, label: string) => html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? "";
+
+  test("a + first in the toolbar, labelled Add to message, opens a menu offering a text file", () => {
+    const html = composer();
+    const plus = button(html, "Add to message");
+    expect(plus).toContain('aria-haspopup="menu"');
+    expect(html.indexOf('aria-label="Add to message"')).toBeLessThan(html.indexOf('title="Provider"'));
+    expect(html).toContain("lucide-plus");
+    const menu = html.match(/<div[^>]*role="menu"[\s\S]*?<\/div>/)?.[0] ?? "";
+    expect(menu).toContain('aria-label="Add to message"');
+    expect(menu).toMatch(/role="menuitem"[^>]*>.*Add text file/s);
+  });
+
+  test("a hidden file input takes several text files of the kinds the Agent reads", () => {
+    const input = composer().match(/<input[^>]*type="file"[^>]*>/)?.[0] ?? "";
+    expect(input).toContain('accept=".txt,.md,.srt,.vtt,.json,.csv"');
+    expect(input).toContain("multiple");
+    expect(input).toMatch(/\bhidden\b/);
+  });
+
+  test("attached files are chips above the message box, each with a ×; none, no chip row", () => {
+    const html = composer({ attachments: [brief, { ...brief, name: "style.txt" }] });
+    expect(html.indexOf("brief.md")).toBeGreaterThan(-1);
+    expect(html.indexOf("brief.md")).toBeLessThan(html.indexOf("<textarea"));
+    expect(html.indexOf("style.txt")).toBeLessThan(html.indexOf("<textarea"));
+    expect(button(html, "Remove brief.md")).toContain('type="button"');
+    expect(button(html, "Remove style.txt")).not.toBe("");
+    expect(composer()).not.toContain("data-attachments");
+  });
+
+  test("a message still needs words: Send stays off with only a file", () => {
+    expect(button(composer({ attachments: [brief] }), "Send")).toMatch(/ disabled=""/);
+  });
+
+  const file = (name: string, text: BlobPart) => new File([text], name);
+
+  test("a text file is attached as its name and text", async () => {
+    const added = await attachTextFiles([], [file("brief.md", "Short hooks only."), file("subs.SRT", "1\n00:00 --> 00:01\nHi")]);
+    expect(added).toEqual({
+      attached: [
+        { kind: "text", name: "brief.md", text: "Short hooks only." },
+        { kind: "text", name: "subs.SRT", text: "1\n00:00 --> 00:01\nHi" },
+      ],
+      error: null,
+    });
+  });
+
+  test("a file too big or not text isn't attached, and says why; the others are", async () => {
+    const big = await attachTextFiles([brief], [file("huge.txt", "x".repeat(50 * 1024 + 1)), file("ok.txt", "fine")]);
+    expect(big.attached.map((each) => each.name)).toEqual(["brief.md", "ok.txt"]);
+    expect(big.error).toBe("huge.txt is over 50 KB.");
+
+    const pdf = await attachTextFiles([], [file("deck.pdf", "%PDF")]);
+    expect(pdf).toEqual({ attached: [], error: "deck.pdf isn't a text file: attach a .txt, .md, .srt, .vtt, .json or .csv." });
+
+    const binary = await attachTextFiles([], [file("data.json", new Uint8Array([0x7b, 0, 0x7d]))]);
+    expect(binary.error).toBe("data.json isn't a text file: attach a .txt, .md, .srt, .vtt, .json or .csv.");
+  });
+
+  test(`at most ${MAX_ATTACHMENTS} go with a message, told when there are more`, async () => {
+    const five = Array.from({ length: 5 }, (_, n) => ({ ...brief, name: `${n}.md` }));
+    const added = await attachTextFiles(five, [file("a.md", "a"), file("b.md", "b")]);
+    expect(added.attached.map((each) => each.name)).toEqual(["0.md", "1.md", "2.md", "3.md", "4.md", "a.md"]);
+    expect(added.error).toBe(`At most ${MAX_ATTACHMENTS} attachments go with a message.`);
   });
 });
 

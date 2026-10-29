@@ -148,7 +148,7 @@ def test_a_turn_streams_its_tool_call_and_answer_and_its_revisions_name_it(serve
     received = until_finished(stream)
     assert [name for name, _ in received] == ["turn_started", "tool_started", "tool_finished", "text", "turn_finished"]
     started, tool_started, tool_finished, text, finished = (data for _, data in received)
-    assert started == {"type": "turn_started", "turn": turn, "tab": "tab-a", "thread": ANY, "provider": "deepseek", "model": "deepseek-chat", "prompt": "Set the hook"}
+    assert started == {"type": "turn_started", "turn": turn, "tab": "tab-a", "thread": ANY, "provider": "deepseek", "model": "deepseek-chat", "prompt": "Set the hook", "attachments": []}
     # The card's input is the arguments as the model wrote them, its output the result's text.
     arguments = json.dumps(ids | {"changes": {"hook_text": "Agent hook"}})
     assert tool_started == {"type": "tool_started", "turn": turn, "call": "call-0", "tool": "edit_candidate", "summary": "sets hook_text", "input": arguments}
