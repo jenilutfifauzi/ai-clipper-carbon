@@ -5,6 +5,7 @@ import { rememberedValue } from "../../../../remembered";
 import type { AgentTurnView } from "./agentStream";
 import { ChatHeader } from "./ChatHeader";
 import { ChoicePopup } from "./ChoicePopup";
+import { ErrorNote } from "./ErrorNote";
 import { openChoices } from "./choices";
 import { Composer } from "./Composer";
 import { PresenceContext } from "./presence";
@@ -63,6 +64,8 @@ export function AgentTab({
   const [setupOpen, setSetupOpen] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  // The message last sent, for "Try again" when it couldn't be.
+  const [lastPrompt, setLastPrompt] = useState<string | null>(null);
   // The choices the owner closed with Escape or ✕, by their call: still answerable from their card.
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
   const root = useRef<HTMLDivElement>(null);
@@ -98,6 +101,7 @@ export function AgentTab({
   // Whether it was sent: the composer then empties.
   async function send(prompt: string): Promise<boolean> {
     if (!listing || busy) return false;
+    setLastPrompt(prompt);
     setSending(true);
     setSendError(null);
     try {
@@ -126,9 +130,9 @@ export function AgentTab({
   }
   const settingUp = !listing.status.ready || setupOpen;
   const error = sendError ?? stream.state.error ?? threads?.error ?? null;
-  const host: AgentUiHost = { jobId, candidate, busy, choose: (prompt) => void send(prompt) };
   const open = busy ? null : openChoices(stream.state.turns);
   const popup = open && !dismissed.has(open.call) ? open : null;
+  const host: AgentUiHost = { jobId, candidate, busy, choose: (prompt) => void send(prompt), popup: popup?.call ?? null };
   // The pop up gone, the focus it held goes back to the message box.
   const backToComposer = () => root.current?.querySelector<HTMLTextAreaElement>("[data-composer] textarea")?.focus();
   return (
@@ -142,7 +146,11 @@ export function AgentTab({
         ) : (
           <Transcript turns={stream.state.turns} onExample={send} onUndo={onUndo} />
         )}
-        {!settingUp && error && <p className="shrink-0 px-3 pb-2 text-sm text-danger">{error}</p>}
+        {!settingUp && error && (
+          <div className="shrink-0 px-3 pb-2">
+            <ErrorNote error={error} onRetry={sendError && lastPrompt && !busy ? () => void send(lastPrompt) : undefined} />
+          </div>
+        )}
         {!settingUp && popup && (
           <ChoicePopup
             key={popup.call}
@@ -235,13 +243,15 @@ function Transcript({ turns, onExample, onUndo }: { turns: AgentTurnView[]; onEx
         ))}
       </div>
       {scrolledUp && (
+        // A small round button, so it covers as little of the turn under it as it can.
         <button
           type="button"
           onClick={jump}
-          className="glass absolute right-3 bottom-3 flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-text focus-visible:outline-2 focus-visible:outline-focus"
+          aria-label="Jump to latest"
+          title="Jump to latest"
+          className="glass absolute right-2 bottom-2 flex size-7 items-center justify-center rounded-full text-text focus-visible:outline-2 focus-visible:outline-focus"
         >
-          <ArrowDown aria-hidden size={13} />
-          Jump to latest
+          <ArrowDown aria-hidden size={14} />
         </button>
       )}
     </div>

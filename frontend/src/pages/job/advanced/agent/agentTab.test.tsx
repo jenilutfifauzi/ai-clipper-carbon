@@ -69,7 +69,7 @@ describe("ToolRow", () => {
     const html = renderToStaticMarkup(
       <ToolRow part={{ type: "tool", call: "c1", tool: "mcp__ai-clipper__edit_candidate", summary: "Title at 0s", ok: true, error: null, revision: 3 }} />,
     );
-    expect(html).toContain("edit candidate");
+    expect(html).toContain("Edited the Candidate");
     expect(html).not.toContain("mcp__");
     expect(html).toContain("Title at 0s");
   });
@@ -124,19 +124,19 @@ describe("TurnView", () => {
     ...change,
   });
 
-  test("a finished turn that saved Revisions offers Revert and Restore", () => {
+  test("a finished turn that saved Revisions offers Undo and Redo", () => {
     const html = renderToStaticMarkup(<TurnView turn={turn({})} onUndo={async () => {}} />);
-    expect(html).toContain("Revert");
-    expect(html).toContain("Restore");
+    expect(html).toContain(">Undo<");
+    expect(html).toContain(">Redo<");
   });
 
-  test("no Revert or Restore on a running turn, one that saved nothing, or without a handler", () => {
+  test("no Undo or Redo on a running turn, one that saved nothing, or without a handler", () => {
     for (const html of [
       renderToStaticMarkup(<TurnView turn={turn({ stop: null })} onUndo={async () => {}} />),
       renderToStaticMarkup(<TurnView turn={turn({ first_revision: null, last_revision: null })} onUndo={async () => {}} />),
       renderToStaticMarkup(<TurnView turn={turn({})} />),
     ]) {
-      expect(html).not.toContain("Revert");
+      expect(html).not.toContain(">Undo<");
     }
   });
 });
@@ -212,7 +212,7 @@ describe("tool cards", () => {
     const five = renderToStaticMarkup(
       <ToolGroup parts={[call("c1"), call("c2", { ok: false, error: "x", tool: "get_candidate" }), call("c3"), call("c4"), call("c5")]} />,
     );
-    expect(five).toMatch(/<details data-tool-group="".*4 steps.*edit candidate · get candidate · edit candidate · edit candidate.*1 failed/s);
+    expect(five).toMatch(/<details data-tool-group="".*4 steps.*Edited the Candidate · Couldn&#x27;t read the Candidate.*1 failed/s);
     expect(five).toContain('aria-label="4 steps, 1 failed"');
     expect(five.match(/data-tool-row/g)).toHaveLength(5);
     // The latest card comes after the folded ones.
@@ -306,7 +306,7 @@ describe("Agent UI", () => {
 
   test("clicking a choice sends its prompt", () => {
     const sent: string[] = [];
-    const card = ChoicesCard({ ui: choices as Extract<AgentUi, { kind: "choices" }>, nextPrompt: null, host: host({ choose: (prompt) => sent.push(prompt) }) });
+    const card = ChoicesCard({ call: "c1", ui: choices as Extract<AgentUi, { kind: "choices" }>, nextPrompt: null, host: host({ choose: (prompt) => sent.push(prompt) }) });
     const [short, long] = buttons(card);
     expect([short.props.disabled, long.props.disabled]).toEqual([false, false]);
     long.props.onClick();
@@ -315,8 +315,8 @@ describe("Agent UI", () => {
 
   test("the options are disabled while a turn runs and once the Thread goes on, the one sent marked chosen", () => {
     const ui = choices as Extract<AgentUi, { kind: "choices" }>;
-    expect(buttons(ChoicesCard({ ui, nextPrompt: null, host: host({ busy: true }) })).every((button) => button.props.disabled)).toBe(true);
-    expect(buttons(ChoicesCard({ ui, nextPrompt: "Something else", host: host() })).every((button) => button.props.disabled)).toBe(true);
+    expect(buttons(ChoicesCard({ call: "c1", ui, nextPrompt: null, host: host({ busy: true }) })).every((button) => button.props.disabled)).toBe(true);
+    expect(buttons(ChoicesCard({ call: "c1", ui, nextPrompt: "Something else", host: host() })).every((button) => button.props.disabled)).toBe(true);
 
     // In the chat: the turn after it sent the short one's prompt.
     const html = renderToStaticMarkup(
@@ -332,7 +332,7 @@ describe("Agent UI", () => {
   });
 
   test("an unknown kind renders nothing", () => {
-    expect(renderToStaticMarkup(<GenerativeUi ui={{ kind: "chart" } as unknown as AgentUi} nextPrompt={null} />)).toBe("");
+    expect(renderToStaticMarkup(<GenerativeUi call="c1" ui={{ kind: "chart" } as unknown as AgentUi} nextPrompt={null} />)).toBe("");
   });
 
   test("an Agent UI breaks a run of tool calls and is never folded into N steps", () => {
@@ -345,12 +345,13 @@ describe("Agent UI", () => {
   });
 
   test("a table, labelled values and a callout with its Markdown body and checklist", () => {
-    const table = renderToStaticMarkup(<GenerativeUi ui={{ kind: "table", columns: ["Part", "Secs"], rows: [["Intro", 3.5]] }} nextPrompt={null} />);
+    const table = renderToStaticMarkup(<GenerativeUi call="c1" ui={{ kind: "table", columns: ["Part", "Secs"], rows: [["Intro", 3.5]] }} nextPrompt={null} />);
     expect(table).toMatch(/<th[^>]*>Part<\/th>.*<td[^>]*>3.5<\/td>/s);
-    const values = renderToStaticMarkup(<GenerativeUi ui={{ kind: "key_values", items: [{ label: "Length", value: 42 }] }} nextPrompt={null} />);
+    const values = renderToStaticMarkup(<GenerativeUi call="c1" ui={{ kind: "key_values", items: [{ label: "Length", value: 42 }] }} nextPrompt={null} />);
     expect(values).toMatch(/<dt[^>]*>Length<\/dt><dd[^>]*>42<\/dd>/);
     const callout = renderToStaticMarkup(
       <GenerativeUi
+        call="c1"
         ui={{ kind: "callout", tone: "danger", title: "Too long", body: "Cut **two** seconds.", checklist: [{ text: "Trim the end", done: true }] }}
         nextPrompt={null}
       />,
@@ -376,7 +377,7 @@ describe("Agent UI", () => {
     } as unknown as Candidate;
     const html = renderToStaticMarkup(
       <AgentUiContext.Provider value={host({ candidate: { value: candidate, name: "Why we ship" } })}>
-        <GenerativeUi ui={{ kind: "candidate", note: "Hook moved up", frame: "/data/jobs/j1/exports/c1-00.03.00.png" }} nextPrompt={null} />
+        <GenerativeUi call="c1" ui={{ kind: "candidate", note: "Hook moved up", frame: "/data/jobs/j1/exports/c1-00.03.00.png" }} nextPrompt={null} />
       </AgentUiContext.Provider>,
     );
     expect(html).toContain("Why we ship");
@@ -386,6 +387,6 @@ describe("Agent UI", () => {
     expect(html).toContain('src="/media/j1/exports/c1-00.03.00.png"');
     expect(frameUrl("j1", "/elsewhere/c1.png")).toBeNull();
     // Without a Candidate to show (outside the Advanced Edit), nothing.
-    expect(renderToStaticMarkup(<GenerativeUi ui={{ kind: "candidate" }} nextPrompt={null} />)).toBe("");
+    expect(renderToStaticMarkup(<GenerativeUi call="c1" ui={{ kind: "candidate" }} nextPrompt={null} />)).toBe("");
   });
 });

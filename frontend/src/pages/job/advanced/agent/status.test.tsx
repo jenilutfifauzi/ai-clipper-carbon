@@ -23,7 +23,7 @@ const tool = (name: string, ok: boolean | null): ToolPart => ({ type: "tool", ca
 
 describe("agentStatus", () => {
   test.each([
-    ["nothing yet", [], "Working…"],
+    ["nothing yet", [], "Starting…"],
     ["a thought streaming", [{ type: "thought", text: "Hmm" }], "Thinking…"],
     ["text streaming", [{ type: "text", text: "Here" }], "Writing…"],
     ["a call running", [tool("edit_candidate", null)], "Editing the Candidate…"],

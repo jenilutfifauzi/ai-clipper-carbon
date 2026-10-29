@@ -9,16 +9,28 @@ import type { AgentUiHost } from "./GenerativeUi";
  * Alternatives the Agent offers, one button each: a click sends its prompt as the owner's next
  * message. They are locked while a turn is on its way and once the Thread has gone on; the one whose
  * prompt the next turn sent is marked chosen. Locked too without a chat to send them (`host`).
+ * While they are open in the pop up above the composer (`host.popup` is its `call`), the card folds
+ * to its title, so the decision isn't shown twice.
  */
 export function ChoicesCard({
+  call,
   ui,
   nextPrompt,
   host,
 }: {
+  call: string;
   ui: Extract<AgentUi, { kind: "choices" }>;
   nextPrompt: string | null;
   host: AgentUiHost | null;
 }) {
+  if (host?.popup && host.popup === call) {
+    return (
+      <div data-agent-ui="choices" className="flex items-center gap-2 px-1 text-sm">
+        <span className="min-w-0 flex-1 truncate font-medium">{ui.title ?? "Choose one"}</span>
+        <span className="shrink-0 text-xs text-muted">Answer below ↓</span>
+      </div>
+    );
+  }
   const locked = !host || host.busy || nextPrompt !== null;
   return (
     <div data-agent-ui="choices" className="flex flex-col gap-1.5">

@@ -1,5 +1,5 @@
 import { ArrowUp, Bot, ChevronDown, Settings2, Square } from "lucide-react";
-import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { AgentProviderListing } from "../../../../api";
 import { Button } from "../../../../components/Button";
 import { useMenu } from "../../../../components/Menu";
@@ -12,7 +12,8 @@ import { ThinkingOrb } from "./ThinkingOrb";
 const MAX_HEIGHT_PX = 160;
 
 /**
- * The chat's framed message box: Enter sends, Shift+Enter breaks the line; under it a toolbar with
+ * The chat's framed message box: Enter sends, Shift+Enter breaks the line, Esc (or ⌘. anywhere)
+ * stops a running turn; under it a toolbar with
  * the Provider pill, then the Model pill (each opening its picker), the provider's setup and Send, or Stop
  * while a turn runs. Its text is its own state. While the provider is being set up (`setup`) it is
  * only the toolbar, so that another provider can still be picked.
@@ -61,10 +62,29 @@ export function Composer({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    if (event.nativeEvent.isComposing) return;
+    // Esc in the message box stops a running turn.
+    if (event.key === "Escape" && running) {
+      event.preventDefault();
+      onStop();
+      return;
+    }
+    if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
     void send();
   };
+
+  // ⌘. (Ctrl+. elsewhere) stops a running turn from anywhere in the editor.
+  useEffect(() => {
+    if (!running) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "." || !(event.metaKey || event.ctrlKey)) return;
+      event.preventDefault();
+      onStop();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [running, onStop]);
 
   return (
     <div data-composer={setup ? undefined : ""} className="shrink-0 px-3 pt-1 pb-3">
@@ -73,13 +93,13 @@ export function Composer({
           event.preventDefault();
           void send();
         }}
-        className="rounded-2xl border border-border bg-fill shadow-sm transition-colors focus-within:border-text/25"
+        className="rounded-2xl border border-border bg-fill shadow-sm transition-colors focus-within:border-text/50"
       >
         {!setup && (
           <textarea
             ref={area}
             aria-label="Message the Agent"
-            rows={2}
+            rows={1}
             value={text}
             placeholder="Describe a change…"
             onChange={(event) => setText(event.target.value)}
@@ -116,12 +136,11 @@ export function Composer({
             </Button>
           )}
           {setup ? null : running ? (
-            // The orb turns while the Agent works (open-design's); pointed at or focused, it gives way
-            // to the square that says what a click does.
-            <Button variant="secondary" size="icon-round" className="group/stop" aria-label="Stop" title="Stop" onClick={onStop}>
-              <span className="grid place-items-center *:[grid-area:1/1] *:motion-safe:transition-opacity *:motion-safe:duration-150">
-                <ThinkingOrb size={18} className="group-hover/stop:opacity-0 group-focus-visible/stop:opacity-0" />
-                <Square aria-hidden size={10} className="fill-current opacity-0 group-hover/stop:opacity-100 group-focus-visible/stop:opacity-100" />
+            // The square says what a click does; the orb turns small behind it while the Agent works.
+            <Button variant="secondary" size="icon-round" aria-label="Stop" title="Stop (Esc)" onClick={onStop}>
+              <span className="grid place-items-center *:[grid-area:1/1]">
+                <ThinkingOrb size={20} className="opacity-70" />
+                <Square aria-hidden size={9} className="relative fill-current" />
               </span>
             </Button>
           ) : (

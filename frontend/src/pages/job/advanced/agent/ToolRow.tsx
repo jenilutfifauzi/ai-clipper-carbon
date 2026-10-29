@@ -2,6 +2,7 @@ import { Check, ChevronDown, LoaderCircle, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import type { AgentTurnPart } from "../../../../api";
 import { cx } from "../../../../format";
+import { cleanError, toolSummary, toolTitle } from "./status";
 
 export type ToolPart = Extract<AgentTurnPart, { type: "tool" }>;
 
@@ -24,8 +25,8 @@ export function prettyJson(text: string): string {
 }
 
 /**
- * One tool call of an Agent Turn, as a card: a status dot (a spinner while it runs, then a check, or
- * a warning), its name and summary. It opens to show what the call was given and gave back, Output
+ * One tool call of an Agent Turn, as a quiet row: a status dot (a spinner while it runs, then a
+ * check, or a warning), what it did in the editor's words and its summary (toolTitle, toolSummary). It opens to show what the call was given and gave back, Output
  * first when there is one, and its error. A failed call starts open; one with nothing to show can't open.
  */
 export function ToolRow({ part }: { part: ToolPart }) {
@@ -38,13 +39,14 @@ export function ToolRow({ part }: { part: ToolPart }) {
   const detail = chosenDetail && details.includes(chosenDetail) ? chosenDetail : details.includes("output") ? "output" : details[0];
   const state = part.ok === null ? "Running" : part.ok ? "Done" : "Failed";
   const StatusIcon = part.ok === null ? LoaderCircle : part.ok ? Check : TriangleAlert;
+  const summary = toolSummary(part.summary);
   return (
-    <div data-tool-row="" className="rounded-lg border border-border bg-fill">
+    <div data-tool-row="" className="rounded-md">
       <button
         type="button"
         disabled={!expandable}
         aria-expanded={expandable ? open : undefined}
-        className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left enabled:cursor-pointer enabled:hover:bg-fill"
+        className="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left enabled:cursor-pointer enabled:hover:bg-fill"
         onClick={() => setOpen(!open)}
       >
         <span
@@ -57,15 +59,17 @@ export function ToolRow({ part }: { part: ToolPart }) {
         >
           <StatusIcon aria-hidden size={12} className={part.ok === null ? "motion-safe:animate-spin" : undefined} />
         </span>
-        <span className="shrink-0 text-xs font-medium">{toolLabel(part.tool)}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted">{part.summary}</span>
+        <span className="shrink-0 text-xs font-medium">{toolTitle(part)}</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted" title={summary || undefined}>
+          {summary}
+        </span>
         {expandable && (
           <ChevronDown aria-hidden size={12} className={cx("shrink-0 text-muted motion-safe:transition-transform", open && "rotate-180")} />
         )}
       </button>
       {open && (
-        <div className="flex flex-col gap-2 border-t border-border px-2 py-2">
-          {part.error && <p className="text-xs text-pretty break-words text-danger">{part.error}</p>}
+        <div className="ml-3.5 flex flex-col gap-2 border-l border-border py-1.5 pr-1.5 pl-3">
+          {part.error && <p className="text-xs text-pretty break-words text-danger">{cleanError(part.error)}</p>}
           {details.length > 1 && <DetailSwitch value={detail} onChange={setDetail} />}
           {detail && (
             <pre aria-label={detail === "input" ? "Input" : "Output"} className="max-h-60 overflow-auto font-mono text-[11px] break-words whitespace-pre-wrap">

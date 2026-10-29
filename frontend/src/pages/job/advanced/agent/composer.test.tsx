@@ -116,7 +116,7 @@ describe("the chat without orange", () => {
     ["the owner's bubble", () => renderToStaticMarkup(<TurnView turn={turn} onUndo={async () => {}} />)],
     [
       "a choice made, with Emphasis",
-      () => renderToStaticMarkup(<ChoicesCard ui={choices} nextPrompt="Use the short hook" host={{ jobId: "j1", candidate: null, busy: false, choose: () => {} }} />),
+      () => renderToStaticMarkup(<ChoicesCard call="c1" ui={choices} nextPrompt="Use the short hook" host={{ jobId: "j1", candidate: null, busy: false, choose: () => {} }} />),
     ],
   ])("%s", (_, html) => {
     expect(html()).not.toMatch(/accent/);

@@ -2,7 +2,7 @@
 
 **Parent spec:** `spec.md`. The critique is `.impeccable/critique/2026-10-29T09-24-20Z__frontend-src-pages-job-advanced-agent.md` (25/40).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Blocked by:** 09
 
@@ -61,5 +61,5 @@
    - `agentStatus` reads "Starting…".
 
 ## Acceptance
-- [ ] The tests at the seams pass. Only `npx vitest run src/pages/job/advanced/agent` and `npx tsc --noEmit` are run.
-- [ ] Checked in the browser, dark and light.
+- [x] The tests at the seams pass (`critique.test.tsx`). Updating the older tests caught a real bug: a card folded when `popup` and its `call` were both missing. Only `npx vitest run src/pages/job/advanced/agent` and `npx tsc --noEmit` are run.
+- [x] Checked in the browser, dark and light, on a live Claude Code turn ("Starting…", Stop's square over the orb). "Jump to latest" became a small round button, so it no longer covers the footer.
