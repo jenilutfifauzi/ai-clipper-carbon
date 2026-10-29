@@ -22,6 +22,15 @@ describe("agentStream", () => {
     expect(loadTranscript([{ ...kept, attachments: undefined }]).turns[0].attachments).toEqual([]);
   });
 
+  // The backend's record of them (an image's id, a clip's name) wins over the tab's own, whichever comes first.
+  test("a turn keeps the attachments turn_started gave it when the tab's prompted comes after", () => {
+    const shot = [{ kind: "image", name: "shot.png", id: "0123456789abcdef" }];
+    const mine = [{ kind: "image", name: "shot.png" }];
+    const withShot = { ...started, attachments: shot } as AgentEvent;
+    expect(fold([withShot, { type: "prompted", turn: "t1", prompt: "Add a title", attachments: mine }]).turns[0].attachments).toEqual(shot);
+    expect(fold([{ type: "prompted", turn: "t1", prompt: "Add a title", attachments: mine }, withShot]).turns[0].attachments).toEqual(shot);
+  });
+
   test("a scripted turn gives one turn with text, a thought, and a tool row that goes from running to done", () => {
     const running = fold([
       started,

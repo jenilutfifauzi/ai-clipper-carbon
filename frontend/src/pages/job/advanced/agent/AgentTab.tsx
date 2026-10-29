@@ -8,7 +8,7 @@ import { ChatHeader } from "./ChatHeader";
 import { ChoicePopup } from "./ChoicePopup";
 import { ErrorNote } from "./ErrorNote";
 import { openChoices } from "./choices";
-import { Composer } from "./Composer";
+import { Composer, type ComposerHandle } from "./Composer";
 import { PresenceContext } from "./presence";
 import { ProviderSetup } from "./ProviderSetup";
 import type { AgentThreads } from "./threads";
@@ -94,8 +94,10 @@ export function AgentTab({
   const [setupOpen, setSetupOpen] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  // The message last sent and what went with it, for "Try again" when it couldn't be.
-  const [lastSent, setLastSent] = useState<{ prompt: string; attachments: DraftAttachment[] } | null>(null);
+  // The message last sent, for "Try again" when it couldn't be: the composer's, which the composer
+  // sends again as it holds it now (and empties once it goes), or a choice's or an example's words.
+  const [lastSent, setLastSent] = useState<"composer" | { prompt: string } | null>(null);
+  const composer = useRef<ComposerHandle>(null);
   // The choices the owner closed with Escape or ✕, by their call: still answerable from their card.
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
   const root = useRef<HTMLDivElement>(null);
@@ -129,9 +131,9 @@ export function AgentTab({
   };
 
   // Whether it was sent: the composer then empties.
-  async function send(prompt: string, attachments: DraftAttachment[] = []): Promise<boolean> {
+  async function send(prompt: string, attachments: DraftAttachment[] = [], from: "composer" | "choice" = "choice"): Promise<boolean> {
     if (!listing || busy) return false;
-    setLastSent({ prompt, attachments });
+    setLastSent(from === "composer" ? "composer" : { prompt });
     setSending(true);
     setSendError(null);
     try {
@@ -178,7 +180,7 @@ export function AgentTab({
         )}
         {!settingUp && error && (
           <div className="shrink-0 px-3 pb-2">
-            <ErrorNote error={error} onRetry={sendError && lastSent && !busy ? () => void send(lastSent.prompt, lastSent.attachments) : undefined} />
+            <ErrorNote error={error} onRetry={sendError && lastSent && !busy ? () => (lastSent === "composer" ? composer.current?.send() : void send(lastSent.prompt)) : undefined} />
           </div>
         )}
         {!settingUp && popup && (
@@ -196,6 +198,7 @@ export function AgentTab({
           />
         )}
         <Composer
+          ref={composer}
           providers={providers}
           listing={listing}
           models={models}
@@ -206,7 +209,7 @@ export function AgentTab({
           onSetup={() => setSetupOpen(!setupOpen)}
           busy={busy}
           running={stream.running !== null}
-          onSend={send}
+          onSend={(prompt, attachments) => send(prompt, attachments, "composer")}
           onStop={stop}
           candidates={others}
         />

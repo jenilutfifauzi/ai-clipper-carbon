@@ -25,14 +25,16 @@ from app.storage import write_atomic
 MAX_ATTACHMENTS = 6
 # A text file's text, in UTF-8 bytes.
 MAX_TEXT_BYTES = 50 * 1024
-# An image, decoded.
-MAX_IMAGE_BYTES = 5 * 1024 * 1024
+# An image's base64, as Anthropic limits it (about 3.75 MB of image); the browser scales a bigger one down.
+MAX_IMAGE_BASE64 = 5 * 1024 * 1024
 # The pictures a model is sent, and the extension each is kept under.
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
 ImageType = Literal["image/png", "image/jpeg", "image/webp", "image/gif"]
 # Where a Job keeps the images sent to its Agent, each as <id>.<extension>.
 IMAGES_DIR = Path("agent") / "attachments"
 IMAGE_ID = re.compile(r"[0-9a-f]{16}")
+# A closing context tag in a block's body, written `<\/context` there instead.
+CLOSING_TAG = re.compile(r"</(?=context)", re.IGNORECASE)
 
 # A referenced Candidate's name: its hook, cut to this many characters.
 MAX_HOOK_NAME = 48
@@ -73,12 +75,12 @@ class ImageAttachment(BaseModel):
     @field_validator("data")
     @classmethod
     def _base64_of_at_most_5_mb(cls, data: str) -> str:
+        if len(data) > MAX_IMAGE_BASE64:
+            raise ValueError(f"is over {MAX_IMAGE_BASE64 // 1024 // 1024} MB of base64")
         try:
-            decoded = base64.b64decode(data, validate=True)
+            base64.b64decode(data, validate=True)
         except binascii.Error as error:
             raise ValueError("isn't base64") from error
-        if len(decoded) > MAX_IMAGE_BYTES:
-            raise ValueError(f"is over {MAX_IMAGE_BYTES // 1024 // 1024} MB")
         return data
 
 
@@ -121,7 +123,8 @@ class ImageInput(BaseModel):
 
 @dataclass(frozen=True)
 class ResolvedAttachments:
-    # The <context> blocks the Agent reads before the prompt; "" when there are none.
+    # The <context> blocks the Agent reads before the prompt; "" when there are none. The Thread keeps
+    # them with the turn, for the history an API provider is sent.
     context: str = ""
     sent: list[SentAttachment] = field(default_factory=list)
     # The images the model sees with the prompt, in the order attached.
@@ -129,7 +132,12 @@ class ResolvedAttachments:
 
     def prompt(self, prompt: str) -> str:
         """What the driver is given as the owner's message: the context, then their words."""
-        return f"{self.context}\n\n{prompt}" if self.context else prompt
+        return with_context(self.context, prompt)
+
+
+def with_context(context: str, prompt: str) -> str:
+    """The owner's message as the Agent reads it: its context blocks, then their words."""
+    return f"{context}\n\n{prompt}" if context else prompt
 
 
 class UnknownCandidate(LookupError):
@@ -184,6 +192,13 @@ def image_path(job_dir: Path, image_id: str) -> tuple[Path, str] | None:
     return None
 
 
+def forget_images(job_dir: Path, sent: Sequence[SentAttachment]) -> None:
+    """Delete the images `resolve` kept for a message that didn't go out."""
+    for attachment in sent:
+        if attachment.id and (found := image_path(job_dir, attachment.id)):
+            found[0].unlink(missing_ok=True)
+
+
 def _keep_image(job_dir: Path, image: ImageAttachment) -> str:
     image_id = secrets.token_hex(8)
     folder = job_dir / IMAGES_DIR
@@ -215,4 +230,6 @@ def _hook_name(hook: str) -> str:
 
 
 def _block(kind: str, name: str, body: str) -> str:
+    """A context block, its body's own closing tags neutralised so that it can't end the block early."""
+    body = CLOSING_TAG.sub(r"<\\/", body)
     return f'<context kind="{kind}" name="{escape(name)}">\n{body}\n</context>'

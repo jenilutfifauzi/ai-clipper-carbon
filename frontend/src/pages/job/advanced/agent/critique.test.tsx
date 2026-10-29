@@ -108,6 +108,7 @@ const deepseek: AgentProviderListing = {
     default_model: "deepseek-chat",
     key_env: ["LLM_API_KEY"],
     docs_url: "https://platform.deepseek.com",
+    sees_images: false,
   },
   status: { id: "deepseek", ready: true, installed: null, command: null, version: null, login: null, has_key: true, key_source: "saved", base_url: null, model: null },
 };

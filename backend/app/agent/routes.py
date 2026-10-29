@@ -12,7 +12,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field, StringConstraints
 
 from app.agent.acp_client import AcpError, AcpExited
-from app.agent.attachments import Attachments, BadAttachments, UnknownCandidate, image_path, resolve
+from app.agent.attachments import Attachments, BadAttachments, ImageAttachment, UnknownCandidate, forget_images, image_path, resolve
 from app.agent.credentials import SavedCredential, credential_for, delete_credential, save_credential
 from app.agent.events import agent_events, topic
 from app.agent.sessions import AgentSessionManager, TurnRunning
@@ -158,6 +158,8 @@ async def send_turn(job_id: str, candidate_id: str, request: TurnRequest, http: 
         model = request.model or credential.model or provider.default_model
         if model is None:
             raise HTTPException(400, f"Choose a model for {provider.label}")
+    if isinstance(provider, ApiProvider) and not provider.sees_images and any(isinstance(a, ImageAttachment) for a in request.attachments):
+        raise HTTPException(400, f"{provider.label} can't see images: send them to an Agent Provider that can, or remove them")
     thread = await _thread(http, job_id, candidate_id, request.thread)
     try:
         attached = await asyncio.to_thread(resolve, http.app.state.store, http.app.state.profiles, job_id, candidate_id, request.attachments)
@@ -167,10 +169,15 @@ async def send_turn(job_id: str, candidate_id: str, request: TurnRequest, http: 
         raise HTTPException(400, str(error)) from error
     try:
         turn = await _sessions(http).send(job_id, candidate_id, request.tab, provider, model, credential, request.prompt, thread, attached)
-    except TurnRunning as error:
-        raise HTTPException(409, str(error)) from error
-    except ValueError as error:
-        raise HTTPException(400, str(error)) from error
+    except BaseException as error:
+        # The message didn't go out: its images aren't kept for a chip that won't show. On the loop, as
+        # the request may be being cancelled; it is a few unlinks at most.
+        forget_images(_job_dir(http, job_id), attached.sent)
+        if isinstance(error, TurnRunning):
+            raise HTTPException(409, str(error)) from error
+        if isinstance(error, ValueError):
+            raise HTTPException(400, str(error)) from error
+        raise
     return TurnAccepted(turn=turn)
 
 

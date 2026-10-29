@@ -18,7 +18,7 @@ from app.agent.api_anthropic import run_anthropic_turn
 from app.agent.api_chat import run_chat_turn
 from app.agent.api_gemini import run_gemini_turn
 from app.agent.api_loop import HISTORY_TURNS
-from app.agent.attachments import ImageInput, ResolvedAttachments
+from app.agent.attachments import ImageInput, ResolvedAttachments, with_context
 from app.agent.credentials import Credential
 from app.agent.driver import ChatMessage, Driver, ScopedEndpoint, TurnContext
 from app.agent.events import AgentError, AgentEvent, AgentFeed, Stop, ToolFinished, TurnFinished, TurnStarted, topic
@@ -139,7 +139,7 @@ class AgentSessionManager:
     ) -> str:
         """Start a turn of the tab's session (opened now if it isn't) in Agent Thread `thread`, and
         return its id. Raises TurnRunning while the session runs one, and ValueError for a provider that
-        can't run one. `attached` goes to the Agent before the prompt; the Thread keeps the prompt alone.
+        can't run one. `attached` goes to the Agent before the prompt; the Thread keeps the prompt apart from it.
         Sent to another Thread than its last, the session's ACP agent is closed, so that
         the next starts without the other Thread's conversation."""
         # Off the loop: finding its command may read its `--help` once.
@@ -269,7 +269,8 @@ class AgentSessionManager:
             self._scopes.set_turn(session.token, None)
         first, last = (revisions[0], revisions[-1]) if revisions else (None, None)
         record = TranscriptTurn(
-            id=turn, provider=session.provider.id, model=model, prompt=prompt, attachments=attached.sent, parts=parts,
+            id=turn, provider=session.provider.id, model=model, prompt=prompt, attachments=attached.sent,
+            context=attached.context, parts=parts,
             first_revision=first, last_revision=last, stop=stop, started_at=started_at,
         )
         # Kept before it is announced, so that whoever hears it finished can Revert it at once.
@@ -279,7 +280,7 @@ class AgentSessionManager:
     async def _context(
         self, session: AgentSession, thread: str, turn: str, model: str | None, prompt: str, images: list[ImageInput]
     ) -> TurnContext:
-        """What the driver needs for the turn; its history is the Thread's turns' words alone."""
+        """What the driver needs for the turn; its history is the Thread's turns' words and context, without their images."""
         candidates = await asyncio.to_thread(self._store.load_candidates, session.job_id)
         candidate = next((c for c in candidates or [] if c.id == session.candidate_id), None)
         if candidate is None:
@@ -288,7 +289,7 @@ class AgentSessionManager:
         history = [
             message
             for earlier in turns[-HISTORY_TURNS:]
-            for message in (ChatMessage(role="user", text=earlier.prompt), ChatMessage(role="assistant", text=turn_text(earlier)))
+            for message in (ChatMessage(role="user", text=with_context(earlier.context, earlier.prompt)), ChatMessage(role="assistant", text=turn_text(earlier)))
             if message.text
         ]
         return TurnContext(

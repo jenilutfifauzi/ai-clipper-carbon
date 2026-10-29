@@ -10,7 +10,9 @@ import {
   attachmentName,
   attachTextFiles,
   clipChoices,
+  imageFit,
   MAX_ATTACHMENTS,
+  withoutSent,
   type DraftAttachment,
   type DraftImage,
   type ReferableClip,
@@ -31,15 +33,22 @@ const deepseek: AgentProviderListing = {
     default_model: "deepseek-chat",
     key_env: ["LLM_API_KEY"],
     docs_url: "https://platform.deepseek.com",
+    sees_images: false,
   },
   status: { id: "deepseek", ready: true, installed: null, command: null, version: null, login: null, has_key: true, key_source: "saved", base_url: null, model: null },
 };
 
-const composer = (change: { running?: boolean; attachments?: DraftAttachment[]; candidates?: ReferableClip[] } = {}) =>
+// A provider whose models see images.
+const openai: AgentProviderListing = {
+  provider: { ...deepseek.provider, id: "openai-compatible", label: "OpenAI-compatible", sees_images: true } as AgentProviderListing["provider"],
+  status: { ...deepseek.status, id: "openai-compatible" },
+};
+
+const composer = (change: { running?: boolean; attachments?: DraftAttachment[]; candidates?: ReferableClip[]; listing?: AgentProviderListing } = {}) =>
   renderToStaticMarkup(
     <Composer
-      providers={[deepseek]}
-      listing={deepseek}
+      providers={[deepseek, openai]}
+      listing={change.listing ?? deepseek}
       models={["deepseek-chat"]}
       model="deepseek-chat"
       onChoose={() => {}}
@@ -160,6 +169,19 @@ describe("the composer's attachments", () => {
     expect(binary.error).toBe("data.json isn't a text file: attach a .txt, .md, .srt, .vtt, .json or .csv.");
   });
 
+  // As the backend counts it: each byte that isn't UTF-8 is read as a 3-byte U+FFFD.
+  test("a text file's size is its text's in UTF-8, as the backend counts it", async () => {
+    const latin1 = await attachTextFiles([], [file("old.txt", new Uint8Array(20 * 1024).fill(0xe9))]);
+    expect(latin1).toEqual({ attached: [], error: "old.txt is over 50 KB." });
+  });
+
+  test("once sent, only what was sent leaves the composer: one attached meanwhile stays", () => {
+    const sent: DraftAttachment[] = [brief, { kind: "channel_profile" }];
+    const later: DraftAttachment = { ...brief };
+    expect(withoutSent([...sent, later], sent)).toEqual([later]);
+    expect(withoutSent([...sent, later], sent)[0]).toBe(later);
+  });
+
   test(`at most ${MAX_ATTACHMENTS} go with a message, told when there are more`, async () => {
     const five = Array.from({ length: 5 }, (_, n) => ({ ...brief, name: `${n}.md` }));
     const added = await attachTextFiles(five, [file("a.md", "a"), file("b.md", "b")]);
@@ -183,6 +205,12 @@ describe("referencing a clip", () => {
     expect(offered).toContain("lucide-clapperboard");
     expect(offered).not.toMatch(/ disabled=""/);
     expect(item(composer(), "Reference a clip")).toMatch(/ disabled=""/);
+  });
+
+  // As Python cuts a str: by code point, so that an emoji isn't split in two.
+  test("a long hook is cut by character, as the backend names it", () => {
+    const [{ name }] = clipChoices([{ id: "c4", start: 0, end: 1, hook_text: "😀".repeat(60) }], []);
+    expect(name).toBe(`${"😀".repeat(47)}…`);
   });
 
   test("the picker lists each Candidate by its hook, on one line, and its time; one attached can't be picked again", () => {
@@ -322,14 +350,38 @@ describe("attaching images", () => {
     expect(attachmentName(pasted, [])).toBe("Pasted image.png");
   });
 
-  test("a picture of another kind or over 5 MB isn't attached, nor previewed, and says why", () => {
+  test("a provider that can't see images has Upload image off, and says so", () => {
+    const html = composer();
+    expect(item(html, "Upload image")).toMatch(/ disabled=""/);
+    expect(html).toContain("DeepSeek can&#x27;t see images");
+    const seeing = composer({ listing: openai });
+    expect(item(seeing, "Upload image")).not.toMatch(/ disabled=""/);
+    expect(seeing).not.toContain("can&#x27;t see images");
+  });
+
+  // Anthropic's limit is 5 MB of base64, about 3.75 MB of image; models see little past 2048 px.
+  test("an image goes as it is while it fits; else scaled to a 2048 px long edge and re-encoded", () => {
+    expect(imageFit({ bytes: 200_000, width: 1600, height: 900 })).toBeNull();
+    expect(imageFit({ bytes: 3_932_160, width: 2048, height: 2048 })).toBeNull();
+    expect(imageFit({ bytes: 1_000_000, width: 4000, height: 3000 })).toEqual({ width: 2048, height: 1536 });
+    expect(imageFit({ bytes: 1_000_000, width: 1000, height: 4096 })).toEqual({ width: 500, height: 2048 });
+    expect(imageFit({ bytes: 3_932_161, width: 1920, height: 1080 })).toEqual({ width: 1920, height: 1080 });
+  });
+
+  test("a picture over 5 MB is attached, to be scaled down when sent", () => {
+    const big = attachImages([], [picture("photo.jpg", "image/jpeg", 8 * 1024 * 1024)], preview);
+    expect(big.error).toBeNull();
+    expect(big.attached.map((each) => attachmentName(each, []))).toEqual(["photo.jpg"]);
+  });
+
+  test("a picture of another kind or over 30 MB isn't attached, nor previewed, and says why", () => {
     previews.length = 0;
     const svg = attachImages([], [picture("logo.svg", "image/svg+xml"), picture("ok.png")], preview);
     expect(svg.attached.map((each) => attachmentName(each, []))).toEqual(["ok.png"]);
     expect(svg.error).toBe("logo.svg isn't a picture the Agent can see: attach a PNG, JPEG, WebP or GIF.");
 
-    const big = attachImages([], [picture("huge.png", "image/png", 5 * 1024 * 1024 + 1)], preview);
-    expect(big).toEqual({ attached: [], error: "huge.png is over 5 MB." });
+    const big = attachImages([], [picture("huge.png", "image/png", 30 * 1024 * 1024 + 1)], preview);
+    expect(big).toEqual({ attached: [], error: "huge.png is over 30 MB." });
     expect(previews).toEqual(["ok.png"]);
   });
 

@@ -31,6 +31,7 @@ const deepseek = (ready: boolean): AgentProviderListing => ({
     default_model: "deepseek-chat",
     key_env: ["LLM_API_KEY"],
     docs_url: "https://platform.deepseek.com",
+    sees_images: false,
   },
   status: {
     id: "deepseek",

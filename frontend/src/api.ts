@@ -2356,6 +2356,8 @@ export interface ApiAgentProvider {
   // The .env names its key is read from when none is saved.
   key_env: string[];
   docs_url: string;
+  // Whether its models take images with a message (an ACP agent says so only once it runs).
+  sees_images: boolean;
 }
 
 export type AgentProvider = AcpAgentProvider | ApiAgentProvider;

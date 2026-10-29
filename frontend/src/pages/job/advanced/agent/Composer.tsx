@@ -1,5 +1,17 @@
 import { ArrowUp, Bot, ChevronDown, ChevronLeft, Clapperboard, FileText, ImageUp, Plus, Settings2, Square, UserRound } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import type { AgentProviderListing } from "../../../../api";
 import { Button, buttonClass } from "../../../../components/Button";
 import { Menu, MenuItem, useMenu } from "../../../../components/Menu";
@@ -16,6 +28,7 @@ import {
   IMAGE_TYPES,
   isImageFile,
   TEXT_FILE_TYPES,
+  withoutSent,
   type DraftAttachment,
   type ReferableClip,
 } from "./attachments";
@@ -32,40 +45,31 @@ const MAX_HEIGHT_PX = 160;
  * the Provider pill, then the Model pill (each opening its picker), the provider's setup and Send, or Stop
  * while a turn runs. Images are also pasted into the message box, and images or text files dropped onto
  * it; an image is held as its file, its thumbnail an object URL let go of once it is removed, sent or
- * the composer goes. Its text and attachments are its own state, emptied once `onSend` says they went. While the provider is being set up (`setup`) it is
- * only the toolbar, so that another provider can still be picked.
+ * the composer goes. Its text and attachments are its own state, emptied once `onSend` says they went
+ * (but for attachments added meanwhile); its ref's `send` sends them as Send does, for the chat's
+ * "Try again". Upload image is off, and an image pasted or dropped refused, for an API provider that
+ * can't see images. While the provider is being set up (`setup`) it is only the toolbar, so that
+ * another provider can still be picked.
  */
-export function Composer({
-  providers,
-  listing,
-  models,
-  model,
-  onChoose,
-  setup,
-  setupOpen,
-  onSetup,
-  busy,
-  running,
-  onSend,
-  onStop,
-  defaultAttachments = NO_ATTACHMENTS,
-  candidates = NO_CLIPS,
-}: {
-  providers: AgentProviderListing[];
-  listing: AgentProviderListing;
-  models: string[];
-  model: string | null;
-  onChoose: (provider: string, model: string | null) => void;
-  setup: boolean;
-  setupOpen: boolean;
-  onSetup: () => void;
-  busy: boolean;
-  running: boolean;
-  onSend: (prompt: string, attachments: DraftAttachment[]) => Promise<boolean>;
-  onStop: () => void;
-  defaultAttachments?: DraftAttachment[];
-  candidates?: ReferableClip[];
-}) {
+export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
+  {
+    providers,
+    listing,
+    models,
+    model,
+    onChoose,
+    setup,
+    setupOpen,
+    onSetup,
+    busy,
+    running,
+    onSend,
+    onStop,
+    defaultAttachments = NO_ATTACHMENTS,
+    candidates = NO_CLIPS,
+  },
+  ref,
+) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState(defaultAttachments);
   // Why the last files chosen weren't all attached.
@@ -74,6 +78,9 @@ export function Composer({
   const [dragging, setDragging] = useState(false);
   const prompt = text.trim();
   const area = useRef<HTMLTextAreaElement>(null);
+  // Why images can't go: an API provider whose models don't see them.
+  const noImages = listing.provider.kind === "api" && !listing.provider.sees_images ? `${listing.provider.label} can't see images` : null;
+  const refuseImages = () => setAttachError(`${noImages}: choose a provider that can.`);
 
   // The thumbnails still held when the composer goes are let go of.
   const held = useRef(attachments);
@@ -91,12 +98,15 @@ export function Composer({
   }, [text, setup]);
 
   const send = async () => {
-    if (!prompt || busy || !(await onSend(prompt, attachments))) return;
-    revokePreviews(attachments);
+    const sent = attachments;
+    if (!prompt || busy || !(await onSend(prompt, sent))) return;
+    // Those attached while it was being sent stay, for the next message.
+    revokePreviews(sent);
     setText("");
-    setAttachments(NO_ATTACHMENTS);
+    setAttachments((all) => withoutSent(all, sent));
     setAttachError(null);
   };
+  useImperativeHandle(ref, () => ({ send: () => void send() }));
 
   const attachText = async (files: File[]) => {
     const added = await attachTextFiles(attachments, files);
@@ -106,6 +116,7 @@ export function Composer({
   };
 
   const attachImageFiles = (files: File[]) => {
+    if (noImages) return refuseImages();
     const added = attachImages(attachments, files);
     setAttachments(added.attached);
     setAttachError(added.error);
@@ -114,10 +125,12 @@ export function Composer({
 
   // Dropped files: the images as images, the others as text files.
   const attachDropped = async (files: File[]) => {
-    const images = attachImages(attachments, files.filter(isImageFile));
+    const dropped = files.filter(isImageFile);
+    const images = noImages ? { attached: attachments, error: null } : attachImages(attachments, dropped);
     const texts = await attachTextFiles(images.attached, files.filter((file) => !isImageFile(file)));
     setAttachments(texts.attached);
     setAttachError(images.error ?? texts.error);
+    if (noImages && dropped.length > 0) refuseImages();
     area.current?.focus();
   };
 
@@ -230,6 +243,7 @@ export function Composer({
             <AddMenu
               clips={clipChoices(candidates, attachments)}
               profileAttached={attachments.some((attachment) => attachment.kind === "channel_profile")}
+              noImages={noImages}
               onImages={attachImageFiles}
               onTextFiles={(files) => void attachText(files)}
               onAttach={add}
@@ -279,7 +293,27 @@ export function Composer({
       </form>
     </div>
   );
-}
+});
+
+/** What the chat calls on the composer: `send`, its message and attachments as Send sends them. */
+export type ComposerHandle = { send: () => void };
+
+type ComposerProps = {
+  providers: AgentProviderListing[];
+  listing: AgentProviderListing;
+  models: string[];
+  model: string | null;
+  onChoose: (provider: string, model: string | null) => void;
+  setup: boolean;
+  setupOpen: boolean;
+  onSetup: () => void;
+  busy: boolean;
+  running: boolean;
+  onSend: (prompt: string, attachments: DraftAttachment[]) => Promise<boolean>;
+  onStop: () => void;
+  defaultAttachments?: DraftAttachment[];
+  candidates?: ReferableClip[];
+};
 
 const NO_ATTACHMENTS: DraftAttachment[] = [];
 const NO_CLIPS: ReferableClip[] = [];
@@ -291,17 +325,19 @@ function revokePreviews(attachments: DraftAttachment[]) {
 /**
  * The toolbar's +: a menu of what can go with the message, each kind's file picker hidden behind its
  * item. Reference a clip turns it into the list of `clips`, those attached already off; the Channel
- * Profile is off while it is attached.
+ * Profile is off while it is attached, and Upload image while `noImages` says why images can't go.
  */
 function AddMenu({
   clips,
   profileAttached,
+  noImages,
   onImages,
   onTextFiles,
   onAttach,
 }: {
   clips: ReturnType<typeof clipChoices>;
   profileAttached: boolean;
+  noImages: string | null;
   onImages: (files: File[]) => void;
   onTextFiles: (files: File[]) => void;
   onAttach: (attachment: DraftAttachment) => void;
@@ -371,13 +407,21 @@ function AddMenu({
           ) : (
             <>
               <MenuItem
+                disabled={noImages !== null}
                 onClick={() => {
                   hide();
                   images.current?.click();
                 }}
               >
                 <ImageUp aria-hidden size={15} className="text-muted" />
-                Upload image
+                {noImages ? (
+                  <span className="flex min-w-0 flex-1 flex-col py-1.5">
+                    Upload image
+                    <span className="text-xs text-muted">{noImages}</span>
+                  </span>
+                ) : (
+                  "Upload image"
+                )}
               </MenuItem>
               <MenuItem
                 onClick={() => {

@@ -77,6 +77,8 @@ class TranscriptTurn(BaseModel):
     prompt: str
     # What went with the prompt: none in a transcript from before Agent Attachments.
     attachments: list[SentAttachment] = Field(default_factory=list)
+    # Their context blocks, as the Agent read them before the prompt, for the history of later turns.
+    context: str = ""
     parts: list[TurnPart] = Field(default_factory=list)
     first_revision: int | None = None
     last_revision: int | None = None

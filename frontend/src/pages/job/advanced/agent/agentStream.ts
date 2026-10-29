@@ -88,7 +88,8 @@ export function agentStream(state: AgentStreamState, action: AgentStreamAction):
       return withTurn(state, action.turn, (turn) => ({
         ...turn,
         prompt: action.prompt,
-        attachments: action.attachments ?? turn.attachments,
+        // Once turn_started has come (it names the provider), its record (an image's id) is kept.
+        attachments: turn.provider ? turn.attachments : (action.attachments ?? turn.attachments),
         thread: turn.thread ?? action.thread ?? null,
       }));
     case "turn_started":

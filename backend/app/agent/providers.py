@@ -73,6 +73,8 @@ class ApiProvider(BaseModel):
     # The `.env` names its key is read from when none is saved (app/agent/credentials.py).
     key_env: list[str]
     docs_url: str
+    # Whether its models take images with a message (an ACP agent's `initialize` answer says so instead).
+    sees_images: bool = True
 
 
 AgentProvider = Annotated[AcpProvider | ApiProvider, Field(discriminator="kind")]
@@ -164,6 +166,8 @@ PROVIDERS: list[AcpProvider | ApiProvider] = [
         default_model="deepseek-chat",
         key_env=["LLM_API_KEY"],
         docs_url="https://api-docs.deepseek.com",
+        # Its chat models read text alone.
+        sees_images=False,
     ),
     ApiProvider(
         id="openai-compatible",
