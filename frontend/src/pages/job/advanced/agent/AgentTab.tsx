@@ -213,7 +213,7 @@ function Transcript({ turns, onExample, onUndo }: { turns: AgentTurnView[]; onEx
         <button
           type="button"
           onClick={jump}
-          className="raised absolute right-3 bottom-3 flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-text focus-visible:outline-2 focus-visible:outline-focus"
+          className="glass absolute right-3 bottom-3 flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-text focus-visible:outline-2 focus-visible:outline-focus"
         >
           <ArrowDown aria-hidden size={13} />
           Jump to latest
