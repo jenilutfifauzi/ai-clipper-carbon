@@ -19,7 +19,7 @@ export function StatusLine({ label }: { label: string }) {
 
   return (
     <div role="status" aria-live="polite" data-agent-status="" className="flex items-center gap-2 px-1 text-sm">
-      <ThinkingOrb size={14} className="shrink-0" />
+      <ThinkingOrb size={18} className="shrink-0" />
       <span className="text-muted motion-safe:shimmer">{label}</span>
       {seconds >= 1 && (
         <span aria-hidden className="text-xs text-muted tabular-nums">

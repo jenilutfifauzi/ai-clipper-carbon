@@ -120,7 +120,7 @@ export function Composer({
             // to the square that says what a click does.
             <Button variant="secondary" size="icon-round" className="group/stop" aria-label="Stop" title="Stop" onClick={onStop}>
               <span className="grid place-items-center *:[grid-area:1/1] *:motion-safe:transition-opacity *:motion-safe:duration-150">
-                <ThinkingOrb className="group-hover/stop:opacity-0 group-focus-visible/stop:opacity-0" />
+                <ThinkingOrb size={22} className="group-hover/stop:opacity-0 group-focus-visible/stop:opacity-0" />
                 <Square aria-hidden size={10} className="fill-current opacity-0 group-hover/stop:opacity-100 group-focus-visible/stop:opacity-100" />
               </span>
             </Button>

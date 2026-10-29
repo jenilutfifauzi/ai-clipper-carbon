@@ -6,8 +6,8 @@ const STILL_T = 0.6;
 
 /**
  * The thinking orb (orb.ts) on a canvas `size` px square, in the app's orange: each dot's opacity
- * follows its depth, the nearest strongest. It turns on requestAnimationFrame while it is on screen
- * and its tab is shown; with prefers-reduced-motion it is one still frame. Decoration: aria-hidden,
+ * follows its depth, the nearest strongest. It turns on requestAnimationFrame for as long as it is
+ * shown; with prefers-reduced-motion it is one still frame. Decoration: aria-hidden,
  * the status or the button it sits in says what is going on.
  */
 export function ThinkingOrb({ size = 20, className }: { size?: number; className?: string }) {
@@ -17,7 +17,8 @@ export function ThinkingOrb({ size = 20, className }: { size?: number; className
     const canvas = ref.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    // At least 2× its CSS size, so the dots stay round and soft on a 1× screen too.
+    const dpr = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
     canvas.width = Math.round(size * dpr);
     canvas.height = Math.round(size * dpr);
     const accent = getComputedStyle(canvas).getPropertyValue("--accent").trim() || "#ff9f0a";
@@ -37,37 +38,15 @@ export function ThinkingOrb({ size = 20, className }: { size?: number; className
       return;
     }
 
-    let frame = 0;
-    let running = false;
-    let visible = true;
-    const loop = () => {
+    // Every frame for as long as it is shown: the browser already pauses requestAnimationFrame in a
+    // hidden tab, and an orb this small costs next to nothing. (Pausing it off screen, as
+    // open-design does, left it stuck: an IntersectionObserver batch read first-entry-first could
+    // say "hidden" after the transcript had scrolled it back into view.)
+    let frame = requestAnimationFrame(function loop() {
       draw((performance.now() / 1000) * ORB_SPEED);
-      if (running) frame = requestAnimationFrame(loop);
-    };
-    const start = () => {
-      if (running || !visible || document.visibilityState === "hidden") return;
-      running = true;
       frame = requestAnimationFrame(loop);
-    };
-    const stop = () => {
-      running = false;
-      cancelAnimationFrame(frame);
-    };
-    draw((performance.now() / 1000) * ORB_SPEED);
-    // Paused off screen (the transcript scrolled) and while the tab is hidden.
-    const observer = new IntersectionObserver(([entry]) => {
-      visible = entry?.isIntersecting ?? true;
-      if (visible) start();
-      else stop();
     });
-    observer.observe(canvas);
-    const onVisibility = () => (document.visibilityState === "hidden" ? stop() : start());
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      stop();
-      observer.disconnect();
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
+    return () => cancelAnimationFrame(frame);
   }, [size]);
 
   return <canvas ref={ref} aria-hidden className={className} style={{ width: size, height: size, display: "block" }} />;
