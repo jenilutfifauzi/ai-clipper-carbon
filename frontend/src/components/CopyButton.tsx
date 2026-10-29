@@ -45,7 +45,7 @@ export function CopyButton({ text, label, look = "label" }: { text: string; labe
 
 // The Clipboard API needs a secure context: on a phone over the local network (plain http) the
 // app isn't one, so fall back to copying a selected textarea.
-async function writeClipboard(text: string) {
+export async function writeClipboard(text: string) {
   if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
   const area = document.createElement("textarea");
   area.value = text;

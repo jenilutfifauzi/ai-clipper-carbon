@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { FLASH_MS, IDLE_AFTER_MS, presenceStore } from "./presence";
 import type { Touched } from "./touched";
 
-const started = { type: "turn_started", turn: "t1", tab: "tab", provider: "deepseek", model: null, prompt: "Hi" } as const;
+const started = { type: "turn_started", turn: "t1", tab: "tab", thread: "th1", provider: "deepseek", model: null, prompt: "Hi" } as const;
 const toolStarted = { type: "tool_started", turn: "t1", call: "c1", tool: "edit_candidate", summary: "" } as const;
 const toolFinished = { type: "tool_finished", turn: "t1", call: "c1", ok: true, revision: 4 } as const;
 const finished = { type: "turn_finished", turn: "t1", stop: "end_turn" } as const;

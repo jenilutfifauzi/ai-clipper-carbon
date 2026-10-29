@@ -2156,8 +2156,22 @@ export const api = {
   // Stops the tab's turn, if one runs: it ends with what it had done so far.
   cancelAgentTurn: (jobId: string, candidateId: string, tab: string) =>
     request<void>(`${agentPath(jobId, candidateId)}/cancel`, { method: "POST", body: JSON.stringify({ tab }) }),
-  // The Candidate's chat: its finished Agent Turns, oldest first.
-  agentTranscript: (jobId: string, candidateId: string) => request<AgentTranscriptTurn[]>(`${agentPath(jobId, candidateId)}/transcript`),
+  // An Agent Thread's finished Agent Turns, oldest first: the newest Thread's when none is named. Rejects
+  // with a 404 for a Thread the Candidate hasn't got.
+  agentTranscript: (jobId: string, candidateId: string, thread?: string | null) =>
+    request<AgentTranscriptTurn[]>(`${agentPath(jobId, candidateId)}/transcript${thread ? `?thread=${encodeURIComponent(thread)}` : ""}`),
+  // The Candidate's Agent Threads, the most recently used first; never none (one is made).
+  agentThreads: (jobId: string, candidateId: string) => request<AgentThread[]>(`${agentPath(jobId, candidateId)}/threads`),
+  // A new Agent Thread, titled "New chat" until its first turn finishes.
+  createAgentThread: (jobId: string, candidateId: string) => request<AgentThread>(`${agentPath(jobId, candidateId)}/threads`, { method: "POST" }),
+  renameAgentThread: (jobId: string, candidateId: string, thread: string, title: string) =>
+    request<AgentThread>(`${agentPath(jobId, candidateId)}/threads/${encodeURIComponent(thread)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+  // Forgets the Thread and its turns (not the Revisions they saved). Rejects with a 409 while a turn runs in it.
+  deleteAgentThread: (jobId: string, candidateId: string, thread: string) =>
+    request<void>(`${agentPath(jobId, candidateId)}/threads/${encodeURIComponent(thread)}`, { method: "DELETE" }),
   // Undoes a finished Agent Turn (ADR 0028): `revert` restores the Revision before it, `restore` its
   // last. Either is a Restore, saved as the Candidate's next Revision; 409 for a turn that saved nothing.
   undoAgentTurn: (jobId: string, candidateId: string, turn: string, how: AgentTurnUndo, source: EditSource) =>
@@ -2190,6 +2204,17 @@ export interface AgentTurnRequest {
   model?: string;
   prompt: string;
   tab: string;
+  // The Agent Thread it goes to; else the newest.
+  thread?: string;
+}
+
+// One chat of a Candidate with the Agent (backend/app/agent/transcript_store.py).
+export interface AgentThread {
+  id: string;
+  title: string;
+  created_at: string;
+  // When its last turn finished, or it was made.
+  updated_at: string;
 }
 
 // Why an Agent Turn ended (backend/app/agent/events.py).
@@ -2197,22 +2222,62 @@ export type AgentStop = "end_turn" | "step_limit" | "cancelled" | "error";
 
 // What an Agent Turn tells the editor as it runs, on agentEventsUrl.
 export type AgentEvent =
-  | { type: "turn_started"; turn: string; tab: string; provider: string; model: string | null; prompt: string }
+  | { type: "turn_started"; turn: string; tab: string; thread: string; provider: string; model: string | null; prompt: string }
   | { type: "text"; turn: string; delta: string }
   | { type: "thought"; turn: string; delta: string }
-  // `tool` comes without any `mcp__…__` prefix.
-  | { type: "tool_started"; turn: string; call: string; tool: string; summary: string }
-  | { type: "tool_finished"; turn: string; call: string; ok: boolean; error?: string | null; revision?: number | null }
+  // `tool` comes without any `mcp__…__` prefix. `input` and `output` are JSON or text, cut to 4096
+  // characters; a finish carries the input when an ACP agent sent it only then.
+  | { type: "tool_started"; turn: string; call: string; tool: string; summary: string; input?: string | null }
+  | {
+      type: "tool_finished";
+      turn: string;
+      call: string;
+      ok: boolean;
+      error?: string | null;
+      revision?: number | null;
+      output?: string | null;
+      input?: string | null;
+      // A show_ui call's Agent UI, its output parsed (backend/app/agent/ui_spec.py).
+      ui?: AgentUi | null;
+    }
   | { type: "turn_finished"; turn: string; stop: AgentStop; first_revision?: number | null; last_revision?: number | null }
   | { type: "error"; turn?: string | null; message: string };
 
-// A part of a turn: a run of text or of thought, or a tool call (ok null while it runs).
+// What the Agent shows in the chat through show_ui (backend/app/agent/ui_spec.py, ADR 0031): a spec
+// the Agent tab draws as a component. Fields left out are absent, not null.
+export type AgentUi =
+  | { kind: "choices"; title?: string; options: { label: string; prompt: string; detail?: string }[] }
+  // The Candidate as the editor holds it; `frame` is a path save_frame returned, shown as its picture.
+  | { kind: "candidate"; note?: string; frame?: string }
+  | { kind: "table"; title?: string; columns: string[]; rows: (string | number)[][] }
+  | { kind: "key_values"; title?: string; items: { label: string; value: string | number }[] }
+  | {
+      kind: "callout";
+      tone: "info" | "success" | "warning" | "danger";
+      title?: string;
+      body: string;
+      checklist?: { text: string; done: boolean }[];
+    };
+
+// A part of a turn: a run of text or of thought, or a tool call (ok null while it runs), with what it
+// was given and gave back (none in a chat kept before they were), and a show_ui call's Agent UI.
 export type AgentTurnPart =
   | { type: "text"; text: string }
   | { type: "thought"; text: string }
-  | { type: "tool"; call: string; tool: string; summary: string; ok: boolean | null; error: string | null; revision: number | null };
+  | {
+      type: "tool";
+      call: string;
+      tool: string;
+      summary: string;
+      ok: boolean | null;
+      error: string | null;
+      revision: number | null;
+      input?: string | null;
+      output?: string | null;
+      ui?: AgentUi | null;
+    };
 
-// A finished turn of the Candidate's chat (backend/app/agent/transcript_store.py).
+// A finished turn of an Agent Thread (backend/app/agent/transcript_store.py).
 export interface AgentTranscriptTurn {
   id: string;
   provider: string;

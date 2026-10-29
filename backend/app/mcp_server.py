@@ -29,6 +29,7 @@ from mcp.types import ToolAnnotations
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError, WithJsonSchema, create_model
 
 from app.agent.scope import ALLOWED_TOOLS, AgentScope, ScopeRegistry
+from app.agent.ui_spec import UiSpec
 from app.api import (
     PICTURES_ROUTE,
     SHAPES_MAX,
@@ -535,6 +536,8 @@ AGENT_INSTRUCTIONS = f"""\
 You work on one Candidate of one Job: their ids are given in your first message. Every tool here
 takes that Job and that Candidate only, and refuses any other; you can't create or delete Jobs,
 render, or touch other Candidates. Of the workflow below, only the tools this server lists are yours.
+The owner reads your answers in a chat, which draws Markdown; show_ui shows a component there
+instead: choices to pick from, the Candidate after a change, a table, a callout.
 
 {INSTRUCTIONS}"""
 
@@ -1204,6 +1207,21 @@ def build_mcp(app: FastAPI, scoped: bool = False) -> MCPServer:
     async def set_channel_profile(profile: ChannelProfile) -> dict:
         """Replace the Channel Profile. New Jobs steer by it; existing Jobs keep theirs."""
         return await api("PUT", "/profile", json=_dump(ChannelProfile, profile))
+
+    # The chat: the Agent's alone, since only the Agent tab draws it.
+
+    if scoped:
+
+        @tool(read_only=True)
+        async def show_ui(spec: UiSpec) -> str:
+            """Show the owner a component in the chat, in place of this call's card. The kinds:
+            `choices`, alternatives the owner picks one of (2 to 6, each label at most 80 characters;
+            the pick sends its `prompt` as the owner's next message); `candidate`, the Candidate as it
+            is now, after a change (a `note` under it; `frame`, a path save_frame returned, as its
+            picture); `table` and `key_values`, structured data; `callout`, a warning, a result or
+            steps (`checklist`). Use it sparingly, once or twice a turn at most, and never for what a
+            sentence says as well. Returns the spec as the chat draws it."""
+            return spec.model_dump_json(exclude_none=True)
 
     @mcp.resource("ai-clipper://glossary", name="glossary", mime_type="text/markdown")
     def glossary() -> str:

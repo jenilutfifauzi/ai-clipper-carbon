@@ -9,6 +9,7 @@ import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from unittest.mock import ANY
 
 import httpx
 import pytest
@@ -147,11 +148,15 @@ def test_a_turn_streams_its_tool_call_and_answer_and_its_revisions_name_it(serve
     received = until_finished(stream)
     assert [name for name, _ in received] == ["turn_started", "tool_started", "tool_finished", "text", "turn_finished"]
     started, tool_started, tool_finished, text, finished = (data for _, data in received)
-    assert started == {"type": "turn_started", "turn": turn, "tab": "tab-a", "provider": "deepseek", "model": "deepseek-chat", "prompt": "Set the hook"}
-    assert tool_started == {"type": "tool_started", "turn": turn, "call": "call-0", "tool": "edit_candidate", "summary": "sets hook_text"}
+    assert started == {"type": "turn_started", "turn": turn, "tab": "tab-a", "thread": ANY, "provider": "deepseek", "model": "deepseek-chat", "prompt": "Set the hook"}
+    # The card's input is the arguments as the model wrote them, its output the result's text.
+    arguments = json.dumps(ids | {"changes": {"hook_text": "Agent hook"}})
+    assert tool_started == {"type": "tool_started", "turn": turn, "call": "call-0", "tool": "edit_candidate", "summary": "sets hook_text", "input": arguments}
     saved = served.get(f"/api/jobs/{job['id']}").json()["candidates"][0]
     assert saved["hook_text"] == "Agent hook"
-    assert tool_finished == {"type": "tool_finished", "turn": turn, "call": "call-0", "ok": True, "error": None, "revision": saved["revision"]}
+    output = tool_finished.pop("output")
+    assert "Agent hook" in output
+    assert tool_finished == {"type": "tool_finished", "turn": turn, "call": "call-0", "ok": True, "error": None, "revision": saved["revision"], "input": None, "ui": None}
     assert text == {"type": "text", "turn": turn, "delta": "Done."}
     assert finished == {
         "type": "turn_finished", "turn": turn, "stop": "end_turn",
@@ -231,7 +236,7 @@ def test_a_turn_stops_after_thirty_steps(served, chat, job):
     assert [name for name, _ in received].count("tool_finished") == 30
 
 
-def test_a_long_tool_result_is_trimmed_with_a_note(served, chat, job):
+def test_a_long_tool_result_is_trimmed_with_a_note_and_its_card_shows_4096_characters(served, chat, job):
     candidate = job["candidates"][0]
     url = f"/api/jobs/{job['id']}/candidates/{candidate['id']}"
     layers = [{"id": f"t{i}", "text": "A long title " * 8, "start": 0, "secs": 1} for i in range(40)]
@@ -241,8 +246,11 @@ def test_a_long_tool_result_is_trimmed_with_a_note(served, chat, job):
     next(stream)
 
     send(served, job, candidate, "Read the Candidate")
-    until_finished(stream)
+    received = dict(until_finished(stream))
 
     fed_back = chat.requests[1]["messages"][-1]["content"]
     assert len(fed_back.encode()) <= 12_000 + 200
     assert "trimmed" in fed_back
+    output = received["tool_finished"]["output"]
+    assert len(output) == 4096 + 1 and output.endswith("…")
+    assert fed_back.startswith(output[:-1])

@@ -1,12 +1,12 @@
 // .scratch/agent-mode/issues/04-agent-tab.md: the Agent tab's pure reducer folds an Agent Turn's
 // events into turns and their parts, and loads the Candidate's chat.
 import { describe, expect, test } from "vitest";
-import type { AgentEvent, AgentTranscriptTurn } from "../../../../api";
+import type { AgentEvent, AgentTranscriptTurn, AgentUi } from "../../../../api";
 import { agentStream, EMPTY_STREAM, loadTranscript, ownTurns, runningTurn, type AgentStreamAction, type AgentStreamState } from "./agentStream";
 
 const fold = (actions: AgentStreamAction[], from: AgentStreamState = EMPTY_STREAM) => actions.reduce(agentStream, from);
 
-const started: AgentEvent = { type: "turn_started", turn: "t1", tab: "tab-a", provider: "deepseek", model: "deepseek-chat", prompt: "Add a title" };
+const started: AgentEvent = { type: "turn_started", turn: "t1", tab: "tab-a", thread: "th1", provider: "deepseek", model: "deepseek-chat", prompt: "Add a title" };
 
 describe("agentStream", () => {
   test("a scripted turn gives one turn with text, a thought, and a tool row that goes from running to done", () => {
@@ -23,7 +23,7 @@ describe("agentStream", () => {
     expect(running.turns[0].parts).toEqual([
       { type: "thought", text: "Let me look." },
       { type: "text", text: "Adding a title." },
-      { type: "tool", call: "c1", tool: "edit_candidate", summary: "Text Layer at 0s", ok: null, error: null, revision: null },
+      { type: "tool", call: "c1", tool: "edit_candidate", summary: "Text Layer at 0s", ok: null, error: null, revision: null, input: null },
     ]);
     expect(runningTurn(running, "tab-a")?.id).toBe("t1");
 
@@ -51,6 +51,35 @@ describe("agentStream", () => {
     ]);
     expect(state.turns[0].parts[0]).toMatchObject({ ok: false, error: "No Segment s9" });
     expect(state.turns[0].stop).toBe("cancelled");
+  });
+
+  test("a tool call keeps its input and output; an input that comes only with the finish fills in", () => {
+    const state = fold([
+      started,
+      { type: "tool_started", turn: "t1", call: "c1", tool: "edit_candidate", summary: "", input: '{"changes":{}}' },
+      { type: "tool_finished", turn: "t1", call: "c1", ok: true, output: "Saved Revision 2", input: '{"other":1}' },
+      { type: "tool_started", turn: "t1", call: "c2", tool: "get_candidate", summary: "" },
+      { type: "tool_finished", turn: "t1", call: "c2", ok: true, output: "{}", input: '{"job_id":"j"}' },
+    ]);
+    expect(state.turns[0].parts).toMatchObject([
+      { call: "c1", input: '{"changes":{}}', output: "Saved Revision 2" },
+      { call: "c2", input: '{"job_id":"j"}', output: "{}" },
+    ]);
+  });
+
+  test("a show_ui call keeps the Agent UI its finish carries; another call has none", () => {
+    const ui: AgentUi = { kind: "choices", options: [{ label: "A", prompt: "Pick A" }, { label: "B", prompt: "Pick B" }] };
+    const state = fold([
+      started,
+      { type: "tool_started", turn: "t1", call: "c1", tool: "show_ui", summary: "" },
+      { type: "tool_finished", turn: "t1", call: "c1", ok: true, output: JSON.stringify(ui), ui },
+      { type: "tool_started", turn: "t1", call: "c2", tool: "get_candidate", summary: "" },
+      { type: "tool_finished", turn: "t1", call: "c2", ok: true, output: "{}" },
+    ]);
+    expect(state.turns[0].parts).toMatchObject([
+      { call: "c1", ui },
+      { call: "c2", ui: null },
+    ]);
   });
 
   test("an error names its turn's message, or the stream's when it names none", () => {

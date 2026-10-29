@@ -36,6 +36,7 @@ import { PresenceContext, presenceStore } from "./agent/presence";
 import { touchedItems, touchedTarget } from "./agent/touched";
 import type { AgentTurnView } from "./agent/agentStream";
 import type { UndoTurn } from "./agent/TurnView";
+import { useAgentThreads } from "./agent/threads";
 import { useAgentStream } from "./agent/useAgentStream";
 import { Button } from "../../../components/Button";
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
@@ -554,11 +555,15 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     }
   }
 
-  // The Agent's chat of this clip: one stream per editor, handed to the Inspector's Agent tab. The
-  // turns it says this tab started have their Revisions adopted as undo steps (`onCandidate` below).
-  const agentChat = useAgentStream(job.id, initial.id);
+  // The Agent's chat of this clip, in the Agent Thread open: one stream per editor, handed to the
+  // Inspector's Agent tab with the Threads. The turns it says this tab started have their Revisions
+  // adopted as undo steps (`onCandidate` below). A finished turn reorders the Threads, and titles a new one.
+  const agentThreads = useAgentThreads(job.id, initial.id);
+  const agentChat = useAgentStream(job.id, initial.id, agentThreads.active?.id ?? null);
   const { subscribe: heardAgent } = agentChat;
+  const { refresh: relistThreads } = agentThreads;
   useEffect(() => heardAgent((event) => presence.heard(event)), [heardAgent, presence]);
+  useEffect(() => heardAgent((event) => event.type === "turn_finished" && relistThreads()), [heardAgent, relistThreads]);
   // A turn's Revert or Restore (ADR 0028), once the edits waiting here are saved: a Restore, taken
   // as one, with a notice saying how it went.
   async function undoTurn(turn: AgentTurnView, how: AgentTurnUndo) {
@@ -1577,7 +1582,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           effectsElsewhere={!wide}
           videoEffectsShown={wide}
           matte={here}
-          agent={{ ...here, stream: agentChat, onUndo: onUndoTurn }}
+          agent={{ ...here, stream: agentChat, threads: agentThreads, onUndo: onUndoTurn, current: { value: candidate, name: candidateName(candidate, index) } }}
           pick={pick}
           edits={edits}
           duration={duration}
