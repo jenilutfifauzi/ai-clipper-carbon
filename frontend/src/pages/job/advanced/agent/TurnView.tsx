@@ -6,6 +6,8 @@ import { writeClipboard } from "../../../../components/CopyButton";
 import type { AgentTurnView } from "./agentStream";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { ReasoningBlock } from "./ReasoningBlock";
+import { agentStatus } from "./status";
+import { StatusLine } from "./StatusLine";
 import { ToolGroup } from "./ToolGroup";
 import type { ToolPart } from "./ToolRow";
 import { GenerativeUi } from "./ui/GenerativeUi";
@@ -60,8 +62,7 @@ export const TurnView = memo(function TurnView({
   const undoable = onUndo && turn.stop !== null && turn.first_revision !== null && turn.last_revision !== null;
   const running = turn.stop === null && !turn.error;
   const last = turn.parts.at(-1);
-  // Working with nothing streaming: not started yet, or between a finished tool call and what comes next.
-  const typing = running && (!last || (last.type === "tool" && last.ok !== null));
+  const status = running ? agentStatus(turn) : null;
   return (
     <div className="flex flex-col gap-2">
       {turn.prompt && (
@@ -80,12 +81,12 @@ export const TurnView = memo(function TurnView({
           <ReasoningBlock key={shown.index} text={shown.part.text} streaming={running && shown.part === last} />
         ) : (
           <div key={shown.index} className="group/response relative rounded-xl rounded-tl-md bg-fill px-3 py-2 text-sm">
-            <ChatMarkdown text={shown.part.text} />
+            <ChatMarkdown text={shown.part.text} streaming={running && shown.part === last} />
             <CopyResponse text={shown.part.text} />
           </div>
         ),
       )}
-      {typing && <TypingDots />}
+      {status && <StatusLine label={status} />}
       {turn.error && <p className="text-sm text-danger">{turn.error}</p>}
       {turn.stop && STOPPED[turn.stop] && <p className="text-xs text-muted">{STOPPED[turn.stop]}</p>}
       {undoable ? <TurnActions turn={turn} onUndo={onUndo} /> : null}
@@ -114,17 +115,6 @@ function CopyResponse({ text }: { text: string }) {
     >
       {copied ? <Check aria-hidden size={13} className="text-success" /> : <Copy aria-hidden size={13} />}
     </Button>
-  );
-}
-
-/** Three bouncing dots: the Agent is working on something that isn't streaming in yet. */
-function TypingDots() {
-  return (
-    <div role="status" aria-label="The Agent is working" className="flex h-5 items-center gap-1 px-1">
-      {[0, 150, 300].map((delay) => (
-        <span key={delay} className="size-1.5 rounded-full bg-muted motion-safe:animate-bounce" style={{ animationDelay: `${delay}ms` }} />
-      ))}
-    </div>
   );
 }
 

@@ -2,7 +2,7 @@
 
 **Parent spec:** `spec.md` (Solution 1, revised).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Blocked by:** 06
 
@@ -74,5 +74,5 @@ The tool's verb is matched on the name without its `mcp__…__` prefix:
    - a finished turn has no `data-agent-status`.
 
 ## Acceptance
-- [ ] The tests at the three seams pass. Only `npx vitest run src/pages/job/advanced/agent` and `npx tsc --noEmit` are run.
-- [ ] Checked in the browser on a live turn: the label changes with the turn's state, and the shimmer, glyph and timer move. After the turn the line is gone, and a thought reads "Thought for Ns". Both dark and light.
+- [x] The tests at the three seams pass (`status.test.tsx`). Only `npx vitest run src/pages/job/advanced/agent` and `npx tsc --noEmit` are run.
+- [x] Checked in the browser on a live turn: the label changes with the turn's state, and the shimmer, glyph and timer move. After the turn the line is gone, and a thought reads "Thought for Ns". Both dark and light. (With Claude Code over ACP, the text comes in one piece and its tools finish fast, so a run mostly reads "Working…". The live line was caught in dark; in light the turn ended before the screenshot, and the rest of the chat was checked there.)

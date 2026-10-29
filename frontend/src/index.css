@@ -263,3 +263,33 @@
     opacity: 0;
   }
 }
+
+/*
+ * The Agent's status line, Claude Code style: a lighter band sweeps across its muted label while
+ * it works. Used as motion-safe:shimmer, so the label stays plain for an owner who asked for less
+ * motion.
+ */
+@utility shimmer {
+  background-image: linear-gradient(90deg, var(--text-muted) 35%, var(--text) 50%, var(--text-muted) 65%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2s linear infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* A block of the Agent's text arriving while it streams (open-pencil's fade-in). */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}

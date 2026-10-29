@@ -157,13 +157,6 @@ describe("chat look", () => {
     error: null,
   });
 
-  test("dots while a turn runs with nothing streaming, none while its text streams", () => {
-    expect(renderToStaticMarkup(<TurnView turn={running([])} />)).toContain("The Agent is working");
-    const tool = { type: "tool", call: "c1", tool: "edit_candidate", summary: "", ok: true, error: null, revision: 1 } as const;
-    expect(renderToStaticMarkup(<TurnView turn={running([tool])} />)).toContain("The Agent is working");
-    expect(renderToStaticMarkup(<TurnView turn={running([{ type: "text", text: "Done" }])} />)).not.toContain("The Agent is working");
-  });
-
   test("a thought streaming last reads Thinking… and is open", () => {
     const html = renderToStaticMarkup(<TurnView turn={running([{ type: "thought", text: "Hmm" }])} />);
     expect(html).toMatch(/<details[^>]*open/);
