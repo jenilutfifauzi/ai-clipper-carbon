@@ -83,6 +83,7 @@ describe("TurnView", () => {
         turn={{
           id: "t1",
           tab: null,
+          thread: null,
           provider: "deepseek",
           model: null,
           prompt: "Add a title",
@@ -107,6 +108,7 @@ describe("TurnView", () => {
   const turn = (change: Partial<AgentTurnView>): AgentTurnView => ({
     id: "t1",
     tab: null,
+    thread: null,
     provider: "deepseek",
     model: null,
     prompt: "Add a title",
@@ -140,6 +142,7 @@ describe("chat look", () => {
   const running = (parts: AgentTurnView["parts"]): AgentTurnView => ({
     id: "t1",
     tab: null,
+    thread: null,
     provider: "deepseek",
     model: null,
     prompt: "Add a title",
@@ -223,6 +226,7 @@ describe("tool cards", () => {
     const turn: AgentTurnView = {
       id: "t1",
       tab: null,
+      thread: null,
       provider: "deepseek",
       model: null,
       prompt: "Go",

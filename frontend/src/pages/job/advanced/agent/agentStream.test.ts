@@ -6,7 +6,7 @@ import { agentStream, EMPTY_STREAM, loadTranscript, ownTurns, runningTurn, type 
 
 const fold = (actions: AgentStreamAction[], from: AgentStreamState = EMPTY_STREAM) => actions.reduce(agentStream, from);
 
-const started: AgentEvent = { type: "turn_started", turn: "t1", tab: "tab-a", provider: "deepseek", model: "deepseek-chat", prompt: "Add a title" };
+const started: AgentEvent = { type: "turn_started", turn: "t1", tab: "tab-a", thread: "th1", provider: "deepseek", model: "deepseek-chat", prompt: "Add a title" };
 
 describe("agentStream", () => {
   test("a scripted turn gives one turn with text, a thought, and a tool row that goes from running to done", () => {

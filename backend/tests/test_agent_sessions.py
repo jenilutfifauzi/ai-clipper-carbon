@@ -4,7 +4,7 @@ with the Job, and the providers a turn can't be sent to. On the fake provider of
 import json
 import time
 
-from app.agent.transcript_store import load_transcript, transcript_path
+from app.agent.transcript_store import legacy_transcript_path, load_transcript, newest_thread
 
 from test_agent_api_loop import (  # noqa: F401  (fixtures)
     FAIL,
@@ -147,11 +147,11 @@ def test_a_transcript_from_before_tool_cards_still_loads(tmp_path):
         "id": "t1", "provider": "deepseek", "model": None, "prompt": "Hi", "stop": "end_turn", "started_at": "2026-01-01T00:00:00Z",
         "parts": [{"type": "tool", "call": "c1", "tool": "get_candidate", "summary": "", "ok": True, "error": None, "revision": None}],
     }
-    path = transcript_path(tmp_path, "cand")
+    path = legacy_transcript_path(tmp_path, "cand")
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps([turn]))
 
-    [loaded] = load_transcript(tmp_path, "cand")
+    [loaded] = load_transcript(tmp_path, "cand", newest_thread(tmp_path, "cand").id)
 
     [tool] = loaded.parts
     assert (tool.input, tool.output, tool.ok) == (None, None, True)

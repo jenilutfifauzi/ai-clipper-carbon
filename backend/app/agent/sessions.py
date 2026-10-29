@@ -1,6 +1,6 @@
 """The Agent Sessions open now: one per Candidate per browser tab, each running at most one Agent Turn
 at a time, as a task on the app's loop. A turn's events go out on its Candidate's topic, and its
-words into the Candidate's chat when it ends."""
+words into its Agent Thread when it ends."""
 
 import asyncio
 import logging
@@ -24,7 +24,7 @@ from app.agent.events import AgentError, AgentEvent, AgentFeed, Stop, ToolFinish
 from app.agent.prompt import system_prompt
 from app.agent.providers import AcpProvider, ApiProvider, launch_command
 from app.agent.scope import AgentScope, ScopeRegistry
-from app.agent.transcript_store import TranscriptTurn, TurnPart, append_turn, load_transcript, turn_text, with_event
+from app.agent.transcript_store import TranscriptTurn, TurnPart, append_turn, find_turn, load_transcript, turn_text, with_event
 from app.jobs import JobStore
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,8 @@ class AgentSession:
     task: asyncio.Task | None = None
     # Its ACP agent's process, kept between turns; None for an API provider.
     acp: AcpAgent | None = None
+    # The Agent Thread its last turn was sent to: its turns are the history the next one sees.
+    thread: str | None = None
 
     @property
     def busy(self) -> bool:
@@ -113,6 +115,13 @@ class AgentSessionManager:
             if (session.job_id, session.candidate_id) == (job_id, candidate_id) and session.busy and session.turn
         }
 
+    def thread_busy(self, job_id: str, candidate_id: str, thread: str) -> bool:
+        """Whether a turn runs in the Thread now, from any tab."""
+        return any(
+            (session.job_id, session.candidate_id, session.thread) == (job_id, candidate_id, thread) and session.busy
+            for session in self._sessions.values()
+        )
+
     async def send(
         self,
         job_id: str,
@@ -122,15 +131,22 @@ class AgentSessionManager:
         model: str | None,
         credential: Credential | None,
         prompt: str,
+        thread: str,
     ) -> str:
-        """Start a turn of the tab's session (opened now if it isn't) and return its id. Raises
-        TurnRunning while the session runs one, and ValueError for a provider that can't run one."""
+        """Start a turn of the tab's session (opened now if it isn't) in Agent Thread `thread`, and
+        return its id. Raises TurnRunning while the session runs one, and ValueError for a provider that
+        can't run one. Sent to another Thread than its last, the session's ACP agent is closed, so that
+        the next starts without the other Thread's conversation."""
         # Off the loop: finding its command may read its `--help` once.
         command = await asyncio.to_thread(acp_command, provider) if isinstance(provider, AcpProvider) else None
         driver = driver_for(provider) if command is None else None
         session = self._session(job_id, candidate_id, tab, provider, model, credential)
         if session.busy:
             raise TurnRunning(f"An Agent Turn is running in tab {tab}")
+        if session.thread is not None and session.thread != thread and session.acp is not None:
+            await session.acp.close()
+            session.acp = None
+        session.thread = thread
         if command is not None:
             driver = (await self._acp_agent(session, provider, command)).run_turn
         session.provider, session.model, session.credential = provider, model, credential
@@ -159,8 +175,12 @@ class AgentSessionManager:
         self._logins.add(task)
         task.add_done_callback(self._logins.discard)
 
-    def transcript(self, job_id: str, candidate_id: str) -> list[TranscriptTurn]:
-        return load_transcript(self._store.job_dir(job_id), candidate_id)
+    def transcript(self, job_id: str, candidate_id: str, thread: str) -> list[TranscriptTurn]:
+        return load_transcript(self._store.job_dir(job_id), candidate_id, thread)
+
+    def finished_turn(self, job_id: str, candidate_id: str, turn: str) -> TranscriptTurn | None:
+        """A finished turn of any of the Candidate's Threads."""
+        return find_turn(self._store.job_dir(job_id), candidate_id, turn)
 
     async def close(self) -> None:
         """Cancel every turn, forget every session's token and end the event streams."""
@@ -199,7 +219,7 @@ class AgentSessionManager:
         return session.acp
 
     async def _run(self, session: AgentSession, turn: str, driver: Driver, prompt: str) -> None:
-        """Run the turn to its end, whatever ends it, and keep it in the chat."""
+        """Run the turn to its end, whatever ends it, and keep it in its Thread."""
         name = topic(session.job_id, session.candidate_id)
         started_at = datetime.now(UTC)
         model = session.model or (session.credential.model if session.credential else None) or getattr(session.provider, "default_model", None)
@@ -213,9 +233,10 @@ class AgentSessionManager:
             self.feed.publish(name, event)
 
         self._scopes.set_turn(session.token, turn)
-        publish(TurnStarted(turn=turn, tab=session.tab, provider=session.provider.id, model=model, prompt=prompt))
+        thread = session.thread
+        publish(TurnStarted(turn=turn, tab=session.tab, thread=thread, provider=session.provider.id, model=model, prompt=prompt))
         try:
-            context = await self._context(session, turn, model, prompt)
+            context = await self._context(session, thread, turn, model, prompt)
             async for event in driver(context):
                 if isinstance(event, TurnFinished):
                     stop = event.stop
@@ -242,15 +263,16 @@ class AgentSessionManager:
             first_revision=first, last_revision=last, stop=stop, started_at=started_at,
         )
         # Kept before it is announced, so that whoever hears it finished can Revert it at once.
-        await asyncio.to_thread(append_turn, self._store.job_dir(session.job_id), session.candidate_id, record)
+        await asyncio.to_thread(append_turn, self._store.job_dir(session.job_id), session.candidate_id, thread, record)
         publish(TurnFinished(turn=turn, stop=stop, first_revision=first, last_revision=last))
 
-    async def _context(self, session: AgentSession, turn: str, model: str | None, prompt: str) -> TurnContext:
+    async def _context(self, session: AgentSession, thread: str, turn: str, model: str | None, prompt: str) -> TurnContext:
+        """What the driver needs for the turn; its history is the Thread's turns alone."""
         candidates = await asyncio.to_thread(self._store.load_candidates, session.job_id)
         candidate = next((c for c in candidates or [] if c.id == session.candidate_id), None)
         if candidate is None:
             raise LookupError(f"Job {session.job_id} has no Candidate {session.candidate_id}")
-        turns = await asyncio.to_thread(self.transcript, session.job_id, session.candidate_id)
+        turns = await asyncio.to_thread(self.transcript, session.job_id, session.candidate_id, thread)
         history = [
             message
             for earlier in turns[-HISTORY_TURNS:]

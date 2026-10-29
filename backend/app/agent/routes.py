@@ -1,19 +1,28 @@
 """The Agent's HTTP routes: its providers and keys under /api/agent, and a Candidate's Agent Turns
-under /api/jobs/{job}/candidates/{candidate}/agent. Included from `create_app`."""
+and Agent Threads under /api/jobs/{job}/candidates/{candidate}/agent. Included from `create_app`."""
 
 import asyncio
 from collections.abc import AsyncIterator
-from typing import Literal
+from pathlib import Path
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.agent.acp_client import AcpError, AcpExited
 from app.agent.credentials import SavedCredential, credential_for, delete_credential, save_credential
 from app.agent.events import agent_events, topic
 from app.agent.sessions import AgentSessionManager, TurnRunning
-from app.agent.transcript_store import TranscriptTurn
+from app.agent.transcript_store import (
+    AgentThread,
+    TranscriptTurn,
+    create_thread,
+    delete_thread,
+    list_threads,
+    newest_thread,
+    rename_thread,
+)
 from app.agent.providers import (
     PROVIDERS,
     AcpProvider,
@@ -115,6 +124,12 @@ class TurnRequest(BaseModel):
     model: str | None = Field(default=None, min_length=1)
     prompt: str = Field(min_length=1)
     tab: str = Field(min_length=1)
+    # The Agent Thread it goes to; else the newest.
+    thread: str | None = Field(default=None, min_length=1)
+
+
+class ThreadRename(BaseModel):
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
 class TurnAccepted(BaseModel):
@@ -139,8 +154,9 @@ async def send_turn(job_id: str, candidate_id: str, request: TurnRequest, http: 
         model = request.model or credential.model or provider.default_model
         if model is None:
             raise HTTPException(400, f"Choose a model for {provider.label}")
+    thread = await _thread(http, job_id, candidate_id, request.thread)
     try:
-        turn = await _sessions(http).send(job_id, candidate_id, request.tab, provider, model, credential, request.prompt)
+        turn = await _sessions(http).send(job_id, candidate_id, request.tab, provider, model, credential, request.prompt, thread)
     except TurnRunning as error:
         raise HTTPException(409, str(error)) from error
     except ValueError as error:
@@ -202,10 +218,47 @@ def restore_turn(
 
 
 @candidate_router.get("/transcript")
-async def get_transcript(job_id: str, candidate_id: str, http: Request) -> list[TranscriptTurn]:
-    """The Candidate's chat: its finished turns, oldest first."""
+async def get_transcript(job_id: str, candidate_id: str, http: Request, thread: str | None = Query(default=None)) -> list[TranscriptTurn]:
+    """An Agent Thread's finished turns, oldest first: the newest Thread's when none is named."""
     await _existing_candidate(http, job_id, candidate_id)
-    return await asyncio.to_thread(_sessions(http).transcript, job_id, candidate_id)
+    return await asyncio.to_thread(_sessions(http).transcript, job_id, candidate_id, await _thread(http, job_id, candidate_id, thread))
+
+
+@candidate_router.get("/threads")
+async def get_threads(job_id: str, candidate_id: str, http: Request) -> list[AgentThread]:
+    """The Candidate's Agent Threads, the most recently used first; one is made when it has none."""
+    await _existing_candidate(http, job_id, candidate_id)
+    job_dir = _job_dir(http, job_id)
+    await asyncio.to_thread(newest_thread, job_dir, candidate_id)
+    return await asyncio.to_thread(list_threads, job_dir, candidate_id)
+
+
+@candidate_router.post("/threads", status_code=201)
+async def post_thread(job_id: str, candidate_id: str, http: Request) -> AgentThread:
+    await _existing_candidate(http, job_id, candidate_id)
+    return await asyncio.to_thread(create_thread, _job_dir(http, job_id), candidate_id)
+
+
+@candidate_router.patch("/threads/{thread}")
+async def patch_thread(job_id: str, candidate_id: str, thread: str, body: ThreadRename, http: Request) -> AgentThread:
+    await _existing_candidate(http, job_id, candidate_id)
+    try:
+        return await asyncio.to_thread(rename_thread, _job_dir(http, job_id), candidate_id, thread, body.title)
+    except LookupError as error:
+        raise HTTPException(404, f"Candidate {candidate_id} has no Agent Thread {thread}") from error
+
+
+@candidate_router.delete("/threads/{thread}", status_code=204)
+async def remove_thread(job_id: str, candidate_id: str, thread: str, http: Request) -> Response:
+    """Forget the Thread and its turns; 409 while a turn runs in it. The Revisions its turns saved stay."""
+    await _existing_candidate(http, job_id, candidate_id)
+    if _sessions(http).thread_busy(job_id, candidate_id, thread):
+        raise HTTPException(409, f"An Agent Turn is running in Agent Thread {thread}")
+    try:
+        await asyncio.to_thread(delete_thread, _job_dir(http, job_id), candidate_id, thread)
+    except LookupError as error:
+        raise HTTPException(404, f"Candidate {candidate_id} has no Agent Thread {thread}") from error
+    return Response(status_code=204)
 
 
 @candidate_router.get("/events", response_class=EventSourceResponse)
@@ -228,9 +281,23 @@ async def _existing_candidate(request: Request, job_id: str, candidate_id: str) 
         raise HTTPException(404, f"Job {job_id} has no Candidate {candidate_id}")
 
 
+async def _thread(request: Request, job_id: str, candidate_id: str, thread: str | None) -> str:
+    """The Agent Thread a request names, which must be the Candidate's; the newest when it names none."""
+    job_dir = _job_dir(request, job_id)
+    if thread is None:
+        return (await asyncio.to_thread(newest_thread, job_dir, candidate_id)).id
+    if not any(each.id == thread for each in await asyncio.to_thread(list_threads, job_dir, candidate_id)):
+        raise HTTPException(404, f"Candidate {candidate_id} has no Agent Thread {thread}")
+    return thread
+
+
+def _job_dir(request: Request, job_id: str) -> Path:
+    return request.app.state.store.job_dir(job_id)
+
+
 def _turn_revisions(request: Request, job_id: str, candidate_id: str, turn: str) -> tuple[int, int]:
-    """The first and last Revision a finished turn of the Candidate's chat saved."""
-    kept = next((kept for kept in _sessions(request).transcript(job_id, candidate_id) if kept.id == turn), None)
+    """The first and last Revision a finished turn of any of the Candidate's Threads saved."""
+    kept = _sessions(request).finished_turn(job_id, candidate_id, turn)
     if kept is None:
         raise HTTPException(404, f"Candidate {candidate_id} has no finished Agent Turn {turn}")
     if kept.first_revision is None or kept.last_revision is None:

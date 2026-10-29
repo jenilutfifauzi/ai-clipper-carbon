@@ -2156,8 +2156,22 @@ export const api = {
   // Stops the tab's turn, if one runs: it ends with what it had done so far.
   cancelAgentTurn: (jobId: string, candidateId: string, tab: string) =>
     request<void>(`${agentPath(jobId, candidateId)}/cancel`, { method: "POST", body: JSON.stringify({ tab }) }),
-  // The Candidate's chat: its finished Agent Turns, oldest first.
-  agentTranscript: (jobId: string, candidateId: string) => request<AgentTranscriptTurn[]>(`${agentPath(jobId, candidateId)}/transcript`),
+  // An Agent Thread's finished Agent Turns, oldest first: the newest Thread's when none is named. Rejects
+  // with a 404 for a Thread the Candidate hasn't got.
+  agentTranscript: (jobId: string, candidateId: string, thread?: string | null) =>
+    request<AgentTranscriptTurn[]>(`${agentPath(jobId, candidateId)}/transcript${thread ? `?thread=${encodeURIComponent(thread)}` : ""}`),
+  // The Candidate's Agent Threads, the most recently used first; never none (one is made).
+  agentThreads: (jobId: string, candidateId: string) => request<AgentThread[]>(`${agentPath(jobId, candidateId)}/threads`),
+  // A new Agent Thread, titled "New chat" until its first turn finishes.
+  createAgentThread: (jobId: string, candidateId: string) => request<AgentThread>(`${agentPath(jobId, candidateId)}/threads`, { method: "POST" }),
+  renameAgentThread: (jobId: string, candidateId: string, thread: string, title: string) =>
+    request<AgentThread>(`${agentPath(jobId, candidateId)}/threads/${encodeURIComponent(thread)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+  // Forgets the Thread and its turns (not the Revisions they saved). Rejects with a 409 while a turn runs in it.
+  deleteAgentThread: (jobId: string, candidateId: string, thread: string) =>
+    request<void>(`${agentPath(jobId, candidateId)}/threads/${encodeURIComponent(thread)}`, { method: "DELETE" }),
   // Undoes a finished Agent Turn (ADR 0028): `revert` restores the Revision before it, `restore` its
   // last. Either is a Restore, saved as the Candidate's next Revision; 409 for a turn that saved nothing.
   undoAgentTurn: (jobId: string, candidateId: string, turn: string, how: AgentTurnUndo, source: EditSource) =>
@@ -2190,6 +2204,17 @@ export interface AgentTurnRequest {
   model?: string;
   prompt: string;
   tab: string;
+  // The Agent Thread it goes to; else the newest.
+  thread?: string;
+}
+
+// One chat of a Candidate with the Agent (backend/app/agent/transcript_store.py).
+export interface AgentThread {
+  id: string;
+  title: string;
+  created_at: string;
+  // When its last turn finished, or it was made.
+  updated_at: string;
 }
 
 // Why an Agent Turn ended (backend/app/agent/events.py).
@@ -2197,7 +2222,7 @@ export type AgentStop = "end_turn" | "step_limit" | "cancelled" | "error";
 
 // What an Agent Turn tells the editor as it runs, on agentEventsUrl.
 export type AgentEvent =
-  | { type: "turn_started"; turn: string; tab: string; provider: string; model: string | null; prompt: string }
+  | { type: "turn_started"; turn: string; tab: string; thread: string; provider: string; model: string | null; prompt: string }
   | { type: "text"; turn: string; delta: string }
   | { type: "thought"; turn: string; delta: string }
   // `tool` comes without any `mcp__…__` prefix. `input` and `output` are JSON or text, cut to 4096
@@ -2233,7 +2258,7 @@ export type AgentTurnPart =
       output?: string | null;
     };
 
-// A finished turn of the Candidate's chat (backend/app/agent/transcript_store.py).
+// A finished turn of an Agent Thread (backend/app/agent/transcript_store.py).
 export interface AgentTranscriptTurn {
   id: string;
   provider: string;

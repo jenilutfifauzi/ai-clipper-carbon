@@ -10,6 +10,8 @@ export interface AgentTurnView {
   id: string;
   // The browser tab that sent it; null for a turn loaded from the chat, or one joined midway.
   tab: string | null;
+  // The Agent Thread it is a turn of; null for one joined midway (its turn_started unheard).
+  thread: string | null;
   provider: string;
   model: string | null;
   // The owner's message: from turn_started, the tab that sent it, or the chat; empty for a turn joined midway.
@@ -24,7 +26,7 @@ export interface AgentTurnView {
 }
 
 export interface AgentStreamState {
-  // Oldest first: the chat's finished turns, then those seen live.
+  // Oldest first: the chat's finished turns, then those seen live, of any Thread (`threadTurns` picks one's).
   turns: AgentTurnView[];
   // The turns running now, by tab, as `ready` told and turn events since.
   running: Record<string, string>;
@@ -38,13 +40,15 @@ export type AgentStreamAction =
   | AgentEvent
   // The stream (re)connected: the turns running now, by tab.
   | { type: "ready"; running: Record<string, string> }
-  // This tab sent `prompt` and the backend named its turn (which may have started already).
-  | { type: "prompted"; turn: string; prompt: string }
-  | { type: "transcript"; turns: AgentTranscriptTurn[] };
+  // This tab sent `prompt` to Thread `thread` and the backend named its turn (which may have started already).
+  | { type: "prompted"; turn: string; prompt: string; thread?: string | null }
+  // Thread `thread`'s finished turns.
+  | { type: "transcript"; turns: AgentTranscriptTurn[]; thread?: string | null };
 
 const blankTurn = (id: string): AgentTurnView => ({
   id,
   tab: null,
+  thread: null,
   provider: "",
   model: null,
   prompt: "",
@@ -76,13 +80,14 @@ export function agentStream(state: AgentStreamState, action: AgentStreamAction):
     case "ready":
       return { ...state, running: action.running, error: null };
     case "transcript":
-      return loadTranscript(action.turns, state);
+      return loadTranscript(action.turns, state, action.thread ?? null);
     case "prompted":
-      return withTurn(state, action.turn, (turn) => ({ ...turn, prompt: action.prompt }));
+      return withTurn(state, action.turn, (turn) => ({ ...turn, prompt: action.prompt, thread: turn.thread ?? action.thread ?? null }));
     case "turn_started":
       return withTurn({ ...state, running: { ...state.running, [action.tab]: action.turn } }, action.turn, (turn) => ({
         ...turn,
         tab: action.tab,
+        thread: action.thread ?? turn.thread,
         provider: action.provider,
         model: action.model,
         prompt: action.prompt || turn.prompt,
@@ -127,8 +132,11 @@ export function agentStream(state: AgentStreamState, action: AgentStreamAction):
   }
 }
 
-/** The chat's finished turns, oldest first, then the turns of `live` the chat hasn't got (still running). */
-export function loadTranscript(turns: AgentTranscriptTurn[], live: AgentStreamState = EMPTY_STREAM): AgentStreamState {
+/**
+ * Thread `thread`'s finished turns, oldest first, then the turns of `live` they haven't got (still
+ * running, or of other Threads).
+ */
+export function loadTranscript(turns: AgentTranscriptTurn[], live: AgentStreamState = EMPTY_STREAM, thread: string | null = null): AgentStreamState {
   const loaded = new Set(turns.map((turn) => turn.id));
   return {
     ...live,
@@ -136,6 +144,7 @@ export function loadTranscript(turns: AgentTranscriptTurn[], live: AgentStreamSt
       ...turns.map((turn): AgentTurnView => ({
         id: turn.id,
         tab: live.turns.find((seen) => seen.id === turn.id)?.tab ?? null,
+        thread: thread ?? live.turns.find((seen) => seen.id === turn.id)?.thread ?? null,
         provider: turn.provider,
         model: turn.model,
         prompt: turn.prompt,
@@ -148,6 +157,14 @@ export function loadTranscript(turns: AgentTranscriptTurn[], live: AgentStreamSt
       ...live.turns.filter((turn) => !loaded.has(turn.id)),
     ],
   };
+}
+
+/**
+ * The turns the chat of Thread `thread` shows: its own, and any joined midway, whose Thread is unknown.
+ * Another Thread's running turn isn't among them (it still counts for `runningTurn`).
+ */
+export function threadTurns(turns: AgentTurnView[], thread: string | null): AgentTurnView[] {
+  return turns.filter((turn) => turn.thread === null || turn.thread === thread);
 }
 
 /** The turn tab `tab` runs now, if any. */

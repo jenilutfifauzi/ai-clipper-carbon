@@ -2,6 +2,8 @@
 the turn and Restore its last, each as a new Revision with source `restore`. On the fake provider of
 test_agent_api_loop."""
 
+from unittest.mock import ANY
+
 from test_agent_api_loop import (  # noqa: F401  (fixtures)
     agent_events,
     agent_url,
@@ -88,4 +90,4 @@ def test_turn_started_names_the_prompt(served, chat, job):
 
     _, started = until_finished(stream)[0]
 
-    assert started == {"type": "turn_started", "turn": turn, "tab": "tab-a", "provider": "deepseek", "model": "deepseek-chat", "prompt": "Say hello"}
+    assert started == {"type": "turn_started", "turn": turn, "tab": "tab-a", "thread": ANY, "provider": "deepseek", "model": "deepseek-chat", "prompt": "Say hello"}

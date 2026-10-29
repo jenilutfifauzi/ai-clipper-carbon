@@ -23,6 +23,8 @@ class TurnStarted(BaseModel):
     turn: str
     # The browser tab whose chat sent it: that tab takes its Revisions as undo steps (ADR 0028).
     tab: str
+    # The Agent Thread it is a turn of: a chat shows only its own Thread's turns.
+    thread: str
     provider: str
     model: str | None
     # What the owner asked, so that every open chat shows it while the turn runs.

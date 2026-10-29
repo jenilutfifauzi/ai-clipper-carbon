@@ -2,7 +2,7 @@
 
 **Parent spec:** `spec.md` (Solution 4).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Blocked by:** 01, 03
 
@@ -53,12 +53,12 @@
 - `docs/adr/0030-agent-threads-per-candidate.md`: why Threads, the layout, the migration, and why an ACP agent is closed on a switch.
 
 ## Acceptance
-- [ ] New file `tests/test_agent_threads.py` covers:
+- [x] New file `tests/test_agent_threads.py` covers:
   - create, list, rename and delete;
   - migration of an old `<candidate>.json`;
   - `append_turn` titling the Thread;
   - the routes;
   - the history `_context` builds holding only that Thread's turns.
-- [ ] `test_agent_sessions.py` and `test_agent_turn_undo.py` still pass. Update their fixtures to pass a thread where the API requires one.
-- [ ] Frontend agent tests: switching Threads reloads the transcript.
-- [ ] typecheck passes. Only the agent test files are run.
+- [x] `test_agent_sessions.py` and `test_agent_turn_undo.py` still pass. Update their fixtures to pass a thread where the API requires one.
+- [x] Frontend agent tests: switching Threads reloads the transcript.
+- [x] typecheck passes. Only the agent test files are run.

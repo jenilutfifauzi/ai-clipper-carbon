@@ -7,6 +7,7 @@ import { ChatHeader } from "./ChatHeader";
 import { Composer } from "./Composer";
 import { PresenceContext } from "./presence";
 import { ProviderSetup } from "./ProviderSetup";
+import type { AgentThreads } from "./threads";
 import { TurnView, type UndoTurn } from "./TurnView";
 import type { AgentStream } from "./useAgentStream";
 
@@ -31,19 +32,22 @@ export function modelOptions({ provider, status }: AgentProviderListing): string
  * The Inspector's Agent tab (loaded only when opened), laid out as open-pencil's chat panel: a
  * header, the transcript, and the composer, whose model pill picks an Agent Provider and model.
  * Set the provider up until it is ready, and chat with it about this Candidate, each Agent Turn
- * streaming in. The chat's
- * `stream` is the editor's (it outlives the tab), and `onUndo` reverts or restores a finished turn.
+ * streaming in. The chat's `stream` and its Agent `threads` are the editor's (they outlive the tab;
+ * without `threads`, the header lists none and a message goes to the newest), and `onUndo` reverts or
+ * restores a finished turn.
  */
 export function AgentTab({
   jobId,
   candidateId,
   stream,
+  threads,
   onUndo,
   initialProviders = null,
 }: {
   jobId: string;
   candidateId: string;
   stream: AgentStream;
+  threads?: AgentThreads;
   onUndo?: UndoTurn;
   initialProviders?: AgentProviderListing[] | null;
 }) {
@@ -88,7 +92,14 @@ export function AgentTab({
     setSending(true);
     setSendError(null);
     try {
-      const turn = await api.sendAgentTurn(jobId, candidateId, { provider: listing.provider.id, ...(model ? { model } : {}), prompt, tab: TAB_ID });
+      const thread = threads?.active?.id;
+      const turn = await api.sendAgentTurn(jobId, candidateId, {
+        provider: listing.provider.id,
+        ...(model ? { model } : {}),
+        prompt,
+        tab: TAB_ID,
+        ...(thread ? { thread } : {}),
+      });
       stream.prompted(turn, prompt);
       return true;
     } catch (reason) {
@@ -105,10 +116,10 @@ export function AgentTab({
     return <p className={providersError ? "text-sm text-danger" : "text-sm text-muted"}>{providersError ?? "Loading the providers…"}</p>;
   }
   const settingUp = !listing.status.ready || setupOpen;
-  const error = sendError ?? stream.state.error;
+  const error = sendError ?? stream.state.error ?? threads?.error ?? null;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <ChatHeader turns={stream.state.turns} />
+      <ChatHeader turns={stream.state.turns} threads={threads} />
       {settingUp ? (
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
           <ProviderSetup listing={listing} onSaved={saved} />
