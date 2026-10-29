@@ -5,7 +5,7 @@ adds the Revisions saved, and ends the turn itself when it is cancelled or fails
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import httpx
@@ -13,8 +13,9 @@ import httpx2
 from fastapi import FastAPI
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from app.agent.attachments import ImageInput
 from app.agent.credentials import Credential
 from app.agent.events import AgentEvent
 from app.agent.providers import AcpProvider, ApiProvider
@@ -26,10 +27,12 @@ SCOPED_MCP_PATH = "/mcp/agent"
 
 
 class ChatMessage(BaseModel):
-    """An earlier turn's words: the owner's prompt, or what the Agent answered."""
+    """A turn's words: the owner's prompt, or what the Agent answered."""
 
     role: Literal["user", "assistant"]
     text: str
+    # The images sent with the current turn's prompt; an earlier turn's words go without theirs.
+    images: list[ImageInput] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,8 @@ class TurnContext:
     history: list[ChatMessage]
     prompt: str
     tools: ScopedEndpoint
+    # The images sent with the prompt (this message's alone).
+    images: list[ImageInput] = field(default_factory=list)
     # What an API provider is called through: None, the network (tests pass a fake).
     http_transport: httpx.AsyncBaseTransport | None = None
 

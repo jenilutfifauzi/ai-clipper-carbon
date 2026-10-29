@@ -67,12 +67,20 @@ def _messages(exchange: Exchange) -> list[dict]:
     messages: list[dict] = [{"role": "system", "content": exchange.system}]
     for entry in exchange.entries:
         if isinstance(entry, ChatMessage):
-            messages.append({"role": entry.role, "content": entry.text})
+            messages.append({"role": entry.role, "content": _content(entry)})
         elif isinstance(entry, Reply):
             messages.append(_assistant_message(entry))
         else:
             messages += [{"role": "tool", "tool_call_id": result.call.id, "content": result.text} for result in entry]
     return messages
+
+
+def _content(message: ChatMessage) -> str | list[dict]:
+    """A message's words, followed by its images as data URLs when it has any."""
+    if not message.images:
+        return message.text
+    images = [{"type": "image_url", "image_url": {"url": f"data:{image.media_type};base64,{image.data}"}} for image in message.images]
+    return [{"type": "text", "text": message.text}, *images]
 
 
 def _assistant_message(reply: Reply) -> dict:

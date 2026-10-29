@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
-import { agentEventsUrl, api, TAB_ID, type AgentEvent, type AgentTranscriptTurn } from "../../../../api";
+import { agentEventsUrl, api, TAB_ID, type AgentEvent, type AgentSentAttachment, type AgentTranscriptTurn } from "../../../../api";
 import {
   agentStream,
   EMPTY_STREAM,
@@ -27,8 +27,8 @@ export interface AgentStream {
   ownTurns: ReadonlySet<string>;
   // Until the stream has (re)connected.
   lost: boolean;
-  // This tab sent `prompt` to the open Thread, and the backend named it turn `turn`.
-  prompted: (turn: string, prompt: string) => void;
+  // This tab sent `prompt` (with `attachments`) to the open Thread, and the backend named it turn `turn`.
+  prompted: (turn: string, prompt: string, attachments?: AgentSentAttachment[]) => void;
   // Calls `listener` with every event the stream hears from now on, as it hears it (the same event is
   // dispatched into `state`, whose render may come later), until the returned function is called. For whoever reacts to the Agent's events beyond
   // the chat (the Agent's presence on the stage, say), without a stream of its own. Stable.
@@ -91,7 +91,10 @@ export function useAgentStream(jobId: string, candidateId: string, thread: strin
     },
     [listeners],
   );
-  const prompted = useCallback((turn: string, prompt: string) => dispatch({ type: "prompted", turn, prompt, thread }), [thread]);
+  const prompted = useCallback(
+    (turn: string, prompt: string, attachments?: AgentSentAttachment[]) => dispatch({ type: "prompted", turn, prompt, thread, attachments }),
+    [thread],
+  );
   // A new set only when the turns change, not on each `ready`.
   const { turns } = state;
   const own = useMemo(() => ownTurns({ ...EMPTY_STREAM, turns }, TAB_ID), [turns]);

@@ -4,6 +4,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { AgentProviderListing, AgentUi } from "../../../../api";
 import type { AgentTurnView } from "./agentStream";
+import {
+  attach,
+  attachImages,
+  attachmentName,
+  attachTextFiles,
+  clipChoices,
+  imageFit,
+  MAX_ATTACHMENTS,
+  withoutSent,
+  type DraftAttachment,
+  type DraftImage,
+  type ReferableClip,
+} from "./attachments";
 import { ChatHeader } from "./ChatHeader";
 import { Composer } from "./Composer";
 import { TurnView } from "./TurnView";
@@ -20,15 +33,22 @@ const deepseek: AgentProviderListing = {
     default_model: "deepseek-chat",
     key_env: ["LLM_API_KEY"],
     docs_url: "https://platform.deepseek.com",
+    sees_images: false,
   },
   status: { id: "deepseek", ready: true, installed: null, command: null, version: null, login: null, has_key: true, key_source: "saved", base_url: null, model: null },
 };
 
-const composer = (change: { running?: boolean } = {}) =>
+// A provider whose models see images.
+const openai: AgentProviderListing = {
+  provider: { ...deepseek.provider, id: "openai-compatible", label: "OpenAI-compatible", sees_images: true } as AgentProviderListing["provider"],
+  status: { ...deepseek.status, id: "openai-compatible" },
+};
+
+const composer = (change: { running?: boolean; attachments?: DraftAttachment[]; candidates?: ReferableClip[]; listing?: AgentProviderListing } = {}) =>
   renderToStaticMarkup(
     <Composer
-      providers={[deepseek]}
-      listing={deepseek}
+      providers={[deepseek, openai]}
+      listing={change.listing ?? deepseek}
       models={["deepseek-chat"]}
       model="deepseek-chat"
       onChoose={() => {}}
@@ -39,6 +59,8 @@ const composer = (change: { running?: boolean } = {}) =>
       running={change.running ?? false}
       onSend={async () => true}
       onStop={() => {}}
+      defaultAttachments={change.attachments}
+      candidates={change.candidates}
     />,
   );
 
@@ -85,6 +107,162 @@ describe("Composer", () => {
   });
 });
 
+// .scratch/agent-attachments/issues/01: the + menu and text-file Agent Attachments.
+describe("the composer's attachments", () => {
+  const brief: DraftAttachment = { kind: "text", name: "brief.md", text: "Short hooks only." };
+  const button = (html: string, label: string) => html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? "";
+
+  test("a + first in the toolbar, labelled Add to message, opens a menu offering a text file", () => {
+    const html = composer();
+    const plus = button(html, "Add to message");
+    expect(plus).toContain('aria-haspopup="menu"');
+    expect(html.indexOf('aria-label="Add to message"')).toBeLessThan(html.indexOf('title="Provider"'));
+    expect(html).toContain("lucide-plus");
+    const menu = html.match(/<div[^>]*role="menu"[\s\S]*?<\/div>/)?.[0] ?? "";
+    expect(menu).toContain('aria-label="Add to message"');
+    expect(menu).toMatch(/role="menuitem"[^>]*>.*Add text file/s);
+  });
+
+  test("a hidden file input takes several text files of the kinds the Agent reads", () => {
+    const input = composer().match(/<input[^>]*type="file"[^>]*accept="\.txt[^>]*>/)?.[0] ?? "";
+    expect(input).toContain('accept=".txt,.md,.srt,.vtt,.json,.csv"');
+    expect(input).toContain("multiple");
+    expect(input).toMatch(/\bhidden\b/);
+  });
+
+  test("attached files are chips above the message box, each with a ×; none, no chip row", () => {
+    const html = composer({ attachments: [brief, { ...brief, name: "style.txt" }] });
+    expect(html.indexOf("brief.md")).toBeGreaterThan(-1);
+    expect(html.indexOf("brief.md")).toBeLessThan(html.indexOf("<textarea"));
+    expect(html.indexOf("style.txt")).toBeLessThan(html.indexOf("<textarea"));
+    expect(button(html, "Remove brief.md")).toContain('type="button"');
+    expect(button(html, "Remove style.txt")).not.toBe("");
+    expect(composer()).not.toContain("data-attachments");
+  });
+
+  test("a message still needs words: Send stays off with only a file", () => {
+    expect(button(composer({ attachments: [brief] }), "Send")).toMatch(/ disabled=""/);
+  });
+
+  const file = (name: string, text: BlobPart) => new File([text], name);
+
+  test("a text file is attached as its name and text", async () => {
+    const added = await attachTextFiles([], [file("brief.md", "Short hooks only."), file("subs.SRT", "1\n00:00 --> 00:01\nHi")]);
+    expect(added).toEqual({
+      attached: [
+        { kind: "text", name: "brief.md", text: "Short hooks only." },
+        { kind: "text", name: "subs.SRT", text: "1\n00:00 --> 00:01\nHi" },
+      ],
+      error: null,
+    });
+  });
+
+  test("a file too big or not text isn't attached, and says why; the others are", async () => {
+    const big = await attachTextFiles([brief], [file("huge.txt", "x".repeat(50 * 1024 + 1)), file("ok.txt", "fine")]);
+    expect(big.attached.map((each) => attachmentName(each, []))).toEqual(["brief.md", "ok.txt"]);
+    expect(big.error).toBe("huge.txt is over 50 KB.");
+
+    const pdf = await attachTextFiles([], [file("deck.pdf", "%PDF")]);
+    expect(pdf).toEqual({ attached: [], error: "deck.pdf isn't a text file: attach a .txt, .md, .srt, .vtt, .json or .csv." });
+
+    const binary = await attachTextFiles([], [file("data.json", new Uint8Array([0x7b, 0, 0x7d]))]);
+    expect(binary.error).toBe("data.json isn't a text file: attach a .txt, .md, .srt, .vtt, .json or .csv.");
+  });
+
+  // As the backend counts it: each byte that isn't UTF-8 is read as a 3-byte U+FFFD.
+  test("a text file's size is its text's in UTF-8, as the backend counts it", async () => {
+    const latin1 = await attachTextFiles([], [file("old.txt", new Uint8Array(20 * 1024).fill(0xe9))]);
+    expect(latin1).toEqual({ attached: [], error: "old.txt is over 50 KB." });
+  });
+
+  test("once sent, only what was sent leaves the composer: one attached meanwhile stays", () => {
+    const sent: DraftAttachment[] = [brief, { kind: "channel_profile" }];
+    const later: DraftAttachment = { ...brief };
+    expect(withoutSent([...sent, later], sent)).toEqual([later]);
+    expect(withoutSent([...sent, later], sent)[0]).toBe(later);
+  });
+
+  test(`at most ${MAX_ATTACHMENTS} go with a message, told when there are more`, async () => {
+    const five = Array.from({ length: 5 }, (_, n) => ({ ...brief, name: `${n}.md` }));
+    const added = await attachTextFiles(five, [file("a.md", "a"), file("b.md", "b")]);
+    expect(added.attached.map((each) => attachmentName(each, []))).toEqual(["0.md", "1.md", "2.md", "3.md", "4.md", "a.md"]);
+    expect(added.error).toBe(`At most ${MAX_ATTACHMENTS} attachments go with a message.`);
+  });
+});
+
+// .scratch/agent-attachments/issues/02: another Candidate of the Job, as a style reference.
+describe("referencing a clip", () => {
+  const button = (html: string, label: string) => html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? "";
+  const item = (html: string, text: string) => html.match(new RegExp(`<button[^>]*role="menuitem"[^>]*>(?:(?!</button>).)*${text}`, "s"))?.[0] ?? "";
+  const longHook = "This is the hook of the clip whose *style* I like the most";
+  const clips: ReferableClip[] = [
+    { id: "c2", start: 72, end: 105.5, hook_text: longHook },
+    { id: "c3", start: 3600, end: 3630, hook_text: "" },
+  ];
+
+  test("the + menu offers Reference a clip, off while the Job has no other Candidate", () => {
+    const offered = item(composer({ candidates: clips }), "Reference a clip");
+    expect(offered).toContain("lucide-clapperboard");
+    expect(offered).not.toMatch(/ disabled=""/);
+    expect(item(composer(), "Reference a clip")).toMatch(/ disabled=""/);
+  });
+
+  // As Python cuts a str: by code point, so that an emoji isn't split in two.
+  test("a long hook is cut by character, as the backend names it", () => {
+    const [{ name }] = clipChoices([{ id: "c4", start: 0, end: 1, hook_text: "😀".repeat(60) }], []);
+    expect(name).toBe(`${"😀".repeat(47)}…`);
+  });
+
+  test("the picker lists each Candidate by its hook, on one line, and its time; one attached can't be picked again", () => {
+    expect(clipChoices(clips, [{ kind: "candidate", candidate_id: "c2" }])).toEqual([
+      { id: "c2", name: "This is the hook of the clip whose style I like…", range: "1:12–1:45", attached: true },
+      { id: "c3", name: "c3", range: "1:00:00–1:00:30", attached: false },
+    ]);
+  });
+
+  test("a referenced Candidate is a chip named by its hook, with a clapperboard", () => {
+    const html = composer({ candidates: clips, attachments: [{ kind: "candidate", candidate_id: "c2" }] });
+    const chips = html.match(/<ul[^>]*data-attachments[\s\S]*?<\/ul>/)?.[0] ?? "";
+    expect(chips).toContain("lucide-clapperboard");
+    expect(chips).toContain("This is the hook of the clip whose style I like…");
+    expect(button(html, "Remove This is the hook of the clip whose style I like…")).not.toBe("");
+  });
+
+  test(`a clip is refused past ${MAX_ATTACHMENTS} attachments, and twice`, () => {
+    const brief: DraftAttachment = { kind: "text", name: "brief.md", text: "x" };
+    const six = Array.from({ length: MAX_ATTACHMENTS }, () => brief);
+    expect(attach(six, { kind: "candidate", candidate_id: "c2" })).toEqual({ attached: six, error: `At most ${MAX_ATTACHMENTS} attachments go with a message.` });
+    const once: DraftAttachment[] = [{ kind: "candidate", candidate_id: "c2" }];
+    expect(attach(once, { kind: "candidate", candidate_id: "c2" })).toEqual({ attached: once, error: null });
+    expect(attach([], once[0])).toEqual({ attached: once, error: null });
+  });
+});
+
+// .scratch/agent-attachments/issues/03: the Channel Profile, in one click.
+describe("attaching the Channel Profile", () => {
+  const item = (html: string, text: string) => html.match(new RegExp(`<button[^>]*role="menuitem"[^>]*>(?:(?!</button>).)*${text}`, "s"))?.[0] ?? "";
+  const profile: DraftAttachment = { kind: "channel_profile" };
+
+  test("the + menu offers the Channel Profile, off while it is attached", () => {
+    const offered = item(composer(), "Channel Profile");
+    expect(offered).toContain("lucide-user-round");
+    expect(offered).not.toMatch(/ disabled=""/);
+    expect(item(composer({ attachments: [profile] }), "Channel Profile")).toMatch(/ disabled=""/);
+  });
+
+  test("attached, it is a chip reading Channel Profile, with a ×", () => {
+    const html = composer({ attachments: [profile] });
+    const chips = html.match(/<ul[^>]*data-attachments[\s\S]*?<\/ul>/)?.[0] ?? "";
+    expect(chips).toContain("lucide-user-round");
+    expect(chips).toContain(">Channel Profile<");
+    expect(chips).toContain('aria-label="Remove Channel Profile"');
+  });
+
+  test("it goes at most once", () => {
+    expect(attach([profile], profile)).toEqual({ attached: [profile], error: null });
+  });
+});
+
 // The Agent's chat keeps the app's orange for nothing: its controls and bubbles are neutral.
 describe("the chat without orange", () => {
   const turn: AgentTurnView = {
@@ -120,5 +298,97 @@ describe("the chat without orange", () => {
     ],
   ])("%s", (_, html) => {
     expect(html()).not.toMatch(/accent/);
+  });
+});
+
+// .scratch/agent-attachments/issues/04: images the model sees.
+describe("attaching images", () => {
+  const button = (html: string, label: string) => html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? "";
+  const item = (html: string, text: string) => html.match(new RegExp(`<button[^>]*role="menuitem"[^>]*>(?:(?!</button>).)*${text}`, "s"))?.[0] ?? "";
+  const picture = (name: string, type = "image/png", size = 8) => new File([new Uint8Array(size)], name, { type });
+  // Each preview made, by file name, in place of an object URL.
+  const previews: string[] = [];
+  const preview = (file: File) => {
+    previews.push(file.name);
+    return `blob:${file.name}`;
+  };
+
+  test("the + menu's first item is Upload image, behind a hidden input taking several pictures", () => {
+    const html = composer();
+    const upload = item(html, "Upload image");
+    expect(upload).toContain("lucide-image-up");
+    expect(html.indexOf("Upload image")).toBeLessThan(html.indexOf("Add text file"));
+    const input = html.match(/<input[^>]*type="file"[^>]*accept="image\/[^>]*>/)?.[0] ?? "";
+    expect(input).toContain('accept="image/png,image/jpeg,image/webp,image/gif"');
+    expect(input).toContain("multiple");
+    expect(input).toMatch(/\bhidden\b/);
+  });
+
+  test("an attached image is a chip with its thumbnail and a ×, above the message box", () => {
+    const shot: DraftImage = { kind: "image", name: "shot.png", media_type: "image/png", file: picture("shot.png"), preview: "blob:shot" };
+    const html = composer({ attachments: [shot] });
+    expect(html).toMatch(/<img[^>]*src="blob:shot"[^>]*>/);
+    expect(html.indexOf("blob:shot")).toBeLessThan(html.indexOf("<textarea"));
+    expect(button(html, "Remove shot.png")).toContain('type="button"');
+    expect(button(html, "Send")).toMatch(/ disabled=""/);
+  });
+
+  test("PNG, JPEG, WebP and GIF pictures are attached with a thumbnail each", () => {
+    previews.length = 0;
+    const added = attachImages([], [picture("a.png"), picture("b.jpg", "image/jpeg"), picture("c.webp", "image/webp"), picture("d.gif", "image/gif")], preview);
+    expect(added.error).toBeNull();
+    expect(added.attached.map((each) => [attachmentName(each, []), each.kind === "image" && each.media_type, each.kind === "image" && each.preview])).toEqual([
+      ["a.png", "image/png", "blob:a.png"],
+      ["b.jpg", "image/jpeg", "blob:b.jpg"],
+      ["c.webp", "image/webp", "blob:c.webp"],
+      ["d.gif", "image/gif", "blob:d.gif"],
+    ]);
+  });
+
+  test("a pasted screenshot, which comes unnamed, is named for what it is", () => {
+    const [pasted] = attachImages([], [picture("", "image/png")], preview).attached;
+    expect(attachmentName(pasted, [])).toBe("Pasted image.png");
+  });
+
+  test("a provider that can't see images has Upload image off, and says so", () => {
+    const html = composer();
+    expect(item(html, "Upload image")).toMatch(/ disabled=""/);
+    expect(html).toContain("DeepSeek can&#x27;t see images");
+    const seeing = composer({ listing: openai });
+    expect(item(seeing, "Upload image")).not.toMatch(/ disabled=""/);
+    expect(seeing).not.toContain("can&#x27;t see images");
+  });
+
+  // Anthropic's limit is 5 MB of base64, about 3.75 MB of image; models see little past 2048 px.
+  test("an image goes as it is while it fits; else scaled to a 2048 px long edge and re-encoded", () => {
+    expect(imageFit({ bytes: 200_000, width: 1600, height: 900 })).toBeNull();
+    expect(imageFit({ bytes: 3_932_160, width: 2048, height: 2048 })).toBeNull();
+    expect(imageFit({ bytes: 1_000_000, width: 4000, height: 3000 })).toEqual({ width: 2048, height: 1536 });
+    expect(imageFit({ bytes: 1_000_000, width: 1000, height: 4096 })).toEqual({ width: 500, height: 2048 });
+    expect(imageFit({ bytes: 3_932_161, width: 1920, height: 1080 })).toEqual({ width: 1920, height: 1080 });
+  });
+
+  test("a picture over 5 MB is attached, to be scaled down when sent", () => {
+    const big = attachImages([], [picture("photo.jpg", "image/jpeg", 8 * 1024 * 1024)], preview);
+    expect(big.error).toBeNull();
+    expect(big.attached.map((each) => attachmentName(each, []))).toEqual(["photo.jpg"]);
+  });
+
+  test("a picture of another kind or over 30 MB isn't attached, nor previewed, and says why", () => {
+    previews.length = 0;
+    const svg = attachImages([], [picture("logo.svg", "image/svg+xml"), picture("ok.png")], preview);
+    expect(svg.attached.map((each) => attachmentName(each, []))).toEqual(["ok.png"]);
+    expect(svg.error).toBe("logo.svg isn't a picture the Agent can see: attach a PNG, JPEG, WebP or GIF.");
+
+    const big = attachImages([], [picture("huge.png", "image/png", 30 * 1024 * 1024 + 1)], preview);
+    expect(big).toEqual({ attached: [], error: "huge.png is over 30 MB." });
+    expect(previews).toEqual(["ok.png"]);
+  });
+
+  test(`images count toward the ${MAX_ATTACHMENTS} a message takes`, () => {
+    const five: DraftAttachment[] = Array.from({ length: 5 }, (_, n) => ({ kind: "text", name: `${n}.md`, text: "x" }));
+    const added = attachImages(five, [picture("a.png"), picture("b.png")], preview);
+    expect(added.attached.map((each) => attachmentName(each, []))).toEqual(["0.md", "1.md", "2.md", "3.md", "4.md", "a.png"]);
+    expect(added.error).toBe(`At most ${MAX_ATTACHMENTS} attachments go with a message.`);
   });
 });

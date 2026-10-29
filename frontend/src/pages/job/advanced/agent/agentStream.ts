@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentStop, AgentTranscriptTurn, AgentTurnPart } from "../../../../api";
+import type { AgentEvent, AgentSentAttachment, AgentStop, AgentTranscriptTurn, AgentTurnPart } from "../../../../api";
 
 /**
  * The Agent tab's chat as its events tell it: a pure reducer (`agentStream`) that folds each
@@ -16,6 +16,8 @@ export interface AgentTurnView {
   model: string | null;
   // The owner's message: from turn_started, the tab that sent it, or the chat; empty for a turn joined midway.
   prompt: string;
+  // What went with the prompt, as its chips; left out where a view is made by hand with none.
+  attachments?: AgentSentAttachment[];
   parts: AgentTurnPart[];
   // Null while it runs.
   stop: AgentStop | null;
@@ -41,7 +43,7 @@ export type AgentStreamAction =
   // The stream (re)connected: the turns running now, by tab.
   | { type: "ready"; running: Record<string, string> }
   // This tab sent `prompt` to Thread `thread` and the backend named its turn (which may have started already).
-  | { type: "prompted"; turn: string; prompt: string; thread?: string | null }
+  | { type: "prompted"; turn: string; prompt: string; thread?: string | null; attachments?: AgentSentAttachment[] }
   // Thread `thread`'s finished turns.
   | { type: "transcript"; turns: AgentTranscriptTurn[]; thread?: string | null };
 
@@ -52,6 +54,7 @@ const blankTurn = (id: string): AgentTurnView => ({
   provider: "",
   model: null,
   prompt: "",
+  attachments: [],
   parts: [],
   stop: null,
   first_revision: null,
@@ -82,7 +85,13 @@ export function agentStream(state: AgentStreamState, action: AgentStreamAction):
     case "transcript":
       return loadTranscript(action.turns, state, action.thread ?? null);
     case "prompted":
-      return withTurn(state, action.turn, (turn) => ({ ...turn, prompt: action.prompt, thread: turn.thread ?? action.thread ?? null }));
+      return withTurn(state, action.turn, (turn) => ({
+        ...turn,
+        prompt: action.prompt,
+        // Once turn_started has come (it names the provider), its record (an image's id) is kept.
+        attachments: turn.provider ? turn.attachments : (action.attachments ?? turn.attachments),
+        thread: turn.thread ?? action.thread ?? null,
+      }));
     case "turn_started":
       return withTurn({ ...state, running: { ...state.running, [action.tab]: action.turn } }, action.turn, (turn) => ({
         ...turn,
@@ -91,6 +100,7 @@ export function agentStream(state: AgentStreamState, action: AgentStreamAction):
         provider: action.provider,
         model: action.model,
         prompt: action.prompt || turn.prompt,
+        attachments: action.attachments ?? turn.attachments,
       }));
     case "text":
     case "thought":
@@ -149,6 +159,7 @@ export function loadTranscript(turns: AgentTranscriptTurn[], live: AgentStreamSt
         provider: turn.provider,
         model: turn.model,
         prompt: turn.prompt,
+        attachments: turn.attachments ?? [],
         parts: turn.parts,
         stop: turn.stop,
         first_revision: turn.first_revision,

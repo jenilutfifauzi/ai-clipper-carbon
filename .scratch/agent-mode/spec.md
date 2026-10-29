@@ -120,7 +120,7 @@ An **Agent** tab in the Inspector of the Advanced Edit. The owner picks an **Age
 
 ## Out of Scope
 
-- Image attachments, screenshots sent to the model, and a model-seen preview frame.
+- A model-seen preview frame. (Image attachments and screenshots sent to the model are now Agent Attachments: .scratch/agent-attachments/spec.md.)
 - Multiplayer presence across machines.
 - Agents editing several Candidates or rendering.
 - Custom MCP servers added by the owner.

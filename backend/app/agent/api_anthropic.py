@@ -86,7 +86,7 @@ def _messages(exchange: Exchange) -> list[dict]:
     messages: list[dict] = []
     for entry in exchange.entries:
         if isinstance(entry, ChatMessage):
-            messages.append({"role": entry.role, "content": entry.text})
+            messages.append({"role": entry.role, "content": _content(entry)})
         elif isinstance(entry, Reply):
             # Its thinking blocks go back as they came, signatures and all.
             messages.append({"role": "assistant", "content": entry.native})
@@ -97,3 +97,11 @@ def _messages(exchange: Exchange) -> list[dict]:
             ]
             messages.append({"role": "user", "content": results})
     return messages
+
+
+def _content(message: ChatMessage) -> str | list[dict]:
+    """A message's words, after its images when it has any (the order Anthropic advises)."""
+    if not message.images:
+        return message.text
+    images = [{"type": "image", "source": {"type": "base64", "media_type": image.media_type, "data": image.data}} for image in message.images]
+    return [*images, {"type": "text", "text": message.text}]

@@ -1057,6 +1057,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
     );
   // The Clipboard, across Candidates and Jobs while the tab is open.
   const here = { job: job.id, candidate: initial.id };
+  // The Job's other Candidates, which a message to the Agent can reference.
+  const others = useMemo(() => job.candidates?.filter((each) => each.id !== initial.id) ?? [], [job.candidates, initial.id]);
   const clipboard = useClipboard();
   const clip = {
     copy() {
@@ -1582,7 +1584,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           effectsElsewhere={!wide}
           videoEffectsShown={wide}
           matte={here}
-          agent={{ ...here, stream: agentChat, threads: agentThreads, onUndo: onUndoTurn, current: { value: candidate, name: candidateName(candidate, index) } }}
+          agent={{ ...here, stream: agentChat, threads: agentThreads, onUndo: onUndoTurn, current: { value: candidate, name: candidateName(candidate, index) }, others }}
           pick={pick}
           edits={edits}
           duration={duration}

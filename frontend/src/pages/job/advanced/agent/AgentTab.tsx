@@ -1,13 +1,14 @@
 import { ArrowDown } from "lucide-react";
 import { useContext, useEffect, useRef, useState } from "react";
-import { api, TAB_ID, type AgentProviderListing, type Candidate } from "../../../../api";
+import { api, TAB_ID, type AgentAttachment, type AgentProviderListing, type AgentTurnRequest, type Candidate } from "../../../../api";
 import { rememberedValue } from "../../../../remembered";
 import type { AgentTurnView } from "./agentStream";
+import { attachmentName, encodeAttachments, type DraftAttachment, type ReferableClip } from "./attachments";
 import { ChatHeader } from "./ChatHeader";
 import { ChoicePopup } from "./ChoicePopup";
 import { ErrorNote } from "./ErrorNote";
 import { openChoices } from "./choices";
-import { Composer } from "./Composer";
+import { Composer, type ComposerHandle } from "./Composer";
 import { PresenceContext } from "./presence";
 import { ProviderSetup } from "./ProviderSetup";
 import type { AgentThreads } from "./threads";
@@ -21,6 +22,30 @@ export const rememberedAgentChoice = rememberedValue<{ provider: string; model: 
 // What the empty chat offers to send.
 export const EXAMPLE_PROMPTS = ["Add a title over the first three seconds", "Tighten the pauses between sentences", "Make the captions bigger and yellow"];
 
+/** The turn request this tab sends: a model, a Thread and attachments only when there are. */
+export function turnRequest({
+  provider,
+  model,
+  prompt,
+  thread,
+  attachments,
+}: {
+  provider: string;
+  model: string | null;
+  prompt: string;
+  thread: string | null;
+  attachments: AgentAttachment[];
+}): AgentTurnRequest {
+  return {
+    provider,
+    ...(model ? { model } : {}),
+    prompt,
+    tab: TAB_ID,
+    ...(thread ? { thread } : {}),
+    ...(attachments.length > 0 ? { attachments } : {}),
+  };
+}
+
 /** The provider to show: the one last chosen while it is listed, else the first ready, else the first. */
 export function chosenListing(listings: AgentProviderListing[], chosen: string | null): AgentProviderListing | null {
   return listings.find((listing) => listing.provider.id === chosen) ?? listings.find((listing) => listing.status.ready) ?? listings[0] ?? null;
@@ -32,6 +57,8 @@ export function modelOptions({ provider, status }: AgentProviderListing): string
   return [...new Set([status.model, ...provider.models, provider.default_model].filter((model): model is string => !!model))];
 }
 
+const NO_CLIPS: ReferableClip[] = [];
+
 /**
  * The Inspector's Agent tab (loaded only when opened), laid out as open-pencil's chat panel: a
  * header, the transcript, and the composer, whose model pill picks an Agent Provider and model.
@@ -39,7 +66,8 @@ export function modelOptions({ provider, status }: AgentProviderListing): string
  * streaming in. The chat's `stream` and its Agent `threads` are the editor's (they outlive the tab;
  * without `threads`, the header lists none and a message goes to the newest), and `onUndo` reverts or
  * restores a finished turn. `candidate` is the Candidate as the editor holds it, with its name, which
- * the Agent shows through show_ui; a choice it offers is sent as the composer sends.
+ * the Agent shows through show_ui; a choice it offers is sent as the composer sends. `others` are the
+ * Job's other Candidates, which a message can reference.
  */
 export function AgentTab({
   jobId,
@@ -48,6 +76,7 @@ export function AgentTab({
   threads,
   onUndo,
   candidate = null,
+  others = NO_CLIPS,
   initialProviders = null,
 }: {
   jobId: string;
@@ -56,6 +85,7 @@ export function AgentTab({
   threads?: AgentThreads;
   onUndo?: UndoTurn;
   candidate?: { value: Candidate; name: string } | null;
+  others?: ReferableClip[];
   initialProviders?: AgentProviderListing[] | null;
 }) {
   const [providers, setProviders] = useState(initialProviders);
@@ -64,8 +94,10 @@ export function AgentTab({
   const [setupOpen, setSetupOpen] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  // The message last sent, for "Try again" when it couldn't be.
-  const [lastPrompt, setLastPrompt] = useState<string | null>(null);
+  // The message last sent, for "Try again" when it couldn't be: the composer's, which the composer
+  // sends again as it holds it now (and empties once it goes), or a choice's or an example's words.
+  const [lastSent, setLastSent] = useState<"composer" | { prompt: string } | null>(null);
+  const composer = useRef<ComposerHandle>(null);
   // The choices the owner closed with Escape or ✕, by their call: still answerable from their card.
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
   const root = useRef<HTMLDivElement>(null);
@@ -99,21 +131,21 @@ export function AgentTab({
   };
 
   // Whether it was sent: the composer then empties.
-  async function send(prompt: string): Promise<boolean> {
+  async function send(prompt: string, attachments: DraftAttachment[] = [], from: "composer" | "choice" = "choice"): Promise<boolean> {
     if (!listing || busy) return false;
-    setLastPrompt(prompt);
+    setLastSent(from === "composer" ? "composer" : { prompt });
     setSending(true);
     setSendError(null);
     try {
-      const thread = threads?.active?.id;
-      const turn = await api.sendAgentTurn(jobId, candidateId, {
-        provider: listing.provider.id,
-        ...(model ? { model } : {}),
+      const thread = threads?.active?.id ?? null;
+      // Images go as base64, read from their files only now.
+      const encoded = await encodeAttachments(attachments);
+      const turn = await api.sendAgentTurn(jobId, candidateId, turnRequest({ provider: listing.provider.id, model, prompt, thread, attachments: encoded }));
+      stream.prompted(
+        turn,
         prompt,
-        tab: TAB_ID,
-        ...(thread ? { thread } : {}),
-      });
-      stream.prompted(turn, prompt);
+        attachments.map((attachment) => ({ kind: attachment.kind, name: attachmentName(attachment, others) })),
+      );
       return true;
     } catch (reason) {
       setSendError(reason instanceof Error ? reason.message : "Couldn't send it");
@@ -132,7 +164,7 @@ export function AgentTab({
   const error = sendError ?? stream.state.error ?? threads?.error ?? null;
   const open = busy ? null : openChoices(stream.state.turns);
   const popup = open && !dismissed.has(open.call) ? open : null;
-  const host: AgentUiHost = { jobId, candidate, busy, choose: (prompt) => void send(prompt), popup: popup?.call ?? null };
+  const host: AgentUiHost = { jobId, candidateId, candidate, busy, choose: (prompt) => void send(prompt), popup: popup?.call ?? null };
   // The pop up gone, the focus it held goes back to the message box.
   const backToComposer = () => root.current?.querySelector<HTMLTextAreaElement>("[data-composer] textarea")?.focus();
   return (
@@ -144,11 +176,11 @@ export function AgentTab({
             <ProviderSetup listing={listing} onSaved={saved} />
           </div>
         ) : (
-          <Transcript turns={stream.state.turns} onExample={send} onUndo={onUndo} />
+          <Transcript turns={stream.state.turns} onExample={(prompt) => void send(prompt)} onUndo={onUndo} />
         )}
         {!settingUp && error && (
           <div className="shrink-0 px-3 pb-2">
-            <ErrorNote error={error} onRetry={sendError && lastPrompt && !busy ? () => void send(lastPrompt) : undefined} />
+            <ErrorNote error={error} onRetry={sendError && lastSent && !busy ? () => (lastSent === "composer" ? composer.current?.send() : void send(lastSent.prompt)) : undefined} />
           </div>
         )}
         {!settingUp && popup && (
@@ -166,6 +198,7 @@ export function AgentTab({
           />
         )}
         <Composer
+          ref={composer}
           providers={providers}
           listing={listing}
           models={models}
@@ -176,8 +209,9 @@ export function AgentTab({
           onSetup={() => setSetupOpen(!setupOpen)}
           busy={busy}
           running={stream.running !== null}
-          onSend={send}
+          onSend={(prompt, attachments) => send(prompt, attachments, "composer")}
           onStop={stop}
+          candidates={others}
         />
       </div>
     </AgentUiContext.Provider>

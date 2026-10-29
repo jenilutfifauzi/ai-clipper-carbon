@@ -62,8 +62,9 @@ def fake_agent(tmp_path, monkeypatch) -> FakeAgent:
     return agent
 
 
-def send(client, job: dict, candidate: dict, prompt: str, provider: str = "claude-code", tab: str = "tab-a"):
-    return client.post(f"{agent_url(job, candidate)}/turns", json={"provider": provider, "prompt": prompt, "tab": tab})
+def send(client, job: dict, candidate: dict, prompt: str, provider: str = "claude-code", tab: str = "tab-a", attachments: list[dict] | None = None):
+    body = {"provider": provider, "prompt": prompt, "tab": tab, "attachments": attachments or []}
+    return client.post(f"{agent_url(job, candidate)}/turns", json=body)
 
 
 def says(text: str) -> dict:
@@ -82,7 +83,7 @@ def test_a_turn_launches_the_agent_with_the_scoped_server_and_the_system_prompt(
     turn = sent.json()["turn"]
     received = until_finished(stream)
     assert received == [
-        ("turn_started", {"type": "turn_started", "turn": turn, "tab": "tab-a", "thread": ANY, "provider": "claude-code", "model": None, "prompt": "Tighten the pauses"}),
+        ("turn_started", {"type": "turn_started", "turn": turn, "tab": "tab-a", "thread": ANY, "provider": "claude-code", "model": None, "prompt": "Tighten the pauses", "attachments": []}),
         ("text", {"type": "text", "turn": turn, "delta": "Done."}),
         ("turn_finished", {"type": "turn_finished", "turn": turn, "stop": "end_turn", "first_revision": None, "last_revision": None}),
     ]
@@ -380,3 +381,49 @@ def test_an_agent_without_mcp_over_http_ends_the_turn_with_a_readable_error(serv
     assert [name for name, _ in received] == ["turn_started", "error", "turn_finished"]
     assert "MCP servers over HTTP" in received[1][1]["message"]
     assert fake_agent.received("session/new") == []
+
+
+# .scratch/agent-attachments/issues/04: images, to an agent that says it sees them.
+PNG = "iVBORw0KGgo="
+IMAGE = {"kind": "image", "name": "shot.png", "media_type": "image/png", "data": PNG}
+
+
+def test_images_go_as_blocks_after_the_text_to_an_agent_that_sees_them(served, job, fake_agent):
+    candidate = job["candidates"][0]
+    fake_agent.turns([[says("I see it.")], [says("Ok.")]])
+    stream = agent_events(served, job, candidate)
+    next(stream)
+
+    sent = send(served, job, candidate, "Fix this", attachments=[IMAGE, {**IMAGE, "media_type": "image/gif", "name": "b.gif"}])
+    assert sent.status_code == 202, sent.text
+    until_finished(stream)
+    send(served, job, candidate, "Next")
+    until_finished(stream)
+
+    first, second = fake_agent.received("session/prompt")
+    text, *images = first["params"]["prompt"]
+    assert text["type"] == "text" and text["text"].endswith("Fix this")
+    assert images == [{"type": "image", "mimeType": "image/png", "data": PNG}, {"type": "image", "mimeType": "image/gif", "data": PNG}]
+    assert second["params"]["prompt"] == [{"type": "text", "text": "Next"}]
+
+
+def test_images_to_an_agent_that_cant_see_them_end_the_turn_before_it_is_prompted(served, job, fake_agent, monkeypatch):
+    candidate = job["candidates"][0]
+    monkeypatch.setenv("FAKE_ACP_NO_IMAGE", "1")
+    fake_agent.turns([[says("Words only.")]])
+    stream = agent_events(served, job, candidate)
+    next(stream)
+
+    send(served, job, candidate, "Fix this", provider="codex", attachments=[IMAGE])
+    refused = until_finished(stream)
+
+    assert [name for name, _ in refused] == ["turn_started", "error", "turn_finished"]
+    assert refused[1][1]["message"].startswith("Codex can't see images")
+    assert refused[-1][1]["stop"] == "error"
+    assert fake_agent.received("session/prompt") == []
+
+    # Without them it goes on, in the same process.
+    send(served, job, candidate, "Fix it anyway", provider="codex")
+    received = until_finished(stream)
+    assert received[1][1]["delta"] == "Words only."
+    assert len(fake_agent.received("initialize")) == 1

@@ -23,7 +23,7 @@ Make the tab look and behave like open-pencil's chat panel. The reference is Vue
 
 ## Decisions
 - Tokens: `raised`, `bg-fill`, `accent`/`accent-end`, `text-muted`, `border-border`. No new palette.
-- No pointer or image buttons in the composer: the Agent has no selection or image input yet.
+- No pointer button in the composer: the Agent has no selection input yet. Images and other Agent Attachments, from a + in the composer, are .scratch/agent-attachments/spec.md.
 - The data hooks and aria labels that the tests rely on are kept: `data-composer`, `data-example`, `data-tool-row`, `data-turn-actions`, "Send", "Stop", "Message the Agent".
 - Revert and Restore stay per Revision (ADR 0028), whichever Thread the turn is in.
 - Switching Threads on an ACP session closes its ACP process, so the agent starts with no history.

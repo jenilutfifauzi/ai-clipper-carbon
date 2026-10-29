@@ -9,6 +9,28 @@ const fold = (actions: AgentStreamAction[], from: AgentStreamState = EMPTY_STREA
 const started: AgentEvent = { type: "turn_started", turn: "t1", tab: "tab-a", thread: "th1", provider: "deepseek", model: "deepseek-chat", prompt: "Add a title" };
 
 describe("agentStream", () => {
+  // .scratch/agent-attachments/issues/01
+  test("a turn's attachments come with its prompt: from the tab that sent it, turn_started, or the chat", () => {
+    const brief = [{ kind: "text", name: "brief.md", id: null }];
+    expect(fold([{ type: "prompted", turn: "t1", prompt: "Follow it", attachments: brief }]).turns[0].attachments).toEqual(brief);
+    expect(fold([{ ...started, attachments: brief } as AgentEvent]).turns[0].attachments).toEqual(brief);
+    expect(fold([started]).turns[0].attachments).toEqual([]);
+    const kept: AgentTranscriptTurn = {
+      id: "t1", provider: "deepseek", model: null, prompt: "Follow it", attachments: brief, parts: [], first_revision: null, last_revision: null, stop: "end_turn", started_at: "",
+    };
+    expect(loadTranscript([kept]).turns[0].attachments).toEqual(brief);
+    expect(loadTranscript([{ ...kept, attachments: undefined }]).turns[0].attachments).toEqual([]);
+  });
+
+  // The backend's record of them (an image's id, a clip's name) wins over the tab's own, whichever comes first.
+  test("a turn keeps the attachments turn_started gave it when the tab's prompted comes after", () => {
+    const shot = [{ kind: "image", name: "shot.png", id: "0123456789abcdef" }];
+    const mine = [{ kind: "image", name: "shot.png" }];
+    const withShot = { ...started, attachments: shot } as AgentEvent;
+    expect(fold([withShot, { type: "prompted", turn: "t1", prompt: "Add a title", attachments: mine }]).turns[0].attachments).toEqual(shot);
+    expect(fold([{ type: "prompted", turn: "t1", prompt: "Add a title", attachments: mine }, withShot]).turns[0].attachments).toEqual(shot);
+  });
+
   test("a scripted turn gives one turn with text, a thought, and a tool row that goes from running to done", () => {
     const running = fold([
       started,

@@ -1,6 +1,7 @@
 """The API tool loop's Gemini adapter, through the `google-genai` SDK app/llm.py uses too, with the MCP
 tools declared as functions."""
 
+import base64
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -107,7 +108,8 @@ def _contents(exchange: Exchange) -> list[types.Content]:
     for entry in exchange.entries:
         if isinstance(entry, ChatMessage):
             role = "user" if entry.role == "user" else "model"
-            contents.append(types.Content(role=role, parts=[types.Part(text=entry.text)]))
+            images = [types.Part(inline_data=types.Blob(mime_type=image.media_type, data=base64.b64decode(image.data))) for image in entry.images]
+            contents.append(types.Content(role=role, parts=[*images, types.Part(text=entry.text)]))
         elif isinstance(entry, Reply):
             contents.append(entry.native)
             named = {part.function_call.id for part in entry.native.parts or [] if part.function_call and part.function_call.id}

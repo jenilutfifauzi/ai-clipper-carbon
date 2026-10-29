@@ -10,6 +10,7 @@ from typing import Annotated, Literal
 from fastapi.sse import ServerSentEvent
 from pydantic import BaseModel, Field
 
+from app.agent.attachments import SentAttachment
 from app.agent.ui_spec import is_show_ui
 
 # How much of a tool call's input or output an event carries for the chat's tool card.
@@ -31,6 +32,8 @@ class TurnStarted(BaseModel):
     model: str | None
     # What the owner asked, so that every open chat shows it while the turn runs.
     prompt: str
+    # What went with it, for its chips.
+    attachments: list[SentAttachment] = Field(default_factory=list)
 
 
 class TextDelta(BaseModel):

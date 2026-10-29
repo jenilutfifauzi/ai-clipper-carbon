@@ -100,7 +100,7 @@ async def run_api_turn(context: TurnContext, adapter: ApiAdapter) -> AsyncIterat
             model=context.model,
             system=context.system,
             tools=(await mcp.list_tools()).tools,
-            entries=[*context.history, ChatMessage(role="user", text=context.prompt)],
+            entries=[*context.history, ChatMessage(role="user", text=context.prompt, images=context.images)],
         )
         for _ in range(MAX_STEPS):
             reply = Reply()
