@@ -22,9 +22,9 @@ export function toggledEmphasis(text: string, selection: [number, number]): { te
 /** Whether the words `selection` touches are inside an Emphasis. */
 export const inEmphasis = (text: string, selection: [number, number]) => runAround(text, wholeWords(text, selection)) !== null;
 
-// The Emphasis runs of `text`, as the positions of their asterisks: paired from the left, as the
-// planner pairs them (an odd last one is shown as it is).
-function runs(text: string): [number, number][] {
+/** The Emphasis runs of `text`, as the positions of their asterisks: paired from the left, as the
+ * planner pairs them (an odd last one is shown as it is). */
+export function runs(text: string): [number, number][] {
   const stars = [...text.matchAll(/\*/g)].map((match) => match.index);
   return Array.from({ length: Math.floor(stars.length / 2) }, (_, i) => [stars[2 * i], stars[2 * i + 1]]);
 }

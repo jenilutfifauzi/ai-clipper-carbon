@@ -13,7 +13,7 @@ import { grouped, TurnView } from "./TurnView";
 import { EMPTY_STREAM, type AgentTurnView } from "./agentStream";
 import type { AgentStream } from "./useAgentStream";
 import { frameUrl } from "./ui/CandidateCard";
-import { ChoicesCard } from "./ui/ChoicesCard";
+import { ChoicesCard, emphasized } from "./ui/ChoicesCard";
 import { AgentUiContext, GenerativeUi, type AgentUiHost } from "./ui/GenerativeUi";
 
 // The editor's stream, with no turns yet.
@@ -282,6 +282,12 @@ describe("Agent UI", () => {
       { label: "Long", prompt: "Use the long hook" },
     ],
   };
+  test("a choice's *words* are shown as Emphasis, an odd last asterisk as it is", () => {
+    expect(renderToStaticMarkup(<>{emphasized("Buka 24 jam tapi kok *KEABISAN* terus?!")}</>)).toBe(
+      'Buka 24 jam tapi kok <strong class="font-semibold text-accent-text">KEABISAN</strong> terus?!',
+    );
+    expect(renderToStaticMarkup(<>{emphasized("*a* b *c")}</>)).toBe('<strong class="font-semibold text-accent-text">a</strong> b *c');
+  });
   const shown = (call: string, ui: AgentUi): ToolPart => ({ type: "tool", call, tool: "show_ui", summary: "", ok: true, error: null, revision: null, ui });
   const host = (change: Partial<AgentUiHost> = {}): AgentUiHost => ({ jobId: "j1", candidate: null, busy: false, choose: () => {}, ...change });
   const turn = (id: string, prompt: string, parts: AgentTurnView["parts"]): AgentTurnView => ({

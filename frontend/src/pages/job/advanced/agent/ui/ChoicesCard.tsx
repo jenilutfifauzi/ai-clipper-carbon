@@ -1,6 +1,8 @@
 import { Check } from "lucide-react";
+import type { ReactNode } from "react";
 import type { AgentUi } from "../../../../../api";
 import { cx } from "../../../../../format";
+import { runs } from "../../../editor/emphasis";
 import type { AgentUiHost } from "./GenerativeUi";
 
 /**
@@ -37,7 +39,7 @@ export function ChoicesCard({
             )}
           >
             <span className="flex min-w-0 flex-1 flex-col">
-              <span className="text-pretty">{option.label}</span>
+              <span className="text-pretty">{emphasized(option.label)}</span>
               {option.detail && <span className="text-xs text-pretty text-muted">{option.detail}</span>}
             </span>
             {chosen && (
@@ -51,4 +53,16 @@ export function ChoicesCard({
       })}
     </div>
   );
+}
+
+/** `label` with its Emphasis (a hook's *words*) shown as Emphasis rather than as asterisks. */
+export function emphasized(label: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  let from = 0;
+  for (const [open, close] of runs(label)) {
+    parts.push(label.slice(from, open), <strong key={open} className="font-semibold text-accent-text">{label.slice(open + 1, close)}</strong>);
+    from = close + 1;
+  }
+  parts.push(label.slice(from));
+  return parts.filter((part) => part !== "");
 }
