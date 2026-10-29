@@ -2,7 +2,7 @@
 
 **Parent spec:** `spec.md` (Solution 1, revised).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Blocked by:** 07
 
@@ -38,5 +38,5 @@
 3. StatusLine's markup: an `aria-hidden` canvas, and none of the old glyph frames.
 
 ## Acceptance
-- [ ] The tests at the three seams pass. Only `npx vitest run src/pages/job/advanced/agent` and `npx tsc --noEmit` are run.
-- [ ] Checked in the browser on a live turn: the orb turns and twists, in orange, in both the status line and Stop, and hovering Stop shows the square.
+- [x] The tests at the three seams pass (`orb.test.tsx`, `composer.test.tsx`). Only `npx vitest run src/pages/job/advanced/agent` and `npx tsc --noEmit` are run.
+- [x] Checked in the browser on a live turn (dark): the orb turns and twists, in orange, in both the status line and Stop, and hovering Stop shows the square.
