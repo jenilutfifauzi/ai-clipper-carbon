@@ -24,7 +24,7 @@ from app.agent.events import AgentError, AgentEvent, AgentFeed, Stop, ToolFinish
 from app.agent.prompt import system_prompt
 from app.agent.providers import AcpProvider, ApiProvider, launch_command
 from app.agent.scope import AgentScope, ScopeRegistry
-from app.agent.transcript_store import TranscriptTurn, TurnPart, append_turn, find_turn, load_transcript, turn_text, with_event
+from app.agent.transcript_store import ToolPart, TranscriptTurn, TurnPart, append_turn, find_turn, load_transcript, turn_text, with_event
 from app.jobs import JobStore
 
 logger = logging.getLogger(__name__)
@@ -230,6 +230,10 @@ class AgentSessionManager:
         def publish(event: AgentEvent) -> None:
             nonlocal parts
             parts = with_event(parts, event)
+            if isinstance(event, ToolFinished):
+                # Its Agent UI as with_event parsed it, so that a live chat draws it without parsing.
+                part = next((part for part in parts if isinstance(part, ToolPart) and part.call == event.call), None)
+                event = event.model_copy(update={"ui": part.ui if part else None})
             self.feed.publish(name, event)
 
         self._scopes.set_turn(session.token, turn)

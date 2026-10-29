@@ -1,7 +1,7 @@
 // .scratch/agent-mode/issues/04-agent-tab.md: the Agent tab's pure reducer folds an Agent Turn's
 // events into turns and their parts, and loads the Candidate's chat.
 import { describe, expect, test } from "vitest";
-import type { AgentEvent, AgentTranscriptTurn } from "../../../../api";
+import type { AgentEvent, AgentTranscriptTurn, AgentUi } from "../../../../api";
 import { agentStream, EMPTY_STREAM, loadTranscript, ownTurns, runningTurn, type AgentStreamAction, type AgentStreamState } from "./agentStream";
 
 const fold = (actions: AgentStreamAction[], from: AgentStreamState = EMPTY_STREAM) => actions.reduce(agentStream, from);
@@ -64,6 +64,21 @@ describe("agentStream", () => {
     expect(state.turns[0].parts).toMatchObject([
       { call: "c1", input: '{"changes":{}}', output: "Saved Revision 2" },
       { call: "c2", input: '{"job_id":"j"}', output: "{}" },
+    ]);
+  });
+
+  test("a show_ui call keeps the Agent UI its finish carries; another call has none", () => {
+    const ui: AgentUi = { kind: "choices", options: [{ label: "A", prompt: "Pick A" }, { label: "B", prompt: "Pick B" }] };
+    const state = fold([
+      started,
+      { type: "tool_started", turn: "t1", call: "c1", tool: "show_ui", summary: "" },
+      { type: "tool_finished", turn: "t1", call: "c1", ok: true, output: JSON.stringify(ui), ui },
+      { type: "tool_started", turn: "t1", call: "c2", tool: "get_candidate", summary: "" },
+      { type: "tool_finished", turn: "t1", call: "c2", ok: true, output: "{}" },
+    ]);
+    expect(state.turns[0].parts).toMatchObject([
+      { call: "c1", ui },
+      { call: "c2", ui: null },
     ]);
   });
 

@@ -1582,7 +1582,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           effectsElsewhere={!wide}
           videoEffectsShown={wide}
           matte={here}
-          agent={{ ...here, stream: agentChat, threads: agentThreads, onUndo: onUndoTurn }}
+          agent={{ ...here, stream: agentChat, threads: agentThreads, onUndo: onUndoTurn, current: { value: candidate, name: candidateName(candidate, index) } }}
           pick={pick}
           edits={edits}
           duration={duration}

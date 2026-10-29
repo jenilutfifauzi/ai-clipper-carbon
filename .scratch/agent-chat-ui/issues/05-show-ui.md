@@ -2,7 +2,7 @@
 
 **Parent spec:** `spec.md` (Solution 5).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Blocked by:** 03, 04
 
@@ -46,11 +46,11 @@
 - `GLOSSARY.md`, "Agent Mode": **Agent UI**, a component the Agent shows in the chat through `show_ui`.
 
 ## Acceptance
-- [ ] New file `tests/test_agent_show_ui.py` covers:
+- [x] New file `tests/test_agent_show_ui.py` covers:
   - each kind validates and is normalized;
   - a bad spec is a tool error;
   - `with_event` fills `ui`, including with a prefixed tool name;
   - `show_ui` is in the scoped tool list and not on `/mcp`.
-- [ ] `test_agent_scope.py` passes, updated for the new tool.
-- [ ] Frontend: `agentStream.test.ts` keeps `ui`. `agentTab.test.tsx` tests that clicking a choice sends its prompt, that the options are disabled afterwards, and that an unknown kind renders nothing.
-- [ ] typecheck passes. Only the agent test files are run.
+- [x] `test_agent_scope.py` passes, updated for the new tool.
+- [x] Frontend: `agentStream.test.ts` keeps `ui`. `agentTab.test.tsx` tests that clicking a choice sends its prompt, that the options are disabled afterwards, and that an unknown kind renders nothing.
+- [x] typecheck passes. Only the agent test files are run.

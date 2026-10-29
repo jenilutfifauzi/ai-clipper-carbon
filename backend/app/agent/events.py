@@ -10,6 +10,8 @@ from typing import Annotated, Literal
 from fastapi.sse import ServerSentEvent
 from pydantic import BaseModel, Field
 
+from app.agent.ui_spec import is_show_ui
+
 # How much of a tool call's input or output an event carries for the chat's tool card.
 MAX_SHOWN = 4096
 
@@ -65,6 +67,8 @@ class ToolFinished(BaseModel):
     # The result's text, cut by `shown`; and the call's input when it only arrived with its end (ACP).
     output: str | None = None
     input: str | None = None
+    # A show_ui call's Agent UI, its output parsed: set as it is published (sessions), from its part.
+    ui: dict | None = None
 
 
 class TurnFinished(BaseModel):
@@ -90,8 +94,8 @@ AgentEvent = Annotated[
 
 def shown(text: str | None, tool: str = "") -> str | None:
     """`text` cut to MAX_SHOWN characters, with `…` when it was cut, for a tool card. A `show_ui` call's
-    is kept whole (the tool name may carry an `mcp__…__` prefix): the chat draws it (ticket 05)."""
-    if text is None or len(text) <= MAX_SHOWN or tool.endswith("show_ui"):
+    is kept whole: the chat draws it (ui_spec)."""
+    if text is None or len(text) <= MAX_SHOWN or is_show_ui(tool):
         return text
     return text[:MAX_SHOWN] + "…"
 

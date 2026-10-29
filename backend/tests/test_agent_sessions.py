@@ -90,7 +90,7 @@ def test_the_chat_is_kept_and_sent_back_as_history(served, chat, job):
     assert "Agent hook" in tool.pop("output")
     assert kept["parts"] == [
         {"type": "tool", "call": "call-0", "tool": "edit_candidate", "summary": "sets hook_text", "ok": True, "error": None,
-         "revision": finished["last_revision"]},
+         "revision": finished["last_revision"], "ui": None},
         {"type": "thought", "text": "Easy."},
         {"type": "text", "text": "Set it."},
     ]

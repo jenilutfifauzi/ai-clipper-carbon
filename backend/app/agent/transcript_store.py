@@ -13,6 +13,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, TypeAdapter
 
 from app.agent.events import AgentEvent, Stop, TextDelta, ThoughtDelta, ToolFinished, ToolStarted
+from app.agent.ui_spec import is_show_ui, parsed
 from app.storage import write_atomic
 
 TRANSCRIPTS_DIR = "agent"
@@ -60,6 +61,9 @@ class ToolPart(BaseModel):
     # transcript from before they were kept.
     input: str | None = None
     output: str | None = None
+    # A show_ui call's Agent UI, which the chat draws in place of its card; None for any other call,
+    # or one whose output isn't a spec.
+    ui: dict | None = None
 
 
 TurnPart = Annotated[TextPart | ThoughtPart | ToolPart, Field(discriminator="type")]
@@ -226,7 +230,7 @@ def _migrate(legacy: Path, folder: Path) -> None:
 
 def with_event(parts: list[TurnPart], event: AgentEvent) -> list[TurnPart]:
     """`parts` with `event` folded in: a delta extends the text or thought before it, a tool call adds a
-    row that its finish fills in. Other events leave them as they are."""
+    row that its finish fills in (a show_ui call's with its Agent UI). Other events leave them as they are."""
     last = parts[-1] if parts else None
     if isinstance(event, TextDelta | ThoughtDelta):
         kind = TextPart if isinstance(event, TextDelta) else ThoughtPart
@@ -238,12 +242,17 @@ def with_event(parts: list[TurnPart], event: AgentEvent) -> list[TurnPart]:
     if isinstance(event, ToolFinished):
         done = {"ok": event.ok, "error": event.error, "revision": event.revision, "output": event.output}
         return [
-            part.model_copy(update={**done, "input": part.input if part.input is not None else event.input})
+            part.model_copy(update={**done, "input": part.input if part.input is not None else event.input, "ui": _ui(part.tool, event)})
             if isinstance(part, ToolPart) and part.call == event.call
             else part
             for part in parts
         ]
     return parts
+
+
+def _ui(tool: str, event: ToolFinished) -> dict | None:
+    """The Agent UI a finished call shows: a show_ui call's spec, when it succeeded."""
+    return parsed(event.output) if event.ok and is_show_ui(tool) else None
 
 
 def turn_text(turn: TranscriptTurn) -> str:

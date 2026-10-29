@@ -1,6 +1,6 @@
 import { ArrowDown } from "lucide-react";
 import { useContext, useEffect, useRef, useState } from "react";
-import { api, TAB_ID, type AgentProviderListing } from "../../../../api";
+import { api, TAB_ID, type AgentProviderListing, type Candidate } from "../../../../api";
 import { rememberedValue } from "../../../../remembered";
 import type { AgentTurnView } from "./agentStream";
 import { ChatHeader } from "./ChatHeader";
@@ -9,6 +9,7 @@ import { PresenceContext } from "./presence";
 import { ProviderSetup } from "./ProviderSetup";
 import type { AgentThreads } from "./threads";
 import { TurnView, type UndoTurn } from "./TurnView";
+import { AgentUiContext, type AgentUiHost } from "./ui/GenerativeUi";
 import type { AgentStream } from "./useAgentStream";
 
 // The provider and model last chosen, per browser; versioned so a later shape starts afresh.
@@ -34,7 +35,8 @@ export function modelOptions({ provider, status }: AgentProviderListing): string
  * Set the provider up until it is ready, and chat with it about this Candidate, each Agent Turn
  * streaming in. The chat's `stream` and its Agent `threads` are the editor's (they outlive the tab;
  * without `threads`, the header lists none and a message goes to the newest), and `onUndo` reverts or
- * restores a finished turn.
+ * restores a finished turn. `candidate` is the Candidate as the editor holds it, with its name, which
+ * the Agent shows through show_ui; a choice it offers is sent as the composer sends.
  */
 export function AgentTab({
   jobId,
@@ -42,6 +44,7 @@ export function AgentTab({
   stream,
   threads,
   onUndo,
+  candidate = null,
   initialProviders = null,
 }: {
   jobId: string;
@@ -49,6 +52,7 @@ export function AgentTab({
   stream: AgentStream;
   threads?: AgentThreads;
   onUndo?: UndoTurn;
+  candidate?: { value: Candidate; name: string } | null;
   initialProviders?: AgentProviderListing[] | null;
 }) {
   const [providers, setProviders] = useState(initialProviders);
@@ -117,32 +121,35 @@ export function AgentTab({
   }
   const settingUp = !listing.status.ready || setupOpen;
   const error = sendError ?? stream.state.error ?? threads?.error ?? null;
+  const host: AgentUiHost = { jobId, candidate, busy, choose: (prompt) => void send(prompt) };
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <ChatHeader turns={stream.state.turns} threads={threads} />
-      {settingUp ? (
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-          <ProviderSetup listing={listing} onSaved={saved} />
-        </div>
-      ) : (
-        <Transcript turns={stream.state.turns} onExample={send} onUndo={onUndo} />
-      )}
-      {!settingUp && error && <p className="shrink-0 px-3 pb-2 text-sm text-danger">{error}</p>}
-      <Composer
-        providers={providers}
-        listing={listing}
-        models={models}
-        model={model}
-        onChoose={choose}
-        setup={settingUp}
-        setupOpen={setupOpen}
-        onSetup={() => setSetupOpen(!setupOpen)}
-        busy={busy}
-        running={stream.running !== null}
-        onSend={send}
-        onStop={stop}
-      />
-    </div>
+    <AgentUiContext.Provider value={host}>
+      <div className="flex h-full min-h-0 flex-col">
+        <ChatHeader turns={stream.state.turns} threads={threads} />
+        {settingUp ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+            <ProviderSetup listing={listing} onSaved={saved} />
+          </div>
+        ) : (
+          <Transcript turns={stream.state.turns} onExample={send} onUndo={onUndo} />
+        )}
+        {!settingUp && error && <p className="shrink-0 px-3 pb-2 text-sm text-danger">{error}</p>}
+        <Composer
+          providers={providers}
+          listing={listing}
+          models={models}
+          model={model}
+          onChoose={choose}
+          setup={settingUp}
+          setupOpen={setupOpen}
+          onSetup={() => setSetupOpen(!setupOpen)}
+          busy={busy}
+          running={stream.running !== null}
+          onSend={send}
+          onStop={stop}
+        />
+      </div>
+    </AgentUiContext.Provider>
   );
 }
 
@@ -198,8 +205,8 @@ function Transcript({ turns, onExample, onUndo }: { turns: AgentTurnView[]; onEx
         }}
         className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3"
       >
-        {turns.map((turn) => (
-          <TurnView key={turn.id} turn={turn} onUndo={onUndo} />
+        {turns.map((turn, index) => (
+          <TurnView key={turn.id} turn={turn} nextPrompt={turns[index + 1]?.prompt ?? null} onUndo={onUndo} />
         ))}
       </div>
       {scrolledUp && (

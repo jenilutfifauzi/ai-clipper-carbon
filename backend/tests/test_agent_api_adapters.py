@@ -205,7 +205,7 @@ def test_every_adapter_yields_the_same_turn(turn):
         {"type": "thought", "turn": "t1", "delta": "Plan."},
         {"type": "tool_started", "turn": "t1", "call": "call-0", "tool": "edit_candidate", "summary": "sets hook_text"},
         {"type": "tool_finished", "turn": "t1", "call": "call-0", "ok": True, "error": None, "revision": None,
-         "output": "Saved Revision 2", "input": None},
+         "output": "Saved Revision 2", "input": None, "ui": None},
         {"type": "text", "turn": "t1", "delta": "Done."},
         {"type": "turn_finished", "turn": "t1", "stop": "end_turn", "first_revision": None, "last_revision": None},
     ]

@@ -156,7 +156,7 @@ def test_a_turn_streams_its_tool_call_and_answer_and_its_revisions_name_it(serve
     assert saved["hook_text"] == "Agent hook"
     output = tool_finished.pop("output")
     assert "Agent hook" in output
-    assert tool_finished == {"type": "tool_finished", "turn": turn, "call": "call-0", "ok": True, "error": None, "revision": saved["revision"], "input": None}
+    assert tool_finished == {"type": "tool_finished", "turn": turn, "call": "call-0", "ok": True, "error": None, "revision": saved["revision"], "input": None, "ui": None}
     assert text == {"type": "text", "turn": turn, "delta": "Done."}
     assert finished == {
         "type": "turn_finished", "turn": turn, "stop": "end_turn",

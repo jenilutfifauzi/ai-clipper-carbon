@@ -1,6 +1,6 @@
 import { Check, Copy } from "lucide-react";
 import { memo, useEffect, useState } from "react";
-import type { AgentStop, AgentTurnPart, AgentTurnUndo } from "../../../../api";
+import type { AgentStop, AgentTurnPart, AgentTurnUndo, AgentUi } from "../../../../api";
 import { Button } from "../../../../components/Button";
 import { writeClipboard } from "../../../../components/CopyButton";
 import type { AgentTurnView } from "./agentStream";
@@ -8,6 +8,7 @@ import { ChatMarkdown } from "./ChatMarkdown";
 import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolGroup } from "./ToolGroup";
 import type { ToolPart } from "./ToolRow";
+import { GenerativeUi } from "./ui/GenerativeUi";
 
 // How a turn that didn't simply finish ended, under it.
 const STOPPED: Partial<Record<AgentStop, string>> = {
@@ -15,15 +16,20 @@ const STOPPED: Partial<Record<AgentStop, string>> = {
   step_limit: "Stopped after its step limit.",
 };
 
-// What a turn shows, in order: each run of consecutive tool calls as one group, its other parts one by one.
-type Shown = { type: "tools"; parts: ToolPart[] } | { type: "part"; part: Exclude<AgentTurnPart, ToolPart>; index: number };
+// What a turn shows, in order: each run of consecutive tool calls as one group, a show_ui call's Agent
+// UI on its own (never folded), its other parts one by one.
+type Shown =
+  | { type: "tools"; parts: ToolPart[] }
+  | { type: "ui"; call: string; ui: AgentUi }
+  | { type: "part"; part: Exclude<AgentTurnPart, ToolPart>; index: number };
 
-/** `parts` with each run of consecutive tool calls gathered into one. */
+/** `parts` with each run of consecutive tool calls gathered into one; an Agent UI breaks a run. */
 export function grouped(parts: AgentTurnPart[]): Shown[] {
   const shown: Shown[] = [];
   parts.forEach((part, index) => {
     const last = shown.at(-1);
     if (part.type !== "tool") shown.push({ type: "part", part, index });
+    else if (part.ui) shown.push({ type: "ui", call: part.call, ui: part.ui });
     else if (last?.type === "tools") last.parts.push(part);
     else shown.push({ type: "tools", parts: [part] });
   });
@@ -37,10 +43,20 @@ export type UndoTurn = (turn: AgentTurnView, how: AgentTurnUndo) => Promise<void
 /**
  * One Agent Turn: the owner's message in a bubble on the right, then what the Agent did in order —
  * its text in bubbles on the left, as Markdown (the owner's stays plain), its thoughts folded,
- * and a card per tool call, a long run of them folded into "N steps" (ToolGroup) — dots while it works, and, once finished with Revisions saved, Revert and
- * Restore (with `onUndo`). Memoised: a streaming turn doesn't re-render the finished ones above it.
+ * and a card per tool call, a long run of them folded into "N steps" (ToolGroup), a show_ui call's Agent
+ * UI in place of its card — dots while it works, and, once finished with Revisions saved, Revert and
+ * Restore (with `onUndo`). `nextPrompt` is the message of the Thread's next turn, null while there is
+ * none: its choices are then made. Memoised: a streaming turn doesn't re-render the finished ones above it.
  */
-export const TurnView = memo(function TurnView({ turn, onUndo }: { turn: AgentTurnView; onUndo?: UndoTurn }) {
+export const TurnView = memo(function TurnView({
+  turn,
+  nextPrompt = null,
+  onUndo,
+}: {
+  turn: AgentTurnView;
+  nextPrompt?: string | null;
+  onUndo?: UndoTurn;
+}) {
   const undoable = onUndo && turn.stop !== null && turn.first_revision !== null && turn.last_revision !== null;
   const running = turn.stop === null && !turn.error;
   const last = turn.parts.at(-1);
@@ -58,6 +74,8 @@ export const TurnView = memo(function TurnView({ turn, onUndo }: { turn: AgentTu
       {grouped(turn.parts).map((shown) =>
         shown.type === "tools" ? (
           <ToolGroup key={shown.parts[0].call} parts={shown.parts} />
+        ) : shown.type === "ui" ? (
+          <GenerativeUi key={shown.call} ui={shown.ui} nextPrompt={nextPrompt} />
         ) : shown.part.type === "thought" ? (
           <ReasoningBlock key={shown.index} text={shown.part.text} streaming={running && shown.part === last} />
         ) : (

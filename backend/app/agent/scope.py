@@ -7,8 +7,9 @@ from pydantic import BaseModel
 
 # The MCP server's tools an Agent may call: reading and editing its Candidate (edit_candidate's
 # dry_run is its dry run), its Revisions, the Job's Transcript, the Media Library and the other
-# assets, the Presets, Templates and Looks, Narration and the Channel Profile. None creates, deletes
-# or retries a Job, renders or exports, deletes an asset or a Preset, or sets the Channel Profile.
+# assets, the Presets, Templates and Looks, Narration and the Channel Profile; and show_ui, which
+# only the scoped server has (an Agent UI in the chat). None creates, deletes or retries a Job,
+# renders or exports, deletes an asset or a Preset, or sets the Channel Profile.
 ALLOWED_TOOLS = (
     "get_candidate",
     "edit_candidate",
@@ -24,6 +25,7 @@ ALLOWED_TOOLS = (
     "generate_speech",
     "get_channel_profile",
     "save_frame",
+    "show_ui",
 )
 
 

@@ -2237,12 +2237,30 @@ export type AgentEvent =
       revision?: number | null;
       output?: string | null;
       input?: string | null;
+      // A show_ui call's Agent UI, its output parsed (backend/app/agent/ui_spec.py).
+      ui?: AgentUi | null;
     }
   | { type: "turn_finished"; turn: string; stop: AgentStop; first_revision?: number | null; last_revision?: number | null }
   | { type: "error"; turn?: string | null; message: string };
 
+// What the Agent shows in the chat through show_ui (backend/app/agent/ui_spec.py, ADR 0031): a spec
+// the Agent tab draws as a component. Fields left out are absent, not null.
+export type AgentUi =
+  | { kind: "choices"; title?: string; options: { label: string; prompt: string; detail?: string }[] }
+  // The Candidate as the editor holds it; `frame` is a path save_frame returned, shown as its picture.
+  | { kind: "candidate"; note?: string; frame?: string }
+  | { kind: "table"; title?: string; columns: string[]; rows: (string | number)[][] }
+  | { kind: "key_values"; title?: string; items: { label: string; value: string | number }[] }
+  | {
+      kind: "callout";
+      tone: "info" | "success" | "warning" | "danger";
+      title?: string;
+      body: string;
+      checklist?: { text: string; done: boolean }[];
+    };
+
 // A part of a turn: a run of text or of thought, or a tool call (ok null while it runs), with what it
-// was given and gave back (none in a chat kept before they were).
+// was given and gave back (none in a chat kept before they were), and a show_ui call's Agent UI.
 export type AgentTurnPart =
   | { type: "text"; text: string }
   | { type: "thought"; text: string }
@@ -2256,6 +2274,7 @@ export type AgentTurnPart =
       revision: number | null;
       input?: string | null;
       output?: string | null;
+      ui?: AgentUi | null;
     };
 
 // A finished turn of an Agent Thread (backend/app/agent/transcript_store.py).

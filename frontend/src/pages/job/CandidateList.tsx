@@ -51,27 +51,7 @@ export function CandidateList({
               className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 rounded-control p-2 text-left"
             >
               <Thumbnail jobId={jobId} candidate={candidate} />
-              <span className="font-medium text-pretty">
-                <span className="sr-only">#{i + 1} </span>
-                {name}
-              </span>
-              <span className="col-start-2 text-sm text-muted tabular-nums">
-                {formatClock(candidate.start)}–{formatClock(candidate.end)}
-                <span className="sr-only">, {Math.round(candidate.end - candidate.start)} seconds</span>
-                {candidate.edited && (
-                  <span className="ml-1.5 inline-flex items-center gap-0.5 align-[-2px]" title="Edited">
-                    <PenLine aria-hidden size={13} />
-                    <span className="sr-only">, edited</span>
-                  </span>
-                )}
-              </span>
-              {candidate.origin === "ai" && (
-                <span className="col-start-2 text-sm text-muted">
-                  {candidate.emotion && <span className="capitalize">{candidate.emotion}</span>}
-                  {candidate.emotion && " · "}
-                  <span className="whitespace-nowrap">hook {candidate.hook_strength}</span>
-                </span>
-              )}
+              <CandidateSummary candidate={candidate} name={name} rank={i + 1} />
             </button>
             <label className="grid size-11 cursor-pointer place-items-center self-center">
               <input
@@ -107,11 +87,43 @@ export function candidateName(candidate: Candidate, index: number): string {
   return candidate.title || (candidate.origin === "manual" ? `Manual clip ${formatClock(candidate.start)}` : `Candidate ${index + 1}`);
 }
 
+// What a Candidate's row says beside its Thumbnail, in a two-column grid with it: its name (after its
+// `rank` for a screen reader), its range in the Source, whether it was edited, and for the AI's its
+// emotion and hook strength.
+export function CandidateSummary({ candidate, name, rank }: { candidate: Candidate; name: string; rank?: number }) {
+  return (
+    <>
+      <span className="font-medium text-pretty">
+        {rank !== undefined && <span className="sr-only">#{rank} </span>}
+        {name}
+      </span>
+      <span className="col-start-2 text-sm text-muted tabular-nums">
+        {formatClock(candidate.start)}–{formatClock(candidate.end)}
+        <span className="sr-only">, {Math.round(candidate.end - candidate.start)} seconds</span>
+        {candidate.edited && (
+          <span className="ml-1.5 inline-flex items-center gap-0.5 align-[-2px]" title="Edited">
+            <PenLine aria-hidden size={13} />
+            <span className="sr-only">, edited</span>
+          </span>
+        )}
+      </span>
+      {candidate.origin === "ai" && (
+        <span className="col-start-2 text-sm text-muted">
+          {candidate.emotion && <span className="capitalize">{candidate.emotion}</span>}
+          {candidate.emotion && " · "}
+          <span className="whitespace-nowrap">hook {candidate.hook_strength}</span>
+        </span>
+      )}
+    </>
+  );
+}
+
 // A 16:9 still with the Candidate's shape framed in its middle, the score in its corner, on a scrim
 // so it reads over any frame, and the Clip's length in the other; a film icon while there's no still.
-// The rows keep one size, so Candidates of mixed shapes line up.
-function Thumbnail({ jobId, candidate }: { jobId: string; candidate: Candidate }) {
-  const src = candidateThumbnailUrl(jobId, candidate);
+// The rows keep one size, so Candidates of mixed shapes line up. `still`, a frame of the Clip itself
+// (already its shape), replaces the Source's still, shown whole.
+export function Thumbnail({ jobId, candidate, still }: { jobId: string; candidate: Candidate; still?: string }) {
+  const src = still ?? candidateThumbnailUrl(jobId, candidate);
   const [loaded, setLoaded] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   return (
@@ -128,11 +140,16 @@ function Thumbnail({ jobId, candidate }: { jobId: string; candidate: Candidate }
           decoding="async"
           onLoad={() => setLoaded(src)}
           onError={() => setFailed(src)}
-          className={cx("size-full object-cover motion-safe:transition-opacity motion-safe:duration-200", loaded === src ? "opacity-100" : "opacity-0")}
+          className={cx(
+            "size-full",
+            still ? "object-contain" : "object-cover",
+            "motion-safe:transition-opacity motion-safe:duration-200",
+            loaded === src ? "opacity-100" : "opacity-0",
+          )}
         />
       )}
       {/* The Candidate's shape, framed on the still and the rest dimmed; a 16:9 one is the whole still. */}
-      {candidate.aspect !== "16:9" && (
+      {!still && candidate.aspect !== "16:9" && (
         <span
           aria-hidden
           className="absolute inset-y-0 left-1/2 -translate-x-1/2 rounded-[2px] shadow-[0_0_0_100vmax_rgb(0_0_0/0.45)] outline-1 -outline-offset-1 outline-white/70"

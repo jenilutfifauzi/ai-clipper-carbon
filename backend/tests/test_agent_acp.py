@@ -143,10 +143,10 @@ def test_thoughts_text_and_tool_calls_arrive_as_events(served, job, fake_agent):
         ("tool_started", {"type": "tool_started", "turn": turn, "call": "t1", "tool": "edit_candidate", "summary": "sets hook_text",
                           "input": json.dumps(edit)}),
         ("tool_finished", {"type": "tool_finished", "turn": turn, "call": "t1", "ok": True, "error": None, "revision": None,
-                           "output": "Saved Revision 2", "input": None}),
+                           "output": "Saved Revision 2", "input": None, "ui": None}),
         ("tool_started", {"type": "tool_started", "turn": turn, "call": "t2", "tool": "get_candidate", "summary": "", "input": None}),
         ("tool_finished", {"type": "tool_finished", "turn": turn, "call": "t2", "ok": False, "error": "No such Candidate", "revision": None,
-                           "output": None, "input": None}),
+                           "output": None, "input": None, "ui": None}),
         ("text", {"type": "text", "turn": turn, "delta": "Tightened "}),
         ("text", {"type": "text", "turn": turn, "delta": "them."}),
     ]

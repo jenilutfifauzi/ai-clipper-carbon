@@ -1,6 +1,6 @@
 import { ClipboardCopy, Copy, LayoutTemplate, RotateCcw, Trash2 } from "lucide-react";
 import { lazy, Suspense, useContext, useMemo, useState, type ReactNode } from "react";
-import type { AdjustmentLayer, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TemplateInfo, TextLayer } from "../../../api";
+import type { AdjustmentLayer, Candidate, ClipSegment, FontInfo, MediaItem, MusicClip, Overlay, PreviewPlan, RenderPlan, Shape, TemplateInfo, TextLayer } from "../../../api";
 import { Button } from "../../../components/Button";
 import { Hint } from "../../../components/InfoTip";
 import { cx } from "../../../format";
@@ -51,9 +51,10 @@ export function Inspector({
   ...fields
 }: Parameters<typeof InspectorFields>[0] & {
   templates?: TemplateInfo[] | null;
-  // The Job and Candidate the Agent tab chats about, the editor's Agent stream and Threads, and how a
-  // turn is undone; without it there is no Agent tab.
-  agent?: { job: string; candidate: string; stream: AgentStream; threads: AgentThreads; onUndo: UndoTurn };
+  // The Job and Candidate the Agent tab chats about, the editor's Agent stream and Threads, how a turn
+  // is undone, and the Candidate as the editor holds it, with its name (for the Agent's show_ui);
+  // without it there is no Agent tab.
+  agent?: { job: string; candidate: string; stream: AgentStream; threads: AgentThreads; onUndo: UndoTurn; current?: { value: Candidate; name: string } };
 }) {
   const [tab, setTab] = useState<InspectorTab>("properties");
   const marked = pickedTemplate(fields.edits, fields.pick);
@@ -72,7 +73,14 @@ export function Inspector({
       <div role="tabpanel" id={inspectorPanelId(tab)} className={tab === "agent" ? "min-h-0 flex-1" : undefined}>
         {tab === "agent" ? (
           <Suspense fallback={<p className="text-sm text-muted">Loading the Agent…</p>}>
-            <AgentTab jobId={agent.job} candidateId={agent.candidate} stream={agent.stream} threads={agent.threads} onUndo={agent.onUndo} />
+            <AgentTab
+              jobId={agent.job}
+              candidateId={agent.candidate}
+              stream={agent.stream}
+              threads={agent.threads}
+              onUndo={agent.onUndo}
+              candidate={agent.current}
+            />
           </Suspense>
         ) : (
           properties

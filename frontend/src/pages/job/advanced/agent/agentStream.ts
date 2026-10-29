@@ -116,6 +116,7 @@ export function agentStream(state: AgentStreamState, action: AgentStreamAction):
                 revision: action.revision ?? null,
                 input: part.input ?? action.input ?? null,
                 output: action.output ?? null,
+                ui: action.ui ?? null,
               }
             : part,
         ),

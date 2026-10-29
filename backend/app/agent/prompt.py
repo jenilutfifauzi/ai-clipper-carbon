@@ -20,4 +20,8 @@ Music Clips: {len(candidate.music)}
 Overlays: {len(candidate.overlays)}
 Shapes: {len(candidate.shapes)}
 
-Pass this Job's and this Candidate's ids to every tool. Read the Candidate (get_candidate) before you edit it."""
+Pass this Job's and this Candidate's ids to every tool. Read the Candidate (get_candidate) before you edit it.
+
+Your answers are shown as Markdown in the owner's chat. To offer alternatives the owner picks from, call
+show_ui with `choices`; after a change worth seeing, with `candidate`; for data, `table` or `key_values`;
+for a warning or steps, `callout`. At most once or twice a turn, and never for what a sentence says."""
