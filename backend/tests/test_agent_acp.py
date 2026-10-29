@@ -123,7 +123,8 @@ def test_thoughts_text_and_tool_calls_arrive_as_events(served, job, fake_agent):
         {"update": {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "Pauses first."}}},
         {"update": {"sessionUpdate": "tool_call", "toolCallId": "t1", "title": "mcp__ai-clipper__edit_candidate", "kind": "other", "status": "pending", "rawInput": edit}},
         {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "in_progress"}},
-        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "completed"}},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "completed",
+                    "content": [{"type": "content", "content": {"type": "text", "text": "Saved Revision 2"}}]}},
         {"update": {"sessionUpdate": "tool_call", "toolCallId": "t2", "title": "mcp__ai-clipper__get_candidate", "status": "pending"}},
         {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t2", "status": "failed",
                     "content": [{"type": "content", "content": {"type": "text", "text": "No such Candidate"}}]}},
@@ -138,10 +139,13 @@ def test_thoughts_text_and_tool_calls_arrive_as_events(served, job, fake_agent):
 
     assert received[1:-1] == [
         ("thought", {"type": "thought", "turn": turn, "delta": "Pauses first."}),
-        ("tool_started", {"type": "tool_started", "turn": turn, "call": "t1", "tool": "edit_candidate", "summary": "sets hook_text"}),
-        ("tool_finished", {"type": "tool_finished", "turn": turn, "call": "t1", "ok": True, "error": None, "revision": None}),
-        ("tool_started", {"type": "tool_started", "turn": turn, "call": "t2", "tool": "get_candidate", "summary": ""}),
-        ("tool_finished", {"type": "tool_finished", "turn": turn, "call": "t2", "ok": False, "error": "No such Candidate", "revision": None}),
+        ("tool_started", {"type": "tool_started", "turn": turn, "call": "t1", "tool": "edit_candidate", "summary": "sets hook_text",
+                          "input": json.dumps(edit)}),
+        ("tool_finished", {"type": "tool_finished", "turn": turn, "call": "t1", "ok": True, "error": None, "revision": None,
+                           "output": "Saved Revision 2", "input": None}),
+        ("tool_started", {"type": "tool_started", "turn": turn, "call": "t2", "tool": "get_candidate", "summary": "", "input": None}),
+        ("tool_finished", {"type": "tool_finished", "turn": turn, "call": "t2", "ok": False, "error": "No such Candidate", "revision": None,
+                           "output": None, "input": None}),
         ("text", {"type": "text", "turn": turn, "delta": "Tightened "}),
         ("text", {"type": "text", "turn": turn, "delta": "them."}),
     ]
@@ -149,6 +153,31 @@ def test_thoughts_text_and_tool_calls_arrive_as_events(served, job, fake_agent):
     # Codex's adapter gets no Claude Code options.
     [new] = fake_agent.received("session/new")
     assert "_meta" not in new["params"]
+
+
+def test_a_raw_input_that_only_comes_with_an_update_reaches_the_card_and_the_transcript(served, job, fake_agent):
+    candidate = job["candidates"][0]
+    asked = {"job_id": job["id"], "candidate_id": candidate["id"]}
+    fake_agent.turns([[
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "t1", "title": "mcp__ai-clipper__get_candidate", "status": "pending"}},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "in_progress", "rawInput": asked}},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "completed",
+                    "content": [{"type": "content", "content": {"type": "text", "text": "x" * 5000}}]}},
+        says("Read it."),
+    ]])
+    stream = agent_events(served, job, candidate)
+    next(stream)
+
+    send(served, job, candidate, "Read the Candidate")
+    received = dict(until_finished(stream))
+
+    assert received["tool_started"]["input"] is None
+    finished = received["tool_finished"]
+    assert finished["input"] == json.dumps(asked)
+    assert finished["output"] == "x" * 4096 + "…"
+    [kept] = served.get(f"{agent_url(job, candidate)}/transcript").json()
+    [tool, _] = kept["parts"]
+    assert (tool["input"], tool["output"]) == (json.dumps(asked), "x" * 4096 + "…")
 
 
 def permission(call: str, title: str, *kinds: str) -> dict:

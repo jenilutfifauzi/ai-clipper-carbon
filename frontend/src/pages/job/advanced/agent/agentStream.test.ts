@@ -23,7 +23,7 @@ describe("agentStream", () => {
     expect(running.turns[0].parts).toEqual([
       { type: "thought", text: "Let me look." },
       { type: "text", text: "Adding a title." },
-      { type: "tool", call: "c1", tool: "edit_candidate", summary: "Text Layer at 0s", ok: null, error: null, revision: null },
+      { type: "tool", call: "c1", tool: "edit_candidate", summary: "Text Layer at 0s", ok: null, error: null, revision: null, input: null },
     ]);
     expect(runningTurn(running, "tab-a")?.id).toBe("t1");
 
@@ -51,6 +51,20 @@ describe("agentStream", () => {
     ]);
     expect(state.turns[0].parts[0]).toMatchObject({ ok: false, error: "No Segment s9" });
     expect(state.turns[0].stop).toBe("cancelled");
+  });
+
+  test("a tool call keeps its input and output; an input that comes only with the finish fills in", () => {
+    const state = fold([
+      started,
+      { type: "tool_started", turn: "t1", call: "c1", tool: "edit_candidate", summary: "", input: '{"changes":{}}' },
+      { type: "tool_finished", turn: "t1", call: "c1", ok: true, output: "Saved Revision 2", input: '{"other":1}' },
+      { type: "tool_started", turn: "t1", call: "c2", tool: "get_candidate", summary: "" },
+      { type: "tool_finished", turn: "t1", call: "c2", ok: true, output: "{}", input: '{"job_id":"j"}' },
+    ]);
+    expect(state.turns[0].parts).toMatchObject([
+      { call: "c1", input: '{"changes":{}}', output: "Saved Revision 2" },
+      { call: "c2", input: '{"job_id":"j"}', output: "{}" },
+    ]);
   });
 
   test("an error names its turn's message, or the stream's when it names none", () => {

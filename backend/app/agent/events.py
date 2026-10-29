@@ -10,6 +10,9 @@ from typing import Annotated, Literal
 from fastapi.sse import ServerSentEvent
 from pydantic import BaseModel, Field
 
+# How much of a tool call's input or output an event carries for the chat's tool card.
+MAX_SHOWN = 4096
+
 # Why a turn ended: the model answered without a tool call, it used up its steps, the owner pressed
 # Stop, or something failed (an `error` event says what).
 Stop = Literal["end_turn", "step_limit", "cancelled", "error"]
@@ -45,6 +48,8 @@ class ToolStarted(BaseModel):
     # Without any `mcp__…__` prefix.
     tool: str
     summary: str
+    # The call's arguments (JSON, or text when they aren't), cut by `shown`.
+    input: str | None = None
 
 
 class ToolFinished(BaseModel):
@@ -55,6 +60,9 @@ class ToolFinished(BaseModel):
     error: str | None = None
     # The Revision the call saved, if it saved one.
     revision: int | None = None
+    # The result's text, cut by `shown`; and the call's input when it only arrived with its end (ACP).
+    output: str | None = None
+    input: str | None = None
 
 
 class TurnFinished(BaseModel):
@@ -76,6 +84,14 @@ AgentEvent = Annotated[
     TurnStarted | TextDelta | ThoughtDelta | ToolStarted | ToolFinished | TurnFinished | AgentError,
     Field(discriminator="type"),
 ]
+
+
+def shown(text: str | None, tool: str = "") -> str | None:
+    """`text` cut to MAX_SHOWN characters, with `…` when it was cut, for a tool card. A `show_ui` call's
+    is kept whole (the tool name may carry an `mcp__…__` prefix): the chat draws it (ticket 05)."""
+    if text is None or len(text) <= MAX_SHOWN or tool.endswith("show_ui"):
+        return text
+    return text[:MAX_SHOWN] + "…"
 
 
 def topic(job_id: str, candidate_id: str) -> str:

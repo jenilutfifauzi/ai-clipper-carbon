@@ -6,7 +6,8 @@ import { describe, expect, test } from "vitest";
 import type { AgentProviderListing } from "../../../../api";
 import { AgentTab } from "./AgentTab";
 import { transcriptText } from "./ChatHeader";
-import { toolLabel, ToolRow } from "./ToolRow";
+import { ToolGroup } from "./ToolGroup";
+import { prettyJson, toolLabel, ToolRow, type ToolPart } from "./ToolRow";
 import { TurnView } from "./TurnView";
 import { EMPTY_STREAM, type AgentTurnView } from "./agentStream";
 import type { AgentStream } from "./useAgentStream";
@@ -165,6 +166,76 @@ describe("chat look", () => {
   test("the transcript as text", () => {
     const turn = { ...running([{ type: "text", text: "Added." }]), stop: "end_turn" as const };
     expect(transcriptText([turn])).toBe("You: Add a title\n\nAgent: Added.");
+  });
+});
+
+// .scratch/agent-chat-ui/issues/03: tool cards that open to their input and output, long runs folded.
+describe("tool cards", () => {
+  const call = (id: string, change: Partial<ToolPart> = {}): ToolPart => ({
+    type: "tool",
+    call: id,
+    tool: "edit_candidate",
+    summary: "sets hook_text",
+    ok: true,
+    error: null,
+    revision: null,
+    ...change,
+  });
+
+  test("a card with an output starts closed and can open; one with nothing to show can't", () => {
+    const closed = renderToStaticMarkup(<ToolRow part={call("c1", { input: '{"a":1}', output: "Saved" })} />);
+    expect(closed).toContain('aria-expanded="false"');
+    expect(closed).not.toContain("<pre");
+    expect(closed).toContain('aria-label="Done"');
+    const empty = renderToStaticMarkup(<ToolRow part={call("c1")} />);
+    expect(empty).toContain("disabled");
+    expect(empty).not.toContain("aria-expanded");
+  });
+
+  test("a failed card starts open, its error above its Input/Output switch and the output", () => {
+    const html = renderToStaticMarkup(<ToolRow part={call("c1", { ok: false, error: "No Segment s9", input: '{"a":1}', output: '{"b":2}' })} />);
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toMatch(/text-danger[^>]*>No Segment s9.*Input.*Output.*<pre aria-label="Output"/s);
+    expect(html).toContain("&quot;b&quot;: 2");
+  });
+
+  test("JSON is pretty-printed, anything else shown as it is", () => {
+    expect(prettyJson('{"a":[1]}')).toBe('{\n  "a": [\n    1\n  ]\n}');
+    expect(prettyJson('{"cut": "abc…')).toBe('{"cut": "abc…');
+  });
+
+  test("a run of three is three cards; a longer run folds all but its latest into N steps", () => {
+    const three = renderToStaticMarkup(<ToolGroup parts={[call("c1"), call("c2"), call("c3")]} />);
+    expect(three.match(/data-tool-row/g)).toHaveLength(3);
+    expect(three).not.toContain("data-tool-group");
+
+    const five = renderToStaticMarkup(
+      <ToolGroup parts={[call("c1"), call("c2", { ok: false, error: "x", tool: "get_candidate" }), call("c3"), call("c4"), call("c5")]} />,
+    );
+    expect(five).toMatch(/<details data-tool-group="".*4 steps.*edit candidate · get candidate · edit candidate · edit candidate.*1 failed/s);
+    expect(five).toContain('aria-label="4 steps, 1 failed"');
+    expect(five.match(/data-tool-row/g)).toHaveLength(5);
+    // The latest card comes after the folded ones.
+    expect(five.lastIndexOf("data-tool-row")).toBeGreaterThan(five.indexOf("</details>"));
+  });
+
+  test("a turn groups consecutive tool calls only", () => {
+    const turn: AgentTurnView = {
+      id: "t1",
+      tab: null,
+      provider: "deepseek",
+      model: null,
+      prompt: "Go",
+      parts: [call("c1"), call("c2"), call("c3"), call("c4"), { type: "text", text: "Half way." }, call("c5")],
+      stop: "end_turn",
+      first_revision: null,
+      last_revision: null,
+      error: null,
+    };
+    const html = renderToStaticMarkup(<TurnView turn={turn} />);
+    expect(html.match(/data-tool-group/g)).toHaveLength(1);
+    expect(html).toContain("3 steps");
+    expect(html.match(/data-tool-row/g)).toHaveLength(5);
   });
 });
 

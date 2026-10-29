@@ -2,7 +2,7 @@
 
 **Parent spec:** `spec.md` (Solution 3).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Blocked by:** 01
 
@@ -44,8 +44,8 @@
   - Port this from `ToolCallGroup.vue`.
 
 ## Acceptance
-- [ ] `test_agent_api_loop.py`: the events carry `input` (the arguments JSON) and `output` (the result text); a long output is cut to 4096 characters.
-- [ ] `test_agent_acp.py`: rawInput and content are carried, including rawInput that only arrives on the update. Use `fake_acp_agent.py`.
-- [ ] A transcript JSON without the new fields still loads.
-- [ ] `agentStream.test.ts`: the reducer keeps `input` and `output`.
-- [ ] Only the agent backend test files and the frontend agent tests are run, and they pass, along with typecheck.
+- [x] `test_agent_api_loop.py`: the events carry `input` (the arguments JSON) and `output` (the result text); a long output is cut to 4096 characters.
+- [x] `test_agent_acp.py`: rawInput and content are carried, including rawInput that only arrives on the update. Use `fake_acp_agent.py`.
+- [x] A transcript JSON without the new fields still loads.
+- [x] `agentStream.test.ts`: the reducer keeps `input` and `output`.
+- [x] Only the agent backend test files and the frontend agent tests are run, and they pass, along with typecheck.

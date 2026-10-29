@@ -20,7 +20,7 @@ from typing import Any
 
 from app.agent.api_loop import tool_summary
 from app.agent.driver import TurnContext
-from app.agent.events import AgentEvent, Stop, TextDelta, ThoughtDelta, ToolFinished, ToolStarted, TurnFinished
+from app.agent.events import AgentEvent, Stop, TextDelta, ThoughtDelta, ToolFinished, ToolStarted, TurnFinished, shown
 from app.agent.providers import MCP_SERVER_NAME, AcpProvider
 
 logger = logging.getLogger(__name__)
@@ -392,13 +392,15 @@ class AcpAgent:
             self._tool_calls[call] = dict(update)
             name = tool_name(update)
             raw = update.get("rawInput")
-            started = ToolStarted(turn=turn, call=call, tool=name, summary=tool_summary(name, raw) if isinstance(raw, dict) else "")
+            summary = tool_summary(name, raw) if isinstance(raw, dict) else ""
+            started = ToolStarted(turn=turn, call=call, tool=name, summary=summary, input=shown(_raw_text(raw), name))
+            self._tool_calls[call]["input_shown"] = started.input is not None
             return [started, *self._finished(turn, call, update)]
         if kind == "tool_call_update" and call:
             earlier = self._tool_calls.setdefault(call, {})
             if earlier.get("finished"):
                 return []
-            earlier.update({key: value for key, value in update.items() if key in ("title", "_meta")})
+            earlier.update({key: value for key, value in update.items() if key in ("title", "_meta", "rawInput")})
             return self._finished(turn, call, update)
         return []
 
@@ -406,9 +408,15 @@ class AcpAgent:
         status = update.get("status")
         if status not in ("completed", "failed"):
             return []
-        self._tool_calls[call]["finished"] = True
-        error = None if status == "completed" else _content_text(update.get("content")) or "The tool call failed"
-        return [ToolFinished(turn=turn, call=call, ok=status == "completed", error=error)]
+        known = self._tool_calls[call]
+        known["finished"] = True
+        name = tool_name(known)
+        text = _content_text(update.get("content"))
+        ok = status == "completed"
+        error = None if ok else text or "The tool call failed"
+        # The input, for a call whose rawInput came only with an update.
+        raw = None if known.get("input_shown") else shown(_raw_text(known.get("rawInput")), name)
+        return [ToolFinished(turn=turn, call=call, ok=ok, error=error, output=shown(text, name) if ok else None, input=raw)]
 
 
 def _content_text(content: Any) -> str | None:
@@ -419,6 +427,11 @@ def _content_text(content: Any) -> str | None:
         if isinstance(block, dict) and isinstance(block.get("content"), dict) and isinstance(block["content"].get("text"), str)
     ]
     return "\n".join(texts) or None
+
+
+def _raw_text(raw: Any) -> str | None:
+    """A tool call's rawInput as JSON text, or None without one."""
+    return None if raw is None else json.dumps(raw)
 
 
 def _strings(value: Any) -> list[str]:

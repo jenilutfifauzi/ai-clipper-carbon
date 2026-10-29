@@ -1,18 +1,34 @@
 import { Check, Copy } from "lucide-react";
 import { memo, useEffect, useState } from "react";
-import type { AgentStop, AgentTurnUndo } from "../../../../api";
+import type { AgentStop, AgentTurnPart, AgentTurnUndo } from "../../../../api";
 import { Button } from "../../../../components/Button";
 import { writeClipboard } from "../../../../components/CopyButton";
 import type { AgentTurnView } from "./agentStream";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { ReasoningBlock } from "./ReasoningBlock";
-import { ToolRow } from "./ToolRow";
+import { ToolGroup } from "./ToolGroup";
+import type { ToolPart } from "./ToolRow";
 
 // How a turn that didn't simply finish ended, under it.
 const STOPPED: Partial<Record<AgentStop, string>> = {
   cancelled: "Stopped.",
   step_limit: "Stopped after its step limit.",
 };
+
+// What a turn shows, in order: each run of consecutive tool calls as one group, its other parts one by one.
+type Shown = { type: "tools"; parts: ToolPart[] } | { type: "part"; part: Exclude<AgentTurnPart, ToolPart>; index: number };
+
+/** `parts` with each run of consecutive tool calls gathered into one. */
+export function grouped(parts: AgentTurnPart[]): Shown[] {
+  const shown: Shown[] = [];
+  parts.forEach((part, index) => {
+    const last = shown.at(-1);
+    if (part.type !== "tool") shown.push({ type: "part", part, index });
+    else if (last?.type === "tools") last.parts.push(part);
+    else shown.push({ type: "tools", parts: [part] });
+  });
+  return shown;
+}
 
 // Undoes a finished turn (ADR 0028): Revert restores the clip as it was before it, Restore brings back
 // what it made. Resolves once done; the editor says how it went.
@@ -21,7 +37,7 @@ export type UndoTurn = (turn: AgentTurnView, how: AgentTurnUndo) => Promise<void
 /**
  * One Agent Turn: the owner's message in a bubble on the right, then what the Agent did in order —
  * its text in bubbles on the left, as Markdown (the owner's stays plain), its thoughts folded,
- * and a row per tool call — dots while it works, and, once finished with Revisions saved, Revert and
+ * and a card per tool call, a long run of them folded into "N steps" (ToolGroup) — dots while it works, and, once finished with Revisions saved, Revert and
  * Restore (with `onUndo`). Memoised: a streaming turn doesn't re-render the finished ones above it.
  */
 export const TurnView = memo(function TurnView({ turn, onUndo }: { turn: AgentTurnView; onUndo?: UndoTurn }) {
@@ -39,15 +55,15 @@ export const TurnView = memo(function TurnView({ turn, onUndo }: { turn: AgentTu
           </p>
         </div>
       )}
-      {turn.parts.map((part, index) =>
-        part.type === "tool" ? (
-          <ToolRow key={part.call} part={part} />
-        ) : part.type === "thought" ? (
-          <ReasoningBlock key={index} text={part.text} streaming={running && part === last} />
+      {grouped(turn.parts).map((shown) =>
+        shown.type === "tools" ? (
+          <ToolGroup key={shown.parts[0].call} parts={shown.parts} />
+        ) : shown.part.type === "thought" ? (
+          <ReasoningBlock key={shown.index} text={shown.part.text} streaming={running && shown.part === last} />
         ) : (
-          <div key={index} className="group/response relative rounded-xl rounded-tl-md bg-fill px-3 py-2 text-sm">
-            <ChatMarkdown text={part.text} />
-            <CopyResponse text={part.text} />
+          <div key={shown.index} className="group/response relative rounded-xl rounded-tl-md bg-fill px-3 py-2 text-sm">
+            <ChatMarkdown text={shown.part.text} />
+            <CopyResponse text={shown.part.text} />
           </div>
         ),
       )}

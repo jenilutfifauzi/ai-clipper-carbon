@@ -93,13 +93,26 @@ export function agentStream(state: AgentStreamState, action: AgentStreamAction):
     case "tool_started":
       return withTurn(state, action.turn, (turn) => ({
         ...turn,
-        parts: [...turn.parts, { type: "tool", call: action.call, tool: action.tool, summary: action.summary, ok: null, error: null, revision: null }],
+        parts: [
+          ...turn.parts,
+          { type: "tool", call: action.call, tool: action.tool, summary: action.summary, ok: null, error: null, revision: null, input: action.input ?? null },
+        ],
       }));
     case "tool_finished":
+      // The finish's input fills one the start didn't carry.
       return withTurn(state, action.turn, (turn) => ({
         ...turn,
         parts: turn.parts.map((part) =>
-          part.type === "tool" && part.call === action.call ? { ...part, ok: action.ok, error: action.error ?? null, revision: action.revision ?? null } : part,
+          part.type === "tool" && part.call === action.call
+            ? {
+                ...part,
+                ok: action.ok,
+                error: action.error ?? null,
+                revision: action.revision ?? null,
+                input: part.input ?? action.input ?? null,
+                output: action.output ?? null,
+              }
+            : part,
         ),
       }));
     case "turn_finished":

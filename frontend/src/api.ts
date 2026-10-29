@@ -2200,17 +2200,38 @@ export type AgentEvent =
   | { type: "turn_started"; turn: string; tab: string; provider: string; model: string | null; prompt: string }
   | { type: "text"; turn: string; delta: string }
   | { type: "thought"; turn: string; delta: string }
-  // `tool` comes without any `mcp__…__` prefix.
-  | { type: "tool_started"; turn: string; call: string; tool: string; summary: string }
-  | { type: "tool_finished"; turn: string; call: string; ok: boolean; error?: string | null; revision?: number | null }
+  // `tool` comes without any `mcp__…__` prefix. `input` and `output` are JSON or text, cut to 4096
+  // characters; a finish carries the input when an ACP agent sent it only then.
+  | { type: "tool_started"; turn: string; call: string; tool: string; summary: string; input?: string | null }
+  | {
+      type: "tool_finished";
+      turn: string;
+      call: string;
+      ok: boolean;
+      error?: string | null;
+      revision?: number | null;
+      output?: string | null;
+      input?: string | null;
+    }
   | { type: "turn_finished"; turn: string; stop: AgentStop; first_revision?: number | null; last_revision?: number | null }
   | { type: "error"; turn?: string | null; message: string };
 
-// A part of a turn: a run of text or of thought, or a tool call (ok null while it runs).
+// A part of a turn: a run of text or of thought, or a tool call (ok null while it runs), with what it
+// was given and gave back (none in a chat kept before they were).
 export type AgentTurnPart =
   | { type: "text"; text: string }
   | { type: "thought"; text: string }
-  | { type: "tool"; call: string; tool: string; summary: string; ok: boolean | null; error: string | null; revision: number | null };
+  | {
+      type: "tool";
+      call: string;
+      tool: string;
+      summary: string;
+      ok: boolean | null;
+      error: string | null;
+      revision: number | null;
+      input?: string | null;
+      output?: string | null;
+    };
 
 // A finished turn of the Candidate's chat (backend/app/agent/transcript_store.py).
 export interface AgentTranscriptTurn {

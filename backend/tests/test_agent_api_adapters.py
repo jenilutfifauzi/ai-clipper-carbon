@@ -199,10 +199,13 @@ def turn(request) -> tuple[str, Scripted, FakeEndpoint, list[dict]]:
 def test_every_adapter_yields_the_same_turn(turn):
     _, api, endpoint, received = turn
 
+    # Each API spells the arguments its own way; they are the same JSON.
+    assert json.loads(received[1].pop("input")) == HOOK
     assert received == [
         {"type": "thought", "turn": "t1", "delta": "Plan."},
         {"type": "tool_started", "turn": "t1", "call": "call-0", "tool": "edit_candidate", "summary": "sets hook_text"},
-        {"type": "tool_finished", "turn": "t1", "call": "call-0", "ok": True, "error": None, "revision": None},
+        {"type": "tool_finished", "turn": "t1", "call": "call-0", "ok": True, "error": None, "revision": None,
+         "output": "Saved Revision 2", "input": None},
         {"type": "text", "turn": "t1", "delta": "Done."},
         {"type": "turn_finished", "turn": "t1", "stop": "end_turn", "first_revision": None, "last_revision": None},
     ]

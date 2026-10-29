@@ -14,7 +14,7 @@ from mcp import Client
 from mcp_types import CallToolResult, TextContent, Tool
 
 from app.agent.driver import ChatMessage, Driver, TurnContext
-from app.agent.events import AgentEvent, ToolFinished, ToolStarted, TurnFinished
+from app.agent.events import AgentEvent, ToolFinished, ToolStarted, TurnFinished, shown
 
 # Model replies a turn may make before it is stopped: each but the last runs tool calls.
 MAX_STEPS = 30
@@ -112,10 +112,12 @@ async def run_api_turn(context: TurnContext, adapter: ApiAdapter) -> AsyncIterat
                 return
             results: list[ToolResult] = []
             for call in reply.calls:
-                yield ToolStarted(turn=context.turn, call=call.id, tool=call.name, summary=tool_summary(call.name, arguments(call)))
+                summary = tool_summary(call.name, arguments(call))
+                yield ToolStarted(turn=context.turn, call=call.id, tool=call.name, summary=summary, input=shown(call.arguments, call.name))
                 ok, text = await _run_tool(mcp, call)
                 results.append(ToolResult(call=call, ok=ok, text=trimmed(text)))
-                yield ToolFinished(turn=context.turn, call=call.id, ok=ok, error=None if ok else text)
+                output = shown(text, call.name) if ok else None
+                yield ToolFinished(turn=context.turn, call=call.id, ok=ok, error=None if ok else text, output=output)
             exchange.entries.append(results)
         yield TurnFinished(turn=context.turn, stop="step_limit")
 

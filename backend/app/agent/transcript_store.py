@@ -32,6 +32,10 @@ class ToolPart(BaseModel):
     ok: bool | None = None
     error: str | None = None
     revision: int | None = None
+    # What the call was given and gave back, for its card in the chat (events.shown); None in a
+    # transcript from before they were kept.
+    input: str | None = None
+    output: str | None = None
 
 
 TurnPart = Annotated[TextPart | ThoughtPart | ToolPart, Field(discriminator="type")]
@@ -78,10 +82,15 @@ def with_event(parts: list[TurnPart], event: AgentEvent) -> list[TurnPart]:
             return [*parts[:-1], kind(text=last.text + event.delta)]
         return [*parts, kind(text=event.delta)]
     if isinstance(event, ToolStarted):
-        return [*parts, ToolPart(call=event.call, tool=event.tool, summary=event.summary)]
+        return [*parts, ToolPart(call=event.call, tool=event.tool, summary=event.summary, input=event.input)]
     if isinstance(event, ToolFinished):
-        done = {"ok": event.ok, "error": event.error, "revision": event.revision}
-        return [part.model_copy(update=done) if isinstance(part, ToolPart) and part.call == event.call else part for part in parts]
+        done = {"ok": event.ok, "error": event.error, "revision": event.revision, "output": event.output}
+        return [
+            part.model_copy(update={**done, "input": part.input if part.input is not None else event.input})
+            if isinstance(part, ToolPart) and part.call == event.call
+            else part
+            for part in parts
+        ]
     return parts
 
 

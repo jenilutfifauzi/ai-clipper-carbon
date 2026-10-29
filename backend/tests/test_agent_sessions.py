@@ -1,7 +1,10 @@
 """Agent Sessions (.scratch/agent-mode/issues/03): one turn at a time per tab, Stop, the chat kept
 with the Job, and the providers a turn can't be sent to. On the fake provider of test_agent_api_loop."""
 
+import json
 import time
+
+from app.agent.transcript_store import load_transcript, transcript_path
 
 from test_agent_api_loop import (  # noqa: F401  (fixtures)
     FAIL,
@@ -82,6 +85,9 @@ def test_the_chat_is_kept_and_sent_back_as_history(served, chat, job):
         "id": turn, "provider": "deepseek", "model": "deepseek-chat", "prompt": "Set the hook", "stop": "end_turn",
         "first_revision": finished["first_revision"], "last_revision": finished["last_revision"],
     }
+    tool = kept["parts"][0]
+    assert json.loads(tool.pop("input")) == ids | {"changes": {"hook_text": "Agent hook"}}
+    assert "Agent hook" in tool.pop("output")
     assert kept["parts"] == [
         {"type": "tool", "call": "call-0", "tool": "edit_candidate", "summary": "sets hook_text", "ok": True, "error": None,
          "revision": finished["last_revision"]},
@@ -134,3 +140,18 @@ def test_a_provider_error_ends_the_turn_with_an_error_event(served, chat, job):
     assert [name for name, _ in received] == ["turn_started", "error", "turn_finished"]
     assert "401" in received[1][1]["message"]
     assert received[-1][1]["stop"] == "error"
+
+
+def test_a_transcript_from_before_tool_cards_still_loads(tmp_path):
+    turn = {
+        "id": "t1", "provider": "deepseek", "model": None, "prompt": "Hi", "stop": "end_turn", "started_at": "2026-01-01T00:00:00Z",
+        "parts": [{"type": "tool", "call": "c1", "tool": "get_candidate", "summary": "", "ok": True, "error": None, "revision": None}],
+    }
+    path = transcript_path(tmp_path, "cand")
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps([turn]))
+
+    [loaded] = load_transcript(tmp_path, "cand")
+
+    [tool] = loaded.parts
+    assert (tool.input, tool.output, tool.ok) == (None, None, True)
