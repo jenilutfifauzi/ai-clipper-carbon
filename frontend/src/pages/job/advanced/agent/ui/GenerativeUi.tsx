@@ -14,6 +14,8 @@ export interface AgentUiHost {
   busy: boolean;
   // Sends `prompt` as the owner's next message to the open Thread, as the composer does.
   choose: (prompt: string) => void;
+  // The call whose choices are open in the pop up above the composer, if any: its card folds.
+  popup?: string | null;
 }
 
 // Given by the Agent tab; read here rather than passed down through each (memoised) turn.
@@ -24,11 +26,11 @@ export const AgentUiContext = createContext<AgentUiHost | null>(null);
  * `nextPrompt` is the message of the Thread's turn after this one, null while there is none: a choice
  * is made once. A kind this chat doesn't know draws nothing.
  */
-export function GenerativeUi({ ui, nextPrompt }: { ui: AgentUi; nextPrompt: string | null }) {
+export function GenerativeUi({ call, ui, nextPrompt }: { call: string; ui: AgentUi; nextPrompt: string | null }) {
   const host = useContext(AgentUiContext);
   switch (ui.kind) {
     case "choices":
-      return <ChoicesCard ui={ui} nextPrompt={nextPrompt} host={host} />;
+      return <ChoicesCard call={call} ui={ui} nextPrompt={nextPrompt} host={host} />;
     case "candidate":
       return <CandidateCard ui={ui} host={host} />;
     case "table":

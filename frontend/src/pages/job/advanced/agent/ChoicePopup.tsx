@@ -21,14 +21,15 @@ export function ChoicePopup({
   onClose: () => void;
 }) {
   const id = useId();
-  const dialog = useRef<HTMLDivElement>(null);
   const other = useRef<HTMLInputElement>(null);
+  // The options' list holds the focus, naming the highlighted one (aria-activedescendant).
+  const list = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
   const [text, setText] = useState("");
   const count = ui.options.length;
 
   useEffect(() => {
-    if (!window.matchMedia?.("(pointer: coarse)").matches) dialog.current?.focus();
+    if (!window.matchMedia?.("(pointer: coarse)").matches) list.current?.focus();
   }, []);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -51,18 +52,17 @@ export function ChoicePopup({
     } else {
       setActive(action.active);
       if (action.active === count) other.current?.focus();
-      else dialog.current?.focus();
+      else list.current?.focus();
     }
   };
 
   return (
     <div
-      ref={dialog}
       role="dialog"
       aria-labelledby={`${id}-title`}
       tabIndex={-1}
       onKeyDown={onKeyDown}
-      className="mx-3 mb-2 flex shrink-0 flex-col gap-1 rounded-2xl border border-border bg-fill p-2 shadow-raised outline-none focus-visible:border-text/25 motion-safe:animate-[choice-in_200ms_cubic-bezier(0.32,0.72,0,1)]"
+      className="mx-3 mb-2 flex max-h-[45%] min-h-0 shrink-0 flex-col gap-1 rounded-2xl border border-border bg-fill p-2 shadow-raised outline-none motion-safe:animate-[choice-in_200ms_cubic-bezier(0.32,0.72,0,1)]"
     >
       <div className="flex items-start gap-2 px-2 pt-1">
         <p id={`${id}-title`} className="flex-1 text-sm font-medium text-pretty">
@@ -72,10 +72,18 @@ export function ChoicePopup({
           <X aria-hidden size={14} />
         </button>
       </div>
-      <div role="listbox" aria-labelledby={`${id}-title`} className="flex max-h-64 flex-col overflow-y-auto">
+      <div
+        ref={list}
+        role="listbox"
+        tabIndex={-1}
+        aria-labelledby={`${id}-title`}
+        aria-activedescendant={`${id}-option-${active}`}
+        className="flex min-h-0 flex-col overflow-y-auto rounded-lg outline-none focus-visible:ring-1 focus-visible:ring-text/40"
+      >
         {ui.options.map((option, index) => (
           <div
             key={index}
+            id={`${id}-option-${index}`}
             role="option"
             aria-selected={active === index}
             onPointerEnter={() => setActive(index)}
@@ -91,6 +99,7 @@ export function ChoicePopup({
           </div>
         ))}
         <div
+          id={`${id}-option-${count}`}
           role="option"
           aria-selected={active === count}
           onPointerEnter={() => setActive(count)}
@@ -109,8 +118,8 @@ export function ChoicePopup({
           />
         </div>
       </div>
-      <p aria-hidden className="px-2 pb-0.5 text-[11px] text-muted">
-        ↑↓ choose · Enter send · Esc close
+      <p aria-hidden className="px-2 pb-0.5 text-xs text-muted">
+        1–{count + 1} pick · ↑↓ · Enter send · Esc close
       </p>
     </div>
   );
