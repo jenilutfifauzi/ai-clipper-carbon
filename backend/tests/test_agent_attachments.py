@@ -109,3 +109,60 @@ def test_a_transcript_from_before_attachments_still_loads(tmp_path):
     [loaded] = load_transcript(tmp_path, "cand", thread.id)
 
     assert loaded.attachments == []
+
+
+# .scratch/agent-attachments/issues/02: another Candidate of the Job, as a style reference.
+
+
+def test_a_referenced_candidate_goes_before_the_prompt_as_a_summary_of_its_edit(served, chat, job):
+    candidate, other = job["candidates"]
+    hook = "This is the hook of the clip whose style I like the most"
+    assert served.patch(f"/api/jobs/{job['id']}/candidates/{other['id']}", json={"hook_text": hook, "hook_kicker": "WAIT"}).status_code == 200
+    chat.replies = [answer("Matching it.")]
+    stream = agent_events(served, job, candidate)
+    next(stream)
+
+    sent = send(served, job, candidate, "Style it like that one", [{"kind": "candidate", "candidate_id": other["id"]}])
+    assert sent.status_code == 202, sent.text
+    started = until_finished(stream)[0][1]
+
+    content = chat.requests[-1]["messages"][-1]["content"]
+    name = "This is the hook of the clip whose style I like…"
+    head, rest = content.split("\n", 1)
+    assert head == f'<context kind="candidate" name="{name}">'
+    body, prompt = rest.split("\n</context>\n\n")
+    summary = json.loads(body)
+    assert summary["id"] == other["id"]
+    assert summary["hook_text"] == hook
+    assert summary["hook_kicker"] == "WAIT"
+    assert summary["canvas"] == {"width": 1080, "height": 1920}
+    assert "word_edits" not in summary and "cue_edits" not in summary
+    assert prompt == "Style it like that one"
+    assert started["attachments"] == [{"kind": "candidate", "name": name, "id": None}]
+    [kept] = served.get(f"{agent_url(job, candidate)}/transcript").json()
+    assert kept["attachments"] == [{"kind": "candidate", "name": name, "id": None}]
+
+
+def test_a_candidate_without_a_hook_is_named_by_its_id(served, chat, job):
+    candidate, other = job["candidates"]
+    assert served.patch(f"/api/jobs/{job['id']}/candidates/{other['id']}", json={"hook_text": ""}).status_code == 200
+    chat.replies = [answer("Ok.")]
+    stream = agent_events(served, job, candidate)
+    next(stream)
+
+    sent = send(served, job, candidate, "Like that", [{"kind": "candidate", "candidate_id": other["id"]}])
+    assert sent.status_code == 202, sent.text
+    started = until_finished(stream)[0][1]
+
+    assert started["attachments"] == [{"kind": "candidate", "name": other["id"], "id": None}]
+
+
+def test_an_unknown_the_open_or_a_twice_referenced_candidate_is_refused(served, chat, job):
+    candidate, other = job["candidates"]
+
+    unknown = send(served, job, candidate, "Hi", [{"kind": "candidate", "candidate_id": "nope"}])
+    itself = send(served, job, candidate, "Hi", [{"kind": "candidate", "candidate_id": candidate["id"]}])
+    twice = send(served, job, candidate, "Hi", [{"kind": "candidate", "candidate_id": other["id"]}] * 2)
+
+    assert [r.status_code for r in (unknown, itself, twice)] == [404, 400, 400]
+    assert chat.requests == []

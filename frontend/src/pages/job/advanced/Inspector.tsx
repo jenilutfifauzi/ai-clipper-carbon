@@ -52,9 +52,17 @@ export function Inspector({
 }: Parameters<typeof InspectorFields>[0] & {
   templates?: TemplateInfo[] | null;
   // The Job and Candidate the Agent tab chats about, the editor's Agent stream and Threads, how a turn
-  // is undone, and the Candidate as the editor holds it, with its name (for the Agent's show_ui);
-  // without it there is no Agent tab.
-  agent?: { job: string; candidate: string; stream: AgentStream; threads: AgentThreads; onUndo: UndoTurn; current?: { value: Candidate; name: string } };
+  // is undone, the Candidate as the editor holds it, with its name (for the Agent's show_ui), and the
+  // Job's other Candidates (which a message can reference); without it there is no Agent tab.
+  agent?: {
+    job: string;
+    candidate: string;
+    stream: AgentStream;
+    threads: AgentThreads;
+    onUndo: UndoTurn;
+    current?: { value: Candidate; name: string };
+    others?: Candidate[];
+  };
 }) {
   const [tab, setTab] = useState<InspectorTab>("properties");
   const marked = pickedTemplate(fields.edits, fields.pick);
@@ -80,6 +88,7 @@ export function Inspector({
               threads={agent.threads}
               onUndo={agent.onUndo}
               candidate={agent.current}
+              others={agent.others}
             />
           </Suspense>
         ) : (

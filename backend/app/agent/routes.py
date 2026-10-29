@@ -11,7 +11,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field, StringConstraints
 
 from app.agent.acp_client import AcpError, AcpExited
-from app.agent.attachments import Attachments, resolve
+from app.agent.attachments import Attachments, BadAttachments, UnknownCandidate, resolve
 from app.agent.credentials import SavedCredential, credential_for, delete_credential, save_credential
 from app.agent.events import agent_events, topic
 from app.agent.sessions import AgentSessionManager, TurnRunning
@@ -158,7 +158,12 @@ async def send_turn(job_id: str, candidate_id: str, request: TurnRequest, http: 
         if model is None:
             raise HTTPException(400, f"Choose a model for {provider.label}")
     thread = await _thread(http, job_id, candidate_id, request.thread)
-    attached = await asyncio.to_thread(resolve, http.app.state.store, job_id, candidate_id, request.attachments)
+    try:
+        attached = await asyncio.to_thread(resolve, http.app.state.store, job_id, candidate_id, request.attachments)
+    except UnknownCandidate as error:
+        raise HTTPException(404, str(error)) from error
+    except BadAttachments as error:
+        raise HTTPException(400, str(error)) from error
     try:
         turn = await _sessions(http).send(job_id, candidate_id, request.tab, provider, model, credential, request.prompt, thread, attached)
     except TurnRunning as error:

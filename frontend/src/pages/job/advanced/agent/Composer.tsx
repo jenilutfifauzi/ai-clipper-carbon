@@ -1,4 +1,4 @@
-import { ArrowUp, Bot, ChevronDown, FileText, Plus, Settings2, Square } from "lucide-react";
+import { ArrowUp, Bot, ChevronDown, ChevronLeft, Clapperboard, FileText, Plus, Settings2, Square } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { AgentAttachment, AgentProviderListing } from "../../../../api";
 import { Button, buttonClass } from "../../../../components/Button";
@@ -7,7 +7,7 @@ import { Select } from "../../../../components/Select";
 import { cx } from "../../../../format";
 import { keepEscape } from "../AudioEffectsFields";
 import { AttachmentChips } from "./AttachmentChips";
-import { attachTextFiles, TEXT_FILE_TYPES } from "./attachments";
+import { attach, attachmentName, attachTextFiles, clipChoices, TEXT_FILE_TYPES, type ReferableClip } from "./attachments";
 import { ThinkingOrb } from "./ThinkingOrb";
 
 // The message box grows with its text up to this, then scrolls.
@@ -16,7 +16,8 @@ const MAX_HEIGHT_PX = 160;
 /**
  * The chat's framed message box: Enter sends, Shift+Enter breaks the line, Esc (or ⌘. anywhere)
  * stops a running turn. Above its text, the Agent Attachments going with it as chips (the first ones
- * `defaultAttachments`); under it a toolbar with the + that attaches them,
+ * `defaultAttachments`); under it a toolbar with the + that attaches them (a text file, or one of
+ * `candidates`, the Job's other Candidates),
  * the Provider pill, then the Model pill (each opening its picker), the provider's setup and Send, or Stop
  * while a turn runs. Its text and attachments are its own state, emptied once `onSend` says they went. While the provider is being set up (`setup`) it is
  * only the toolbar, so that another provider can still be picked.
@@ -35,6 +36,7 @@ export function Composer({
   onSend,
   onStop,
   defaultAttachments = NO_ATTACHMENTS,
+  candidates = NO_CLIPS,
 }: {
   providers: AgentProviderListing[];
   listing: AgentProviderListing;
@@ -49,6 +51,7 @@ export function Composer({
   onSend: (prompt: string, attachments: AgentAttachment[]) => Promise<boolean>;
   onStop: () => void;
   defaultAttachments?: AgentAttachment[];
+  candidates?: ReferableClip[];
 }) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState(defaultAttachments);
@@ -74,6 +77,13 @@ export function Composer({
 
   const attachText = async (files: File[]) => {
     const added = await attachTextFiles(attachments, files);
+    setAttachments(added.attached);
+    setAttachError(added.error);
+    area.current?.focus();
+  };
+
+  const add = (attachment: AgentAttachment) => {
+    const added = attach(attachments, attachment);
     setAttachments(added.attached);
     setAttachError(added.error);
     area.current?.focus();
@@ -119,7 +129,13 @@ export function Composer({
         }}
         className="rounded-2xl border border-border bg-fill shadow-sm transition-colors focus-within:border-text/50"
       >
-        {!setup && <AttachmentChips attachments={attachments} onRemove={remove} className="px-3 pt-3" />}
+        {!setup && (
+          <AttachmentChips
+            attachments={attachments.map((attachment) => ({ kind: attachment.kind, name: attachmentName(attachment, candidates) }))}
+            onRemove={remove}
+            className="px-3 pt-3"
+          />
+        )}
         {!setup && attachError && (
           <p role="alert" className="px-4 pt-2 text-xs text-danger">
             {attachError}
@@ -138,7 +154,7 @@ export function Composer({
           />
         )}
         <div className={cx("box-content flex h-8 items-center gap-1 px-2.5 pb-2.5", setup && "pt-2.5")}>
-          {!setup && <AddMenu onTextFiles={(files) => void attachText(files)} />}
+          {!setup && <AddMenu clips={clipChoices(candidates, attachments)} onTextFiles={(files) => void attachText(files)} onAttach={add} />}
           <Pill title="Provider" icon={<Bot aria-hidden size={15} className="shrink-0" />} text={listing.provider.label}>
             <Select
               label="Provider"
@@ -186,11 +202,32 @@ export function Composer({
 }
 
 const NO_ATTACHMENTS: AgentAttachment[] = [];
+const NO_CLIPS: ReferableClip[] = [];
 
-/** The toolbar's +: a menu of what can go with the message, each kind's file picker hidden behind its item. */
-function AddMenu({ onTextFiles }: { onTextFiles: (files: File[]) => void }) {
+/**
+ * The toolbar's +: a menu of what can go with the message, each kind's file picker hidden behind its
+ * item. Reference a clip turns it into the list of `clips`, those attached already off.
+ */
+function AddMenu({
+  clips,
+  onTextFiles,
+  onAttach,
+}: {
+  clips: ReturnType<typeof clipChoices>;
+  onTextFiles: (files: File[]) => void;
+  onAttach: (attachment: AgentAttachment) => void;
+}) {
   const { buttonRef, menuRef, open, hide, toggle } = useMenu({ align: "start" });
   const textFiles = useRef<HTMLInputElement>(null);
+  // The kinds of attachment, or the clips to reference.
+  const [view, setView] = useState<"kinds" | "clips">("kinds");
+  const list = useRef<HTMLDivElement>(null);
+
+  // The item clicked to switch lists is gone: the new list's first item takes the focus.
+  useLayoutEffect(() => {
+    if (list.current?.closest(":popover-open")) list.current.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  }, [view]);
+
   return (
     <>
       <button
@@ -201,20 +238,60 @@ function AddMenu({ onTextFiles }: { onTextFiles: (files: File[]) => void }) {
         title="Add to message"
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={toggle}
+        onClick={() => {
+          setView("kinds");
+          toggle();
+        }}
       >
         <Plus aria-hidden size={16} />
       </button>
-      <Menu ref={menuRef} label="Add to message">
-        <MenuItem
-          onClick={() => {
-            hide();
-            textFiles.current?.click();
-          }}
-        >
-          <FileText aria-hidden size={15} className="text-muted" />
-          Add text file
-        </MenuItem>
+      <Menu ref={menuRef} label={view === "clips" ? "Reference a clip" : "Add to message"}>
+        <div ref={list} className="flex flex-col">
+          {view === "clips" ? (
+            <>
+              <MenuItem onClick={() => setView("kinds")}>
+                <ChevronLeft aria-hidden size={15} className="text-muted" />
+                Back
+              </MenuItem>
+              <div className="flex max-h-72 w-72 max-w-[calc(100vw-1rem)] flex-col overflow-y-auto">
+                {clips.map((clip) => (
+                  <MenuItem
+                    key={clip.id}
+                    disabled={clip.attached}
+                    onClick={() => {
+                      hide();
+                      onAttach({ kind: "candidate", candidate_id: clip.id });
+                    }}
+                  >
+                    <span className="flex min-w-0 flex-1 flex-col py-1.5">
+                      <span className="truncate">{clip.name}</span>
+                      <span className="text-xs text-muted tabular-nums">
+                        {clip.range}
+                        {clip.attached && " · attached"}
+                      </span>
+                    </span>
+                  </MenuItem>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <MenuItem
+                onClick={() => {
+                  hide();
+                  textFiles.current?.click();
+                }}
+              >
+                <FileText aria-hidden size={15} className="text-muted" />
+                Add text file
+              </MenuItem>
+              <MenuItem disabled={clips.length === 0} onClick={() => setView("clips")}>
+                <Clapperboard aria-hidden size={15} className="text-muted" />
+                Reference a clip
+              </MenuItem>
+            </>
+          )}
+        </div>
       </Menu>
       <input
         ref={textFiles}

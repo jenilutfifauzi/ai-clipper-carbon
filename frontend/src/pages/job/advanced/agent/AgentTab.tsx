@@ -3,6 +3,7 @@ import { useContext, useEffect, useRef, useState } from "react";
 import { api, TAB_ID, type AgentAttachment, type AgentProviderListing, type AgentTurnRequest, type Candidate } from "../../../../api";
 import { rememberedValue } from "../../../../remembered";
 import type { AgentTurnView } from "./agentStream";
+import { attachmentName, type ReferableClip } from "./attachments";
 import { ChatHeader } from "./ChatHeader";
 import { ChoicePopup } from "./ChoicePopup";
 import { ErrorNote } from "./ErrorNote";
@@ -56,6 +57,8 @@ export function modelOptions({ provider, status }: AgentProviderListing): string
   return [...new Set([status.model, ...provider.models, provider.default_model].filter((model): model is string => !!model))];
 }
 
+const NO_CLIPS: ReferableClip[] = [];
+
 /**
  * The Inspector's Agent tab (loaded only when opened), laid out as open-pencil's chat panel: a
  * header, the transcript, and the composer, whose model pill picks an Agent Provider and model.
@@ -63,7 +66,8 @@ export function modelOptions({ provider, status }: AgentProviderListing): string
  * streaming in. The chat's `stream` and its Agent `threads` are the editor's (they outlive the tab;
  * without `threads`, the header lists none and a message goes to the newest), and `onUndo` reverts or
  * restores a finished turn. `candidate` is the Candidate as the editor holds it, with its name, which
- * the Agent shows through show_ui; a choice it offers is sent as the composer sends.
+ * the Agent shows through show_ui; a choice it offers is sent as the composer sends. `others` are the
+ * Job's other Candidates, which a message can reference.
  */
 export function AgentTab({
   jobId,
@@ -72,6 +76,7 @@ export function AgentTab({
   threads,
   onUndo,
   candidate = null,
+  others = NO_CLIPS,
   initialProviders = null,
 }: {
   jobId: string;
@@ -80,6 +85,7 @@ export function AgentTab({
   threads?: AgentThreads;
   onUndo?: UndoTurn;
   candidate?: { value: Candidate; name: string } | null;
+  others?: ReferableClip[];
   initialProviders?: AgentProviderListing[] | null;
 }) {
   const [providers, setProviders] = useState(initialProviders);
@@ -134,7 +140,7 @@ export function AgentTab({
       stream.prompted(
         turn,
         prompt,
-        attachments.map(({ kind, name }) => ({ kind, name })),
+        attachments.map((attachment) => ({ kind: attachment.kind, name: attachmentName(attachment, others) })),
       );
       return true;
     } catch (reason) {
@@ -200,6 +206,7 @@ export function AgentTab({
           running={stream.running !== null}
           onSend={send}
           onStop={stop}
+          candidates={others}
         />
       </div>
     </AgentUiContext.Provider>

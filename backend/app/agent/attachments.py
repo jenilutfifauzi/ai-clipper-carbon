@@ -2,19 +2,30 @@
 names them; `resolve` turns them into the context the Agent reads before the prompt, and into what
 the chat keeps of them. Only the owner's own words are kept as the turn's prompt."""
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from html import escape
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator
+from pydantic import BaseModel, Field, StringConstraints, TypeAdapter, field_validator
 
+from app.candidates import Candidate
+from app.canvas import canvas_for
 from app.jobs import JobStore
 
 # How many go with one message.
 MAX_ATTACHMENTS = 6
 # A text file's text, in UTF-8 bytes.
 MAX_TEXT_BYTES = 50 * 1024
+
+# A referenced Candidate's name: its hook, cut to this many characters.
+MAX_HOOK_NAME = 48
+# What a Candidate's summary leaves out: edits tied to its own range's Words and Cues, of no use as
+# a style reference.
+RANGE_BOUND = ("word_edits", "cue_edits")
+
+_CANDIDATE = TypeAdapter(Candidate)
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
@@ -34,9 +45,15 @@ class TextAttachment(BaseModel):
         return text
 
 
-# What a turn request may attach. Each later kind joins as a union member discriminated on `kind`:
-# Annotated[TextAttachment | CandidateAttachment | ..., Field(discriminator="kind")].
-Attachment = TextAttachment
+class CandidateAttachment(BaseModel):
+    """Another Candidate of the Job, whose edit goes with the message as a style reference."""
+
+    kind: Literal["candidate"] = "candidate"
+    candidate_id: str = Field(min_length=1)
+
+
+# What a turn request may attach, told apart by `kind`.
+Attachment = Annotated[TextAttachment | CandidateAttachment, Field(discriminator="kind")]
 Attachments = Annotated[list[Attachment], Field(max_length=MAX_ATTACHMENTS)]
 
 
@@ -60,13 +77,54 @@ class ResolvedAttachments:
         return f"{self.context}\n\n{prompt}" if self.context else prompt
 
 
+class UnknownCandidate(LookupError):
+    """A referenced Candidate the Job doesn't have."""
+
+
+class BadAttachments(ValueError):
+    """Attachments that can't go together, or with a message to this Candidate."""
+
+
 def resolve(store: JobStore, job_id: str, candidate_id: str, attachments: Sequence[Attachment]) -> ResolvedAttachments:
-    """The context and the chat's record of what goes with a message to the Agent on `candidate_id`."""
-    blocks = [_block(attachment.kind, attachment.name, attachment.text) for attachment in attachments]
-    return ResolvedAttachments(
-        context="\n\n".join(blocks),
-        sent=[SentAttachment(kind=attachment.kind, name=attachment.name) for attachment in attachments],
-    )
+    """The context and the chat's record of what goes with a message to the Agent on `candidate_id`.
+    Raises UnknownCandidate for a Candidate the Job doesn't have, and BadAttachments for the open
+    Candidate or one referenced twice. A referenced Candidate is read here, for the owner: the
+    Agent's own tools still reach only the open one."""
+    blocks, sent = [], []
+    candidates: dict[str, Candidate] | None = None
+    referenced: set[str] = set()
+    for attachment in attachments:
+        if isinstance(attachment, TextAttachment):
+            name, body = attachment.name, attachment.text
+        else:
+            if candidates is None:
+                candidates = {each.id: each for each in store.load_candidates(job_id) or []}
+            name, body = _candidate(candidates, candidate_id, referenced, attachment.candidate_id)
+        blocks.append(_block(attachment.kind, name, body))
+        sent.append(SentAttachment(kind=attachment.kind, name=name))
+    return ResolvedAttachments(context="\n\n".join(blocks), sent=sent)
+
+
+def _candidate(candidates: dict[str, Candidate], open_id: str, referenced: set[str], wanted: str) -> tuple[str, str]:
+    """A referenced Candidate's name and summary: its edit as get_candidate gives it, without what
+    only its own range's Words and Cues make sense of."""
+    if wanted == open_id:
+        raise BadAttachments("A message can't reference the Candidate it edits")
+    if wanted in referenced:
+        raise BadAttachments(f"Candidate {wanted} is referenced twice")
+    found = candidates.get(wanted)
+    if found is None:
+        raise UnknownCandidate(f"This Job has no Candidate {wanted}")
+    referenced.add(wanted)
+    width, height = canvas_for(found.aspect).size
+    summary = {key: value for key, value in _CANDIDATE.dump_python(found, mode="json").items() if key not in RANGE_BOUND}
+    return _hook_name(found.hook_text) or found.id, json.dumps(summary | {"canvas": {"width": width, "height": height}}, ensure_ascii=False)
+
+
+def _hook_name(hook: str) -> str:
+    """A hook on one line without its Emphasis marks, cut to MAX_HOOK_NAME characters."""
+    line = " ".join(hook.replace("*", "").split())
+    return line if len(line) <= MAX_HOOK_NAME else f"{line[: MAX_HOOK_NAME - 1].rstrip()}…"
 
 
 def _block(kind: str, name: str, body: str) -> str:

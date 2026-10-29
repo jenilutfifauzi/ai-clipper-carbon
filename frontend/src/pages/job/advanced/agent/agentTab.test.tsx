@@ -119,6 +119,31 @@ describe("Agent Attachments", () => {
     expect(html).toContain("lucide-file-text");
     expect(html).not.toContain("Remove brief.md");
   });
+
+  // .scratch/agent-attachments/issues/02
+  test("a referenced Candidate's bubble chip names it, with a clapperboard", () => {
+    const html = renderToStaticMarkup(
+      <TurnView
+        turn={{
+          id: "t1",
+          tab: null,
+          thread: null,
+          provider: "deepseek",
+          model: null,
+          prompt: "Style it like that one",
+          attachments: [{ kind: "candidate", name: "Wait for the drop", id: null }],
+          parts: [],
+          stop: "end_turn",
+          first_revision: null,
+          last_revision: null,
+          error: null,
+        }}
+      />,
+    );
+    expect(html).toContain("Wait for the drop");
+    expect(html).toContain("lucide-clapperboard");
+    expect(html).not.toContain("lucide-file-text");
+  });
 });
 
 describe("TurnView", () => {

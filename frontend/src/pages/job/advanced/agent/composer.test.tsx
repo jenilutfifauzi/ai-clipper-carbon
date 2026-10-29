@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { AgentAttachment, AgentProviderListing, AgentUi } from "../../../../api";
 import type { AgentTurnView } from "./agentStream";
-import { attachTextFiles, MAX_ATTACHMENTS } from "./attachments";
+import { attach, attachmentName, attachTextFiles, clipChoices, MAX_ATTACHMENTS, type ReferableClip } from "./attachments";
 import { ChatHeader } from "./ChatHeader";
 import { Composer } from "./Composer";
 import { TurnView } from "./TurnView";
@@ -25,7 +25,7 @@ const deepseek: AgentProviderListing = {
   status: { id: "deepseek", ready: true, installed: null, command: null, version: null, login: null, has_key: true, key_source: "saved", base_url: null, model: null },
 };
 
-const composer = (change: { running?: boolean; attachments?: AgentAttachment[] } = {}) =>
+const composer = (change: { running?: boolean; attachments?: AgentAttachment[]; candidates?: ReferableClip[] } = {}) =>
   renderToStaticMarkup(
     <Composer
       providers={[deepseek]}
@@ -41,6 +41,7 @@ const composer = (change: { running?: boolean; attachments?: AgentAttachment[] }
       onSend={async () => true}
       onStop={() => {}}
       defaultAttachments={change.attachments}
+      candidates={change.candidates}
     />,
   );
 
@@ -139,7 +140,7 @@ describe("the composer's attachments", () => {
 
   test("a file too big or not text isn't attached, and says why; the others are", async () => {
     const big = await attachTextFiles([brief], [file("huge.txt", "x".repeat(50 * 1024 + 1)), file("ok.txt", "fine")]);
-    expect(big.attached.map((each) => each.name)).toEqual(["brief.md", "ok.txt"]);
+    expect(big.attached.map((each) => attachmentName(each, []))).toEqual(["brief.md", "ok.txt"]);
     expect(big.error).toBe("huge.txt is over 50 KB.");
 
     const pdf = await attachTextFiles([], [file("deck.pdf", "%PDF")]);
@@ -152,8 +153,50 @@ describe("the composer's attachments", () => {
   test(`at most ${MAX_ATTACHMENTS} go with a message, told when there are more`, async () => {
     const five = Array.from({ length: 5 }, (_, n) => ({ ...brief, name: `${n}.md` }));
     const added = await attachTextFiles(five, [file("a.md", "a"), file("b.md", "b")]);
-    expect(added.attached.map((each) => each.name)).toEqual(["0.md", "1.md", "2.md", "3.md", "4.md", "a.md"]);
+    expect(added.attached.map((each) => attachmentName(each, []))).toEqual(["0.md", "1.md", "2.md", "3.md", "4.md", "a.md"]);
     expect(added.error).toBe(`At most ${MAX_ATTACHMENTS} attachments go with a message.`);
+  });
+});
+
+// .scratch/agent-attachments/issues/02: another Candidate of the Job, as a style reference.
+describe("referencing a clip", () => {
+  const button = (html: string, label: string) => html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? "";
+  const item = (html: string, text: string) => html.match(new RegExp(`<button[^>]*role="menuitem"[^>]*>(?:(?!</button>).)*${text}`, "s"))?.[0] ?? "";
+  const longHook = "This is the hook of the clip whose *style* I like the most";
+  const clips: ReferableClip[] = [
+    { id: "c2", start: 72, end: 105.5, hook_text: longHook },
+    { id: "c3", start: 3600, end: 3630, hook_text: "" },
+  ];
+
+  test("the + menu offers Reference a clip, off while the Job has no other Candidate", () => {
+    const offered = item(composer({ candidates: clips }), "Reference a clip");
+    expect(offered).toContain("lucide-clapperboard");
+    expect(offered).not.toMatch(/ disabled=""/);
+    expect(item(composer(), "Reference a clip")).toMatch(/ disabled=""/);
+  });
+
+  test("the picker lists each Candidate by its hook, on one line, and its time; one attached can't be picked again", () => {
+    expect(clipChoices(clips, [{ kind: "candidate", candidate_id: "c2" }])).toEqual([
+      { id: "c2", name: "This is the hook of the clip whose style I like…", range: "1:12–1:45", attached: true },
+      { id: "c3", name: "c3", range: "1:00:00–1:00:30", attached: false },
+    ]);
+  });
+
+  test("a referenced Candidate is a chip named by its hook, with a clapperboard", () => {
+    const html = composer({ candidates: clips, attachments: [{ kind: "candidate", candidate_id: "c2" }] });
+    const chips = html.match(/<ul[^>]*data-attachments[\s\S]*?<\/ul>/)?.[0] ?? "";
+    expect(chips).toContain("lucide-clapperboard");
+    expect(chips).toContain("This is the hook of the clip whose style I like…");
+    expect(button(html, "Remove This is the hook of the clip whose style I like…")).not.toBe("");
+  });
+
+  test(`a clip is refused past ${MAX_ATTACHMENTS} attachments, and twice`, () => {
+    const brief: AgentAttachment = { kind: "text", name: "brief.md", text: "x" };
+    const six = Array.from({ length: MAX_ATTACHMENTS }, () => brief);
+    expect(attach(six, { kind: "candidate", candidate_id: "c2" })).toEqual({ attached: six, error: `At most ${MAX_ATTACHMENTS} attachments go with a message.` });
+    const once: AgentAttachment[] = [{ kind: "candidate", candidate_id: "c2" }];
+    expect(attach(once, { kind: "candidate", candidate_id: "c2" })).toEqual({ attached: once, error: null });
+    expect(attach([], once[0])).toEqual({ attached: once, error: null });
   });
 });
 

@@ -6,10 +6,10 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The request accepts `{kind: "candidate", candidate_id}`; an unknown id → 404, the open Candidate's id → 400, the same Candidate twice → 400
-- [ ] The driver's prompt carries the referenced Candidate's summary; the Scoped MCP server's rules are unchanged
-- [ ] Menu item with lucide `Clapperboard` opens the list of the Job's other Candidates; a picked Candidate can't be picked again while attached; chip shows its hook (truncated)
-- [ ] Bubble chip after send and after reload names the Candidate
-- [ ] Tests: `/turns` fake-driver test for the summary and the errors; composer test for the picker
+- [x] The request accepts `{kind: "candidate", candidate_id}`; an unknown id → 404, the open Candidate's id → 400, the same Candidate twice → 400
+- [x] The driver's prompt carries the referenced Candidate's summary; the Scoped MCP server's rules are unchanged
+- [x] Menu item with lucide `Clapperboard` opens the list of the Job's other Candidates; a picked Candidate can't be picked again while attached; chip shows its hook (truncated)
+- [x] Bubble chip after send and after reload names the Candidate
+- [x] Tests: `/turns` fake-driver test for the summary and the errors; composer test for the picker
