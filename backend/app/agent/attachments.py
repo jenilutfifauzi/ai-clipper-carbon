@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, StringConstraints, TypeAdapter, field_val
 from app.candidates import Candidate
 from app.canvas import canvas_for
 from app.jobs import JobStore
+from app.profile import ChannelProfile, ProfileStore
 
 # How many go with one message.
 MAX_ATTACHMENTS = 6
@@ -26,6 +27,7 @@ MAX_HOOK_NAME = 48
 RANGE_BOUND = ("word_edits", "cue_edits")
 
 _CANDIDATE = TypeAdapter(Candidate)
+_PROFILE = TypeAdapter(ChannelProfile)
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
@@ -52,8 +54,14 @@ class CandidateAttachment(BaseModel):
     candidate_id: str = Field(min_length=1)
 
 
+class ChannelProfileAttachment(BaseModel):
+    """The Channel Profile, as it is now."""
+
+    kind: Literal["channel_profile"] = "channel_profile"
+
+
 # What a turn request may attach, told apart by `kind`.
-Attachment = Annotated[TextAttachment | CandidateAttachment, Field(discriminator="kind")]
+Attachment = Annotated[TextAttachment | CandidateAttachment | ChannelProfileAttachment, Field(discriminator="kind")]
 Attachments = Annotated[list[Attachment], Field(max_length=MAX_ATTACHMENTS)]
 
 
@@ -85,17 +93,24 @@ class BadAttachments(ValueError):
     """Attachments that can't go together, or with a message to this Candidate."""
 
 
-def resolve(store: JobStore, job_id: str, candidate_id: str, attachments: Sequence[Attachment]) -> ResolvedAttachments:
+def resolve(
+    store: JobStore, profiles: ProfileStore, job_id: str, candidate_id: str, attachments: Sequence[Attachment]
+) -> ResolvedAttachments:
     """The context and the chat's record of what goes with a message to the Agent on `candidate_id`.
     Raises UnknownCandidate for a Candidate the Job doesn't have, and BadAttachments for the open
-    Candidate or one referenced twice. A referenced Candidate is read here, for the owner: the
-    Agent's own tools still reach only the open one."""
+    Candidate, one referenced twice or the Channel Profile twice. A referenced Candidate is read
+    here, for the owner: the Agent's own tools still reach only the open one."""
     blocks, sent = [], []
     candidates: dict[str, Candidate] | None = None
     referenced: set[str] = set()
+    if sum(isinstance(attachment, ChannelProfileAttachment) for attachment in attachments) > 1:
+        raise BadAttachments("The Channel Profile goes with a message at most once")
     for attachment in attachments:
         if isinstance(attachment, TextAttachment):
             name, body = attachment.name, attachment.text
+        elif isinstance(attachment, ChannelProfileAttachment):
+            # As the /profile route gives it.
+            name, body = "Channel Profile", _PROFILE.dump_json(profiles.load()).decode()
         else:
             if candidates is None:
                 candidates = {each.id: each for each in store.load_candidates(job_id) or []}

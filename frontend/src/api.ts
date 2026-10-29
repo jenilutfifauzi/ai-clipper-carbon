@@ -2211,8 +2211,8 @@ export interface AgentTurnRequest {
 }
 
 // An Agent Attachment as a turn request sends it (backend/app/agent/attachments.py): a text file's
-// text, at most 50 KB, or another Candidate of the Job, as a style reference.
-export type AgentAttachment = { kind: "text"; name: string; text: string } | { kind: "candidate"; candidate_id: string };
+// text, at most 50 KB; another Candidate of the Job, as a style reference; or the Channel Profile, once.
+export type AgentAttachment = { kind: "text"; name: string; text: string } | { kind: "candidate"; candidate_id: string } | { kind: "channel_profile" };
 
 // What the chat keeps of an Agent Attachment, for its chip: an image's id names its picture.
 export interface AgentSentAttachment {

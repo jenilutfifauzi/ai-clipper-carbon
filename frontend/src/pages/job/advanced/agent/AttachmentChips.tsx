@@ -1,4 +1,4 @@
-import { Clapperboard, FileText, X, type LucideIcon } from "lucide-react";
+import { Clapperboard, FileText, UserRound, X, type LucideIcon } from "lucide-react";
 import { cx } from "../../../../format";
 
 /**
@@ -44,7 +44,7 @@ export function AttachmentChips({
 }
 
 // Each kind's icon, as the + menu shows it; a text file's for any other.
-const KIND_ICONS: Record<string, LucideIcon> = { text: FileText, candidate: Clapperboard };
+const KIND_ICONS: Record<string, LucideIcon> = { text: FileText, candidate: Clapperboard, channel_profile: UserRound };
 
 function ChipIcon({ kind }: { kind: string }) {
   const Icon = KIND_ICONS[kind] ?? FileText;

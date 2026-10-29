@@ -1,4 +1,4 @@
-import { ArrowUp, Bot, ChevronDown, ChevronLeft, Clapperboard, FileText, Plus, Settings2, Square } from "lucide-react";
+import { ArrowUp, Bot, ChevronDown, ChevronLeft, Clapperboard, FileText, Plus, Settings2, Square, UserRound } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { AgentAttachment, AgentProviderListing } from "../../../../api";
 import { Button, buttonClass } from "../../../../components/Button";
@@ -16,8 +16,8 @@ const MAX_HEIGHT_PX = 160;
 /**
  * The chat's framed message box: Enter sends, Shift+Enter breaks the line, Esc (or ⌘. anywhere)
  * stops a running turn. Above its text, the Agent Attachments going with it as chips (the first ones
- * `defaultAttachments`); under it a toolbar with the + that attaches them (a text file, or one of
- * `candidates`, the Job's other Candidates),
+ * `defaultAttachments`); under it a toolbar with the + that attaches them (a text file, one of
+ * `candidates`, the Job's other Candidates, or the Channel Profile),
  * the Provider pill, then the Model pill (each opening its picker), the provider's setup and Send, or Stop
  * while a turn runs. Its text and attachments are its own state, emptied once `onSend` says they went. While the provider is being set up (`setup`) it is
  * only the toolbar, so that another provider can still be picked.
@@ -154,7 +154,14 @@ export function Composer({
           />
         )}
         <div className={cx("box-content flex h-8 items-center gap-1 px-2.5 pb-2.5", setup && "pt-2.5")}>
-          {!setup && <AddMenu clips={clipChoices(candidates, attachments)} onTextFiles={(files) => void attachText(files)} onAttach={add} />}
+          {!setup && (
+            <AddMenu
+              clips={clipChoices(candidates, attachments)}
+              profileAttached={attachments.some((attachment) => attachment.kind === "channel_profile")}
+              onTextFiles={(files) => void attachText(files)}
+              onAttach={add}
+            />
+          )}
           <Pill title="Provider" icon={<Bot aria-hidden size={15} className="shrink-0" />} text={listing.provider.label}>
             <Select
               label="Provider"
@@ -206,27 +213,34 @@ const NO_CLIPS: ReferableClip[] = [];
 
 /**
  * The toolbar's +: a menu of what can go with the message, each kind's file picker hidden behind its
- * item. Reference a clip turns it into the list of `clips`, those attached already off.
+ * item. Reference a clip turns it into the list of `clips`, those attached already off; the Channel
+ * Profile is off while it is attached.
  */
 function AddMenu({
   clips,
+  profileAttached,
   onTextFiles,
   onAttach,
 }: {
   clips: ReturnType<typeof clipChoices>;
+  profileAttached: boolean;
   onTextFiles: (files: File[]) => void;
   onAttach: (attachment: AgentAttachment) => void;
 }) {
-  const { buttonRef, menuRef, open, hide, toggle } = useMenu({ align: "start" });
+  const { buttonRef, menuRef, open, show, hide, toggle } = useMenu({ align: "start" });
   const textFiles = useRef<HTMLInputElement>(null);
   // The kinds of attachment, or the clips to reference.
   const [view, setView] = useState<"kinds" | "clips">("kinds");
   const list = useRef<HTMLDivElement>(null);
 
-  // The item clicked to switch lists is gone: the new list's first item takes the focus.
+  // Switched lists, the menu is placed again for its new size, and as the item clicked is gone, the
+  // new list's first item takes the focus.
   useLayoutEffect(() => {
-    if (list.current?.closest(":popover-open")) list.current.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-  }, [view]);
+    if (!list.current?.closest(":popover-open")) return;
+    hide();
+    show();
+    list.current.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  }, [view, hide, show]);
 
   return (
     <>
@@ -288,6 +302,16 @@ function AddMenu({
               <MenuItem disabled={clips.length === 0} onClick={() => setView("clips")}>
                 <Clapperboard aria-hidden size={15} className="text-muted" />
                 Reference a clip
+              </MenuItem>
+              <MenuItem
+                disabled={profileAttached}
+                onClick={() => {
+                  hide();
+                  onAttach({ kind: "channel_profile" });
+                }}
+              >
+                <UserRound aria-hidden size={15} className="text-muted" />
+                Channel Profile
               </MenuItem>
             </>
           )}

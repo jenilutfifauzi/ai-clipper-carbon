@@ -6,9 +6,9 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The request accepts `{kind: "channel_profile"}` at most once (twice → 400)
-- [ ] The driver's prompt carries the profile as the `/profile` route returns it
-- [ ] Menu item with lucide `UserRound`, disabled while attached; chip and bubble chip read "Channel Profile"
-- [ ] Tests: `/turns` fake-driver test; composer test (item disabled after attaching)
+- [x] The request accepts `{kind: "channel_profile"}` at most once (twice → 400)
+- [x] The driver's prompt carries the profile as the `/profile` route returns it
+- [x] Menu item with lucide `UserRound`, disabled while attached; chip and bubble chip read "Channel Profile"
+- [x] Tests: `/turns` fake-driver test; composer test (item disabled after attaching)

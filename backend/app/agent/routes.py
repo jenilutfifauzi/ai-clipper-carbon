@@ -159,7 +159,7 @@ async def send_turn(job_id: str, candidate_id: str, request: TurnRequest, http: 
             raise HTTPException(400, f"Choose a model for {provider.label}")
     thread = await _thread(http, job_id, candidate_id, request.thread)
     try:
-        attached = await asyncio.to_thread(resolve, http.app.state.store, job_id, candidate_id, request.attachments)
+        attached = await asyncio.to_thread(resolve, http.app.state.store, http.app.state.profiles, job_id, candidate_id, request.attachments)
     except UnknownCandidate as error:
         raise HTTPException(404, str(error)) from error
     except BadAttachments as error:

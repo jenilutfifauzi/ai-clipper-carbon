@@ -144,6 +144,30 @@ describe("Agent Attachments", () => {
     expect(html).toContain("lucide-clapperboard");
     expect(html).not.toContain("lucide-file-text");
   });
+
+  // .scratch/agent-attachments/issues/03
+  test("the Channel Profile's bubble chip reads Channel Profile, with its icon", () => {
+    const html = renderToStaticMarkup(
+      <TurnView
+        turn={{
+          id: "t1",
+          tab: null,
+          thread: null,
+          provider: "deepseek",
+          model: null,
+          prompt: "Edit it my way",
+          attachments: [{ kind: "channel_profile", name: "Channel Profile", id: null }],
+          parts: [],
+          stop: "end_turn",
+          first_revision: null,
+          last_revision: null,
+          error: null,
+        }}
+      />,
+    );
+    expect(html).toContain("Channel Profile");
+    expect(html).toContain("lucide-user-round");
+  });
 });
 
 describe("TurnView", () => {

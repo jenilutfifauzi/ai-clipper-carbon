@@ -166,3 +166,38 @@ def test_an_unknown_the_open_or_a_twice_referenced_candidate_is_refused(served, 
 
     assert [r.status_code for r in (unknown, itself, twice)] == [404, 400, 400]
     assert chat.requests == []
+
+
+# .scratch/agent-attachments/issues/03: the Channel Profile, inlined.
+
+
+def test_the_channel_profile_goes_before_the_prompt_as_the_profile_route_gives_it(served, chat, job):
+    candidate = job["candidates"][0]
+    profile = {"niche": "Finance podcasts", "audience": "First-time investors", "clip_style": "Calm, no shouting", "avoid": "Crypto hype"}
+    assert served.put("/api/profile", json=profile).status_code == 200
+    chat.replies = [answer("In your style.")]
+    stream = agent_events(served, job, candidate)
+    next(stream)
+
+    sent = send(served, job, candidate, "Edit it my way", [{"kind": "channel_profile"}])
+    assert sent.status_code == 202, sent.text
+    started = until_finished(stream)[0][1]
+
+    content = chat.requests[-1]["messages"][-1]["content"]
+    head, rest = content.split("\n", 1)
+    assert head == '<context kind="channel_profile" name="Channel Profile">'
+    body, prompt = rest.split("\n</context>\n\n")
+    assert json.loads(body) == served.get("/api/profile").json() == profile
+    assert prompt == "Edit it my way"
+    assert started["attachments"] == [{"kind": "channel_profile", "name": "Channel Profile", "id": None}]
+    [kept] = served.get(f"{agent_url(job, candidate)}/transcript").json()
+    assert kept["attachments"] == [{"kind": "channel_profile", "name": "Channel Profile", "id": None}]
+
+
+def test_the_channel_profile_goes_at_most_once(served, chat, job):
+    candidate = job["candidates"][0]
+
+    twice = send(served, job, candidate, "Hi", [{"kind": "channel_profile"}] * 2)
+
+    assert twice.status_code == 400
+    assert chat.requests == []

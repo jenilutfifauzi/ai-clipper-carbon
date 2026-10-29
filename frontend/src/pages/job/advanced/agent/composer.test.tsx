@@ -200,6 +200,31 @@ describe("referencing a clip", () => {
   });
 });
 
+// .scratch/agent-attachments/issues/03: the Channel Profile, in one click.
+describe("attaching the Channel Profile", () => {
+  const item = (html: string, text: string) => html.match(new RegExp(`<button[^>]*role="menuitem"[^>]*>(?:(?!</button>).)*${text}`, "s"))?.[0] ?? "";
+  const profile: AgentAttachment = { kind: "channel_profile" };
+
+  test("the + menu offers the Channel Profile, off while it is attached", () => {
+    const offered = item(composer(), "Channel Profile");
+    expect(offered).toContain("lucide-user-round");
+    expect(offered).not.toMatch(/ disabled=""/);
+    expect(item(composer({ attachments: [profile] }), "Channel Profile")).toMatch(/ disabled=""/);
+  });
+
+  test("attached, it is a chip reading Channel Profile, with a ×", () => {
+    const html = composer({ attachments: [profile] });
+    const chips = html.match(/<ul[^>]*data-attachments[\s\S]*?<\/ul>/)?.[0] ?? "";
+    expect(chips).toContain("lucide-user-round");
+    expect(chips).toContain(">Channel Profile<");
+    expect(chips).toContain('aria-label="Remove Channel Profile"');
+  });
+
+  test("it goes at most once", () => {
+    expect(attach([profile], profile)).toEqual({ attached: [profile], error: null });
+  });
+});
+
 // The Agent's chat keeps the app's orange for nothing: its controls and bubbles are neutral.
 describe("the chat without orange", () => {
   const turn: AgentTurnView = {

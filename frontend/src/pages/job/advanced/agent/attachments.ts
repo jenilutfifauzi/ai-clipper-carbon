@@ -39,7 +39,8 @@ export async function attachTextFiles(attached: AgentAttachment[], files: File[]
 }
 
 /**
- * `attached` with `attachment` added, unless it is already there (a Candidate referenced twice) or
+ * `attached` with `attachment` added, unless it is already there (a Candidate referenced twice, the
+ * Channel Profile twice) or
  * MAX_ATTACHMENTS are, which `error` then says.
  */
 export function attach(attached: AgentAttachment[], attachment: AgentAttachment): { attached: AgentAttachment[]; error: string | null } {
@@ -48,7 +49,8 @@ export function attach(attached: AgentAttachment[], attachment: AgentAttachment)
   return { attached: [...attached, attachment], error: null };
 }
 
-const sameAttachment = (a: AgentAttachment, b: AgentAttachment) => a.kind === "candidate" && b.kind === "candidate" && a.candidate_id === b.candidate_id;
+const sameAttachment = (a: AgentAttachment, b: AgentAttachment) =>
+  a.kind === "channel_profile" ? b.kind === "channel_profile" : a.kind === "candidate" && b.kind === "candidate" && a.candidate_id === b.candidate_id;
 
 // What the clip picker and a chip need of another Candidate of the Job.
 export type ReferableClip = Pick<Candidate, "id" | "start" | "end" | "hook_text">;
@@ -64,9 +66,10 @@ export function clipChoices(clips: ReferableClip[], attached: AgentAttachment[])
   }));
 }
 
-/** An attachment's name on its chip: a file's name; a Candidate's hook (or id), as the chat will keep it. */
+/** An attachment's name on its chip, as the chat will keep it: a file's name; a Candidate's hook (or id); "Channel Profile". */
 export function attachmentName(attachment: AgentAttachment, clips: ReferableClip[]): string {
   if (attachment.kind === "text") return attachment.name;
+  if (attachment.kind === "channel_profile") return "Channel Profile";
   const clip = clips.find((each) => each.id === attachment.candidate_id);
   return (clip && hookName(clip.hook_text)) || attachment.candidate_id;
 }
