@@ -76,7 +76,7 @@ describe("ToolRow", () => {
 });
 
 describe("TurnView", () => {
-  test("the prompt, text with its line breaks, and thoughts folded", () => {
+  test("the prompt with its line breaks, the text, and thoughts folded", () => {
     const html = renderToStaticMarkup(
       <TurnView
         turn={{
@@ -99,6 +99,7 @@ describe("TurnView", () => {
     expect(html).toContain("Add a title");
     expect(html).toMatch(/<details[^>]*>.*Hmm/s);
     expect(html).toContain("whitespace-pre-wrap");
+    expect(html).toContain("data-markdown");
   });
 
   // .scratch/agent-mode/issues/08: a finished turn that saved Revisions can be reverted and restored.

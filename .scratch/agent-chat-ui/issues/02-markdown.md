@@ -2,7 +2,7 @@
 
 **Parent spec:** `spec.md` (Solution 2).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Blocked by:** 01
 
@@ -23,5 +23,5 @@
 - Streaming: render whatever text exists. An unclosed fence renders as code, which is fine.
 
 **Acceptance**
-- [ ] A test in `agentTab.test.tsx` (or a new `chatMarkdown.test.tsx`): `**x**` renders a `<strong>`, a `- a` list renders `<li>`, and a raw `<script>` is not rendered as an element.
-- [ ] typecheck and agent tests pass, and `npm run build` still succeeds.
+- [x] A test in `agentTab.test.tsx` (or a new `chatMarkdown.test.tsx`): `**x**` renders a `<strong>`, a `- a` list renders `<li>`, and a raw `<script>` is not rendered as an element.
+- [x] typecheck and agent tests pass, and `npm run build` still succeeds. (Checked with `vite build`, the AgentTab chunk 183 kB, 56 kB gzipped; tsc's one error is the earlier `process` in `vite.config.ts`.)

@@ -4,6 +4,7 @@ import type { AgentStop, AgentTurnUndo } from "../../../../api";
 import { Button } from "../../../../components/Button";
 import { writeClipboard } from "../../../../components/CopyButton";
 import type { AgentTurnView } from "./agentStream";
+import { ChatMarkdown } from "./ChatMarkdown";
 import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolRow } from "./ToolRow";
 
@@ -19,7 +20,7 @@ export type UndoTurn = (turn: AgentTurnView, how: AgentTurnUndo) => Promise<void
 
 /**
  * One Agent Turn: the owner's message in a bubble on the right, then what the Agent did in order —
- * its text in bubbles on the left (plain, its line breaks kept; no Markdown), its thoughts folded,
+ * its text in bubbles on the left, as Markdown (the owner's stays plain), its thoughts folded,
  * and a row per tool call — dots while it works, and, once finished with Revisions saved, Revert and
  * Restore (with `onUndo`). Memoised: a streaming turn doesn't re-render the finished ones above it.
  */
@@ -45,7 +46,7 @@ export const TurnView = memo(function TurnView({ turn, onUndo }: { turn: AgentTu
           <ReasoningBlock key={index} text={part.text} streaming={running && part === last} />
         ) : (
           <div key={index} className="group/response relative rounded-xl rounded-tl-md bg-fill px-3 py-2 text-sm">
-            <p className="text-pretty break-words whitespace-pre-wrap">{part.text}</p>
+            <ChatMarkdown text={part.text} />
             <CopyResponse text={part.text} />
           </div>
         ),
