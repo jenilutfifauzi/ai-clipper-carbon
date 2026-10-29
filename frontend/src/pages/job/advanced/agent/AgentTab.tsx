@@ -4,6 +4,8 @@ import { api, TAB_ID, type AgentProviderListing, type Candidate } from "../../..
 import { rememberedValue } from "../../../../remembered";
 import type { AgentTurnView } from "./agentStream";
 import { ChatHeader } from "./ChatHeader";
+import { ChoicePopup } from "./ChoicePopup";
+import { openChoices } from "./choices";
 import { Composer } from "./Composer";
 import { PresenceContext } from "./presence";
 import { ProviderSetup } from "./ProviderSetup";
@@ -61,6 +63,9 @@ export function AgentTab({
   const [setupOpen, setSetupOpen] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  // The choices the owner closed with Escape or ✕, by their call: still answerable from their card.
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
+  const root = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     api.listAgentProviders().then(setProviders, (reason) => setProvidersError(reason instanceof Error ? reason.message : "Couldn't list the providers"));
@@ -122,9 +127,13 @@ export function AgentTab({
   const settingUp = !listing.status.ready || setupOpen;
   const error = sendError ?? stream.state.error ?? threads?.error ?? null;
   const host: AgentUiHost = { jobId, candidate, busy, choose: (prompt) => void send(prompt) };
+  const open = busy ? null : openChoices(stream.state.turns);
+  const popup = open && !dismissed.has(open.call) ? open : null;
+  // The pop up gone, the focus it held goes back to the message box.
+  const backToComposer = () => root.current?.querySelector<HTMLTextAreaElement>("[data-composer] textarea")?.focus();
   return (
     <AgentUiContext.Provider value={host}>
-      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div ref={root} className="flex h-full min-h-0 flex-col overflow-hidden">
         <ChatHeader turns={stream.state.turns} threads={threads} />
         {settingUp ? (
           <div className="relative min-h-0 flex-1 overflow-y-auto px-3 py-3">
@@ -134,6 +143,20 @@ export function AgentTab({
           <Transcript turns={stream.state.turns} onExample={send} onUndo={onUndo} />
         )}
         {!settingUp && error && <p className="shrink-0 px-3 pb-2 text-sm text-danger">{error}</p>}
+        {!settingUp && popup && (
+          <ChoicePopup
+            key={popup.call}
+            ui={popup.ui}
+            onChoose={(prompt) => {
+              void send(prompt);
+              backToComposer();
+            }}
+            onClose={() => {
+              setDismissed((all) => new Set(all).add(popup.call));
+              backToComposer();
+            }}
+          />
+        )}
         <Composer
           providers={providers}
           listing={listing}
