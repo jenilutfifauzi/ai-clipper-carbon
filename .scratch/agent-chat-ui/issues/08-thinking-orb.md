@@ -40,3 +40,13 @@
 ## Acceptance
 - [x] The tests at the three seams pass (`orb.test.tsx`, `composer.test.tsx`). Only `npx vitest run src/pages/job/advanced/agent` and `npx tsc --noEmit` are run.
 - [x] Checked in the browser on a live turn (dark): the orb turns and twists, in orange, in both the status line and Stop, and hovering Stop shows the square.
+
+## Comments
+
+**Follow-up: the orb stuck, and was too small and sparse.**
+- **Why it stuck:** the loop paused off screen through an IntersectionObserver. Its callback read only the first entry of a batch, so a batched leave-then-enter (from the transcript's auto-scroll) left it marked hidden, and it never started again.
+- **The fix:** the orb now runs on `requestAnimationFrame` for as long as it is mounted. The browser already pauses that in a hidden tab, and an orb this small costs next to nothing.
+- **Quality:**
+  - The preset is now thinned for 18–22 px: counts × 0.2 and radii × 1.3, giving 82 dots instead of 30, at a finer size.
+  - It is drawn at no less than 2× its CSS size.
+  - It is 18 px in the status line and 22 px in Stop.

@@ -18,6 +18,10 @@ describe("orbFrame", () => {
     expect(dots.map((dot) => dot.z)).toEqual([...dots.map((dot) => dot.z)].sort((a, b) => a - b));
   });
 
+  test("dense enough to read as a turning sphere, not a few specks", () => {
+    expect(orbFrame(18, 1).length).toBeGreaterThanOrEqual(80);
+  });
+
   test("the nearest dot is larger and brighter than the farthest", () => {
     const dots = orbFrame(20, 0.6);
     const [far, near] = [dots[0], dots[dots.length - 1]];

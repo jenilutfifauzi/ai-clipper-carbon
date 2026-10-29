@@ -40,7 +40,7 @@ SOFTWARE.
 The Agent chat's thinking orb (`frontend/src/pages/job/advanced/agent/orb.ts`) adapts the
 `solving` orb of [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) 0.3.1, by
 Jakub Antalik, as open-design vendors it: its
-geometry and frame timing at the 20 px preset, painted here in the app's own colour.
+geometry and frame timing, thinned here for 18-22 px and painted in the app's own colour.
 
 ```text
 MIT License

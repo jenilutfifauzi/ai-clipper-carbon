@@ -3,8 +3,8 @@
  * of its dots in quarter turns like a Rubik's cube, then twisting them back.
  *
  * From thinking-orbs@0.3.1 (© Jakub Antalik, MIT, https://github.com/Jakubantalik/thinking-orbs),
- * as open-design vendors it: the `solving` orb (its `rubik` draw) at the 20 px inline preset, here
- * with that preset already resolved. See THIRD_PARTY_NOTICES.md.
+ * as open-design vendors it: the `solving` orb (its `rubik` draw), with its size preset resolved
+ * here. See THIRD_PARTY_NOTICES.md.
  */
 
 /** A dot of a frame, in canvas pixels; `ink` 0 is the strongest (nearest), 1 the faintest. */
@@ -16,16 +16,17 @@ export interface OrbDot {
   ink: number;
 }
 
-// The 20 px preset of the `solving` orb, resolved: its rings and dots thinned (counts × 0.088, as
-// the square root on each axis), its dot radii × 1.9.
-const LAT_RINGS = 4;
-const LON_DENSITY = 12;
+// The `solving` orb thinned for 18-22 px (counts × 0.2, as the square root on each axis; dot radii
+// × 1.3): denser and finer than open-design's 20 px preset (× 0.088, × 1.9), whose 30 or so specks
+// hardly read as a sphere turning.
+const LAT_RINGS = 7;
+const LON_DENSITY = 18;
 const MOVE_COUNT = 14;
 const MOVE_S = 0.42;
 const REST_S = 1.2;
-const R_BASE = 1.14;
-const R_DEPTH = 3.23;
-const R_ACTIVE = 0.57;
+const R_BASE = 0.78;
+const R_DEPTH = 2.21;
+const R_ACTIVE = 0.39;
 const R_MIN = 0.3;
 const INK_FAR = 0.62;
 const INK_SPAN = 0.54;
