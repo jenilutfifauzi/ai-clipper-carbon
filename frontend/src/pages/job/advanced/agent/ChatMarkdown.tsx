@@ -1,5 +1,6 @@
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { cx } from "../../../../format";
 
 // Compact styles for a chat bubble, after open-pencil's markdown.css. Each drops react-markdown's
 // `node` so it doesn't land on the element.
@@ -29,12 +30,19 @@ const COMPONENTS: Components = {
 
 /**
  * The Agent's text as Markdown, with GitHub's tables, task lists and strikethrough. Raw HTML is
- * shown as text, never rendered. While it streams, whatever has come in renders (an unclosed fence
- * as code).
+ * shown as text, never rendered. While it streams (`streaming`), whatever has come in renders (an
+ * unclosed fence as code), each new block and list item fading in as open-pencil's do: react-markdown
+ * keeps the elements already there, so only the new ones animate.
  */
-export function ChatMarkdown({ text }: { text: string }) {
+export function ChatMarkdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
   return (
-    <div data-markdown="" className="space-y-2 text-pretty break-words">
+    <div
+      data-markdown=""
+      className={cx(
+        "space-y-2 text-pretty break-words",
+        streaming && "[&_li]:motion-safe:animate-[fade-in_200ms_ease-out] [&>*]:motion-safe:animate-[fade-in_200ms_ease-out]",
+      )}
+    >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={COMPONENTS}>
         {text}
       </ReactMarkdown>

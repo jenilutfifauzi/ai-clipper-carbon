@@ -67,6 +67,14 @@ describe("Composer", () => {
     expect(button(html, "Stop")).toContain("rounded-full");
   });
 
+  // .scratch/agent-chat-ui/issues/08-thinking-orb.md
+  test("while a turn runs, Stop holds the turning orb and, under it, the square it shows on hover", () => {
+    const html = composer({ running: true });
+    const stop = html.match(/<button[^>]*aria-label="Stop"[\s\S]*?<\/button>/)?.[0] ?? "";
+    expect(stop).toMatch(/<canvas[^>]*aria-hidden="true"/);
+    expect(stop).toContain("lucide-square");
+  });
+
   test("the message box is a form's, its text 16px so iOS doesn't zoom in on it", () => {
     const html = composer();
     const form = html.match(/<form[\s\S]*<\/form>/)?.[0] ?? "";

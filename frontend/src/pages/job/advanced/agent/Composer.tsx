@@ -6,6 +6,7 @@ import { useMenu } from "../../../../components/Menu";
 import { Select } from "../../../../components/Select";
 import { cx } from "../../../../format";
 import { keepEscape } from "../AudioEffectsFields";
+import { ThinkingOrb } from "./ThinkingOrb";
 
 // The message box grows with its text up to this, then scrolls.
 const MAX_HEIGHT_PX = 160;
@@ -115,8 +116,13 @@ export function Composer({
             </Button>
           )}
           {setup ? null : running ? (
-            <Button variant="secondary" size="icon-round" aria-label="Stop" title="Stop" onClick={onStop}>
-              <Square aria-hidden size={10} className="fill-current" />
+            // The orb turns while the Agent works (open-design's); pointed at or focused, it gives way
+            // to the square that says what a click does.
+            <Button variant="secondary" size="icon-round" className="group/stop" aria-label="Stop" title="Stop" onClick={onStop}>
+              <span className="grid place-items-center *:[grid-area:1/1] *:motion-safe:transition-opacity *:motion-safe:duration-150">
+                <ThinkingOrb className="group-hover/stop:opacity-0 group-focus-visible/stop:opacity-0" />
+                <Square aria-hidden size={10} className="fill-current opacity-0 group-hover/stop:opacity-100 group-focus-visible/stop:opacity-100" />
+              </span>
             </Button>
           ) : (
             <Button type="submit" variant="solid" size="icon-round" aria-label="Send" title="Send (Enter)" disabled={!prompt || busy}>
