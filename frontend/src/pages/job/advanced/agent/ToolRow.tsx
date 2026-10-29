@@ -14,11 +14,11 @@ export function toolLabel(tool: string): string {
 export function ToolRow({ part }: { part: ToolPart }) {
   const Icon = part.ok === null ? LoaderCircle : part.ok ? CircleCheck : TriangleAlert;
   return (
-    <div data-tool-row="" className="flex items-start gap-2 rounded-[10px] bg-fill px-2.5 py-1.5 text-sm">
+    <div data-tool-row="" className="flex items-start gap-2 rounded-lg border border-border px-2 py-1.5 text-xs">
       <Icon
         aria-label={part.ok === null ? "Running" : part.ok ? "Done" : "Failed"}
-        size={15}
-        className={part.ok === null ? "mt-0.5 shrink-0 text-muted motion-safe:animate-spin" : part.ok ? "mt-0.5 shrink-0 text-success" : "mt-0.5 shrink-0 text-danger"}
+        size={14}
+        className={part.ok === null ? "mt-px shrink-0 text-muted motion-safe:animate-spin" : part.ok ? "mt-px shrink-0 text-success" : "mt-px shrink-0 text-danger"}
       />
       <div className="flex min-w-0 flex-col">
         <span className="font-medium">{toolLabel(part.tool)}</span>

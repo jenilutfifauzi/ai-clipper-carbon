@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { AgentProviderListing } from "../../../../api";
 import { AgentTab } from "./AgentTab";
+import { transcriptText } from "./ChatHeader";
 import { toolLabel, ToolRow } from "./ToolRow";
 import { TurnView } from "./TurnView";
 import { EMPTY_STREAM, type AgentTurnView } from "./agentStream";
@@ -129,6 +130,40 @@ describe("TurnView", () => {
     ]) {
       expect(html).not.toContain("Revert");
     }
+  });
+});
+
+// .scratch/agent-chat-ui/issues/01: the open-pencil look.
+describe("chat look", () => {
+  const running = (parts: AgentTurnView["parts"]): AgentTurnView => ({
+    id: "t1",
+    tab: null,
+    provider: "deepseek",
+    model: null,
+    prompt: "Add a title",
+    parts,
+    stop: null,
+    first_revision: null,
+    last_revision: null,
+    error: null,
+  });
+
+  test("dots while a turn runs with nothing streaming, none while its text streams", () => {
+    expect(renderToStaticMarkup(<TurnView turn={running([])} />)).toContain("The Agent is working");
+    const tool = { type: "tool", call: "c1", tool: "edit_candidate", summary: "", ok: true, error: null, revision: 1 } as const;
+    expect(renderToStaticMarkup(<TurnView turn={running([tool])} />)).toContain("The Agent is working");
+    expect(renderToStaticMarkup(<TurnView turn={running([{ type: "text", text: "Done" }])} />)).not.toContain("The Agent is working");
+  });
+
+  test("a thought streaming last reads Thinking… and is open", () => {
+    const html = renderToStaticMarkup(<TurnView turn={running([{ type: "thought", text: "Hmm" }])} />);
+    expect(html).toMatch(/<details[^>]*open/);
+    expect(html).toContain("Thinking…");
+  });
+
+  test("the transcript as text", () => {
+    const turn = { ...running([{ type: "text", text: "Added." }]), stop: "end_turn" as const };
+    expect(transcriptText([turn])).toBe("You: Add a title\n\nAgent: Added.");
   });
 });
 

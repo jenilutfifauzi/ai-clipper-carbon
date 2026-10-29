@@ -4,7 +4,7 @@ import { cx } from "../format";
 type Variant = "primary" | "secondary" | "danger" | "ghost";
 // Sizes are a prop, not class overrides: Tailwind orders same-property utilities by value, so a
 // `px-3` passed in would lose to the base `px-4`.
-type Size = "md" | "sm" | "xs" | "icon";
+type Size = "md" | "sm" | "xs" | "icon" | "icon-sm";
 
 const VARIANTS: Record<Variant, string> = {
   // The orange call to action.
@@ -22,6 +22,8 @@ const SIZES: Record<Size, string> = {
   xs: "min-h-9 gap-1.5 rounded-[10px] px-2 text-sm",
   // A 44 px circle around an icon; give it an aria-label.
   icon: "size-11 shrink-0 rounded-full",
+  // A 28 px square around an icon, for dense toolbars (the Agent's chat); give it an aria-label.
+  "icon-sm": "size-7 shrink-0 rounded-md",
 };
 
 // The button look, also for links that act as buttons (such as a download).

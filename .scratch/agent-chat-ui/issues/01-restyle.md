@@ -2,14 +2,14 @@
 
 **Parent spec:** `spec.md` (Solution 1).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Blocked by:** None
 
 **What to build** (frontend only, in `frontend/src/pages/job/advanced/agent/`). The reference is `<main>/docs/referensi/open-pencil-master/src/components/chat/` (`ChatMessage.vue`, `ChatComposer.vue`, `ChatInput.vue`, `ChatHistory.vue`, `ChatTranscript.vue`, `ReasoningBlock.vue`) together with `src/theme/chat/*.ts` and `src/theme/input/group.ts`. Translate the layout to ai-clipper's tokens.
 
 **Button**
-- Add a `size="sm"` to `frontend/src/components/Button.tsx`: `size-7 rounded-md`, for icon buttons.
+- Add a `size="sm"` to `frontend/src/components/Button.tsx`: `size-7 rounded-md`, for icon buttons. (Done as `size="icon-sm"`: `sm` is already a text button size, used across the app.)
 
 **`TurnView.tsx`**
 - User bubble: wrapper `flex justify-end`, bubble `max-w-[85%] rounded-xl rounded-br-md bg-linear-to-b from-accent to-accent-end px-3 py-2 text-sm text-on-accent whitespace-pre-wrap break-words`.
@@ -47,6 +47,6 @@
 - The empty state's intro and example buttons are restyled to match.
 
 **Acceptance**
-- [ ] It looks like the reference screenshot (open-pencil chat) in ai-clipper's colours, in both dark and light.
-- [ ] The existing `agentTab.test.tsx` passes unchanged, except where it asserts on the old header layout. Hooks and aria labels are kept.
-- [ ] `npm run typecheck` and `npx vitest run src/pages/job/advanced/agent` pass.
+- [ ] It looks like the reference screenshot (open-pencil chat) in ai-clipper's colours, in both dark and light. (Not yet checked in a browser.)
+- [x] The existing `agentTab.test.tsx` passes unchanged, except where it asserts on the old header layout. Hooks and aria labels are kept.
+- [x] `npm run typecheck` and `npx vitest run src/pages/job/advanced/agent` pass. (tsc's one error is the earlier `process` in `vite.config.ts`, from b8024cc: no `@types/node`.)
