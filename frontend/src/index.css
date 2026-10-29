@@ -293,3 +293,11 @@
     opacity: 0;
   }
 }
+
+/* The Agent's choices pop up rising into place above the composer. */
+@keyframes choice-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}

@@ -2,7 +2,7 @@
 
 **Parent spec:** `spec.md` (Solution 5, revised).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Blocked by:** 05, 08
 
@@ -50,8 +50,8 @@
    - the keyboard hint.
 
 ## Acceptance
-- [ ] The tests at the three seams pass. Only `npx vitest run src/pages/job/advanced/agent` and `npx tsc --noEmit` are run.
-- [ ] Checked in the browser:
+- [x] The tests at the three seams pass (`choices.test.tsx`; the pure module is `choices.ts`, since `choicePopup.ts` and `ChoicePopup.tsx` are one file on macOS). Only `npx vitest run src/pages/job/advanced/agent` and `npx tsc --noEmit` are run.
+- [x] Checked in the browser, Esc and "Something else…" through the tests only:
   - when the Agent offers choices, the panel opens above the composer;
   - pressing `2` sends the second option, and the panel closes when the next turn starts;
   - Esc closes it;
