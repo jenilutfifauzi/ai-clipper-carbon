@@ -1,10 +1,10 @@
 import type { ComponentProps } from "react";
 import { cx } from "../format";
 
-type Variant = "primary" | "secondary" | "danger" | "ghost";
+type Variant = "primary" | "secondary" | "danger" | "ghost" | "solid";
 // Sizes are a prop, not class overrides: Tailwind orders same-property utilities by value, so a
 // `px-3` passed in would lose to the base `px-4`.
-type Size = "md" | "sm" | "xs" | "icon" | "icon-sm";
+type Size = "md" | "sm" | "xs" | "icon" | "icon-sm" | "icon-round";
 
 const VARIANTS: Record<Variant, string> = {
   // The orange call to action.
@@ -14,6 +14,9 @@ const VARIANTS: Record<Variant, string> = {
   secondary: "raised text-text hover:bg-fill",
   danger: "bg-danger text-white shadow-raised hover:brightness-110",
   ghost: "text-muted hover:bg-fill hover:text-text",
+  // Neutral and high-contrast, white on dark and black on light: the call to action where orange
+  // would shout (the Agent's chat).
+  solid: "bg-text text-bg hover:opacity-90",
 };
 
 const SIZES: Record<Size, string> = {
@@ -24,6 +27,8 @@ const SIZES: Record<Size, string> = {
   icon: "size-11 shrink-0 rounded-full",
   // A 28 px square around an icon, for dense toolbars (the Agent's chat); give it an aria-label.
   "icon-sm": "size-7 shrink-0 rounded-md",
+  // A 32 px circle around an icon, the Agent's Send and Stop; give it an aria-label.
+  "icon-round": "size-8 shrink-0 rounded-full",
 };
 
 // The button look, also for links that act as buttons (such as a download).

@@ -7,7 +7,7 @@ type Tone = Extract<AgentUi, { kind: "callout" }>["tone"];
 
 // Each tone's icon and colour, from the app's tokens.
 const TONES: Record<Tone, { icon: LucideIcon; color: string }> = {
-  info: { icon: Info, color: "text-accent-text" },
+  info: { icon: Info, color: "text-muted" },
   success: { icon: CircleCheck, color: "text-success" },
   warning: { icon: TriangleAlert, color: "text-waiting" },
   danger: { icon: CircleAlert, color: "text-danger" },

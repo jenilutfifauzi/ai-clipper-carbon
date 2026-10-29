@@ -284,9 +284,9 @@ describe("Agent UI", () => {
   };
   test("a choice's *words* are shown as Emphasis, an odd last asterisk as it is", () => {
     expect(renderToStaticMarkup(<>{emphasized("Buka 24 jam tapi kok *KEABISAN* terus?!")}</>)).toBe(
-      'Buka 24 jam tapi kok <strong class="font-semibold text-accent-text">KEABISAN</strong> terus?!',
+      'Buka 24 jam tapi kok <strong class="font-semibold text-text">KEABISAN</strong> terus?!',
     );
-    expect(renderToStaticMarkup(<>{emphasized("*a* b *c")}</>)).toBe('<strong class="font-semibold text-accent-text">a</strong> b *c');
+    expect(renderToStaticMarkup(<>{emphasized("*a* b *c")}</>)).toBe('<strong class="font-semibold text-text">a</strong> b *c');
   });
   const shown = (call: string, ui: AgentUi): ToolPart => ({ type: "tool", call, tool: "show_ui", summary: "", ok: true, error: null, revision: null, ui });
   const host = (change: Partial<AgentUiHost> = {}): AgentUiHost => ({ jobId: "j1", candidate: null, busy: false, choose: () => {}, ...change });
@@ -334,7 +334,7 @@ describe("Agent UI", () => {
     expect(html).toContain('data-agent-ui="choices"');
     expect(html).not.toContain("data-tool-row");
     expect(html.match(/<button[^>]*disabled=""/g)).toHaveLength(2);
-    expect(html).toMatch(/border-accent-text.*Short.*, chosen/s);
+    expect(html).toMatch(/border-text\/40.*Short.*, chosen/s);
     expect(html.match(/, chosen/g)).toHaveLength(1);
   });
 

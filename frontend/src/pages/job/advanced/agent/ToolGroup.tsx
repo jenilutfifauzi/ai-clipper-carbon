@@ -29,7 +29,7 @@ export function ToolGroup({ parts }: { parts: ToolPart[] }) {
           aria-label={failed ? `${steps}, ${failed} failed` : steps}
           className="flex min-w-0 cursor-pointer list-none items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] text-muted select-none hover:bg-fill hover:text-text [&::-webkit-details-marker]:hidden"
         >
-          <ListChecks aria-hidden size={14} className="shrink-0 text-accent-text" />
+          <ListChecks aria-hidden size={14} className="shrink-0 text-muted" />
           <span aria-hidden className="shrink-0 font-medium">
             {steps}
           </span>

@@ -1,5 +1,5 @@
 import { ArrowUp, Bot, ChevronDown, Settings2, Square } from "lucide-react";
-import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { AgentProviderListing } from "../../../../api";
 import { Button } from "../../../../components/Button";
 import { useMenu } from "../../../../components/Menu";
@@ -12,7 +12,7 @@ const MAX_HEIGHT_PX = 160;
 
 /**
  * The chat's framed message box: Enter sends, Shift+Enter breaks the line; under it a toolbar with
- * the model pill (the Provider and Model, in a popover), the provider's setup and Send, or Stop
+ * the Provider pill, then the Model pill (each opening its picker), the provider's setup and Send, or Stop
  * while a turn runs. Its text is its own state. While the provider is being set up (`setup`) it is
  * only the toolbar, so that another provider can still be picked.
  */
@@ -66,8 +66,14 @@ export function Composer({
   };
 
   return (
-    <div data-composer={setup ? undefined : ""} className="shrink-0 border-t border-border p-2.5">
-      <div className="rounded-xl border border-border bg-fill transition-colors focus-within:border-accent-text focus-within:ring-1 focus-within:ring-accent/30">
+    <div data-composer={setup ? undefined : ""} className="shrink-0 px-3 pt-1 pb-3">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void send();
+        }}
+        className="rounded-2xl border border-border bg-fill shadow-sm transition-colors focus-within:border-text/25"
+      >
         {!setup && (
           <textarea
             ref={area}
@@ -77,16 +83,29 @@ export function Composer({
             placeholder="Describe a change…"
             onChange={(event) => setText(event.target.value)}
             onKeyDown={onKeyDown}
-            className="block w-full resize-none overflow-y-auto bg-transparent px-3 pt-2.5 pb-1 text-sm outline-none placeholder:text-muted"
+            className="block w-full resize-none overflow-y-auto bg-transparent px-4 pt-3.5 pb-2 text-base caret-text outline-none placeholder:text-muted"
           />
         )}
-        <div className={cx("box-content flex h-7 items-center gap-1 px-1.5 pb-1.5", setup && "pt-1.5")}>
-          <ModelPill providers={providers} listing={listing} models={models} model={model} onChoose={onChoose} />
+        <div className={cx("box-content flex h-8 items-center gap-1 px-2.5 pb-2.5", setup && "pt-2.5")}>
+          <Pill title="Provider" icon={<Bot aria-hidden size={15} className="shrink-0" />} text={listing.provider.label}>
+            <Select
+              label="Provider"
+              value={listing.provider.id}
+              options={providers.map(({ provider, status }) => ({ value: provider.id, label: status.ready ? provider.label : `${provider.label} (set up)` }))}
+              onChange={(provider) => onChoose(provider, null)}
+            />
+          </Pill>
+          <span className="ml-auto" />
+          {models.length > 0 && model && (
+            <Pill title="Model" text={model} muted>
+              <Select label="Model" value={model} options={models.map((name) => ({ value: name, label: name }))} onChange={(name) => onChoose(listing.provider.id, name)} />
+            </Pill>
+          )}
           {listing.status.ready && (
             <Button
               variant="ghost"
               size="icon-sm"
-              className="ml-auto aria-pressed:text-accent-text"
+              className="aria-pressed:bg-fill aria-pressed:text-text"
               aria-label={`Set up ${listing.provider.label}`}
               aria-pressed={setupOpen}
               title={`Set up ${listing.provider.label}`}
@@ -96,34 +115,22 @@ export function Composer({
             </Button>
           )}
           {setup ? null : running ? (
-            <Button size="icon-sm" aria-label="Stop" title="Stop" onClick={onStop}>
-              <Square aria-hidden size={12} />
+            <Button variant="secondary" size="icon-round" aria-label="Stop" title="Stop" onClick={onStop}>
+              <Square aria-hidden size={10} className="fill-current" />
             </Button>
           ) : (
-            <Button variant="primary" size="icon-sm" aria-label="Send" title="Send (Enter)" disabled={!prompt || busy} onClick={() => void send()}>
+            <Button type="submit" variant="solid" size="icon-round" aria-label="Send" title="Send (Enter)" disabled={!prompt || busy}>
               <ArrowUp aria-hidden size={16} />
             </Button>
           )}
         </div>
-      </div>
+      </form>
     </div>
   );
 }
 
-/** The provider (and model, when it has one) the chat uses; a click opens their pickers above the composer. */
-function ModelPill({
-  providers,
-  listing,
-  models,
-  model,
-  onChoose,
-}: {
-  providers: AgentProviderListing[];
-  listing: AgentProviderListing;
-  models: string[];
-  model: string | null;
-  onChoose: (provider: string, model: string | null) => void;
-}) {
+/** A toolbar pill naming the chat's provider or model; a click opens its picker above the composer. */
+function Pill({ title, icon, text, muted, children }: { title: string; icon?: ReactNode; text: string; muted?: boolean; children: ReactNode }) {
   const { buttonRef, menuRef, open, toggle } = useMenu();
   const id = useId();
   return (
@@ -135,31 +142,26 @@ function ModelPill({
         aria-expanded={open}
         aria-controls={id}
         aria-haspopup="dialog"
-        title="Provider and model"
-        className="flex min-w-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-fill hover:text-text focus-visible:outline-2 focus-visible:outline-focus"
+        title={title}
+        className={cx(
+          "flex min-w-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-sm hover:bg-fill hover:text-text focus-visible:outline-2 focus-visible:outline-focus motion-safe:transition-colors",
+          muted ? "text-muted" : "text-text/80",
+        )}
       >
-        <Bot aria-hidden size={13} className="shrink-0" />
-        <span className="min-w-0 truncate">{model ? `${listing.provider.label} · ${model}` : listing.provider.label}</span>
-        <ChevronDown aria-hidden size={11} className="shrink-0" />
+        {icon}
+        <span className="min-w-0 truncate">{text}</span>
+        <ChevronDown aria-hidden size={13} className="shrink-0 opacity-60" />
       </button>
       <div
         ref={menuRef}
         id={id}
         role="dialog"
-        aria-label="Provider and model"
+        aria-label={title}
         {...{ popover: "auto" }}
         onKeyDown={keepEscape}
         className="glass fixed inset-auto m-0 w-64 max-w-[calc(100vw-1rem)] flex-col gap-3 rounded-[10px] bg-bg/90! p-3 text-text [&:popover-open]:flex"
       >
-        <Select
-          label="Provider"
-          value={listing.provider.id}
-          options={providers.map(({ provider, status }) => ({ value: provider.id, label: status.ready ? provider.label : `${provider.label} (set up)` }))}
-          onChange={(provider) => onChoose(provider, null)}
-        />
-        {models.length > 0 && model && (
-          <Select label="Model" value={model} options={models.map((name) => ({ value: name, label: name }))} onChange={(name) => onChoose(listing.provider.id, name)} />
-        )}
+        {children}
       </div>
     </>
   );

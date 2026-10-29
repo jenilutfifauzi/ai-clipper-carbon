@@ -10,7 +10,7 @@ const COMPONENTS: Components = {
   h4: ({ node: _, ...props }) => <h4 className="text-sm font-semibold" {...props} />,
   ul: ({ node: _, ...props }) => <ul className="list-disc space-y-0.5 pl-4" {...props} />,
   ol: ({ node: _, ...props }) => <ol className="list-decimal space-y-0.5 pl-4" {...props} />,
-  a: ({ node: _, ...props }) => <a target="_blank" rel="noreferrer" className="text-accent-text underline" {...props} />,
+  a: ({ node: _, ...props }) => <a target="_blank" rel="noreferrer" className="text-text underline decoration-text/40 hover:decoration-text" {...props} />,
   blockquote: ({ node: _, ...props }) => <blockquote className="border-l-2 border-border pl-2 text-muted" {...props} />,
   hr: ({ node: _, ...props }) => <hr className="border-border" {...props} />,
   // Inline code; a block's code (in `pre`) drops the chip.

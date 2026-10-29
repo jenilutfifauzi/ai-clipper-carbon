@@ -2,7 +2,7 @@
 
 **Parent spec:** `spec.md` (Solution 1, revised).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Blocked by:** 01, 05
 
@@ -47,5 +47,5 @@
 3. **Input ≥16px:** the textarea uses `text-base`.
 
 ## Acceptance
-- [ ] The tests at the three seams pass. Only `npx vitest run src/pages/job/advanced/agent` and `npx tsc --noEmit` are run; the known `vite.config.ts` error remains.
-- [ ] Checked in the browser, dark and light: the composer matches the reference, and no orange is left in the chat.
+- [x] The tests at the three seams pass (`composer.test.tsx`). Only `npx vitest run src/pages/job/advanced/agent` and `npx tsc --noEmit` are run; the known `vite.config.ts` error remains.
+- [x] Checked in the browser, dark and light: the composer matches the reference, and no orange is left in the chat. The caret is neutral too (`caret-text`); the global caret is the accent. After `emil-ui-review`, Stop is `secondary` (a ghost with class overrides loses to Tailwind's ordering) and the `info` callout is `text-muted`, so it isn't the same colour as `warning`.
