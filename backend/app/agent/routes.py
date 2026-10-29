@@ -7,11 +7,12 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field, StringConstraints
 
 from app.agent.acp_client import AcpError, AcpExited
-from app.agent.attachments import Attachments, BadAttachments, UnknownCandidate, resolve
+from app.agent.attachments import Attachments, BadAttachments, UnknownCandidate, image_path, resolve
 from app.agent.credentials import SavedCredential, credential_for, delete_credential, save_credential
 from app.agent.events import agent_events, topic
 from app.agent.sessions import AgentSessionManager, TurnRunning
@@ -231,6 +232,18 @@ async def get_transcript(job_id: str, candidate_id: str, http: Request, thread: 
     """An Agent Thread's finished turns, oldest first: the newest Thread's when none is named."""
     await _existing_candidate(http, job_id, candidate_id)
     return await asyncio.to_thread(_sessions(http).transcript, job_id, candidate_id, await _thread(http, job_id, candidate_id, thread))
+
+
+@candidate_router.get("/attachments/{image_id}")
+async def get_attachment(job_id: str, candidate_id: str, image_id: str, http: Request) -> FileResponse:
+    """An image sent to the Agent with a message, for its chip in the chat; 404 for an unknown id."""
+    await _existing_candidate(http, job_id, candidate_id)
+    found = await asyncio.to_thread(image_path, _job_dir(http, job_id), image_id)
+    if found is None:
+        raise HTTPException(404, f"No image {image_id} was sent to the Agent")
+    path, media_type = found
+    # Kept under its id once and never changed.
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
 
 @candidate_router.get("/threads")

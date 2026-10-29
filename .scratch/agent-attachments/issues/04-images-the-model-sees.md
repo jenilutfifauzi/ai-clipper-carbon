@@ -6,13 +6,13 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The request accepts `{kind: "image", name, media_type, data}`; wrong type → 422; over 5 MB decoded → 422
-- [ ] Turn context gains `images` for the current message only; history stays text
-- [ ] ACP: image blocks after the text when supported; a clear refusal when not (fake ACP agent taught both)
-- [ ] Anthropic, OpenAI-compatible chat and Gemini adapters put the images in the current user message in their own forms
-- [ ] Images saved under the Job; transcript `attachments` carries their `id`; a GET route on the Candidate's agent router serves one (404 for an unknown id)
-- [ ] Composer: `ImageUp` **Upload image** (multiple), paste and drop of images, thumbnail chips via object URLs (revoked on remove/send), inline errors; the Agent tab base64-encodes them when sending
-- [ ] Bubble image chips show the saved thumbnail
-- [ ] Tests: `/turns` fake-driver (images in context, stored, GET); adapter tests; ACP tests; composer test (upload, paste, too big); Agent tab test (payload)
+- [x] The request accepts `{kind: "image", name, media_type, data}`; wrong type → 422; over 5 MB decoded → 422
+- [x] Turn context gains `images` for the current message only; history stays text
+- [x] ACP: image blocks after the text when supported; a clear refusal when not (fake ACP agent taught both)
+- [x] Anthropic, OpenAI-compatible chat and Gemini adapters put the images in the current user message in their own forms
+- [x] Images saved under the Job; transcript `attachments` carries their `id`; a GET route on the Candidate's agent router serves one (404 for an unknown id)
+- [x] Composer: `ImageUp` **Upload image** (multiple), paste and drop of images, thumbnail chips via object URLs (revoked on remove/send), inline errors; the Agent tab base64-encodes them when sending
+- [x] Bubble image chips show the saved thumbnail
+- [x] Tests: `/turns` fake-driver (images in context, stored, GET); adapter tests; ACP tests; composer test (upload, paste, too big); Agent tab test (payload)

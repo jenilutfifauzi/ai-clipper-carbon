@@ -3,7 +3,7 @@ import { useContext, useEffect, useRef, useState } from "react";
 import { api, TAB_ID, type AgentAttachment, type AgentProviderListing, type AgentTurnRequest, type Candidate } from "../../../../api";
 import { rememberedValue } from "../../../../remembered";
 import type { AgentTurnView } from "./agentStream";
-import { attachmentName, type ReferableClip } from "./attachments";
+import { attachmentName, encodeAttachments, type DraftAttachment, type ReferableClip } from "./attachments";
 import { ChatHeader } from "./ChatHeader";
 import { ChoicePopup } from "./ChoicePopup";
 import { ErrorNote } from "./ErrorNote";
@@ -95,7 +95,7 @@ export function AgentTab({
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   // The message last sent and what went with it, for "Try again" when it couldn't be.
-  const [lastSent, setLastSent] = useState<{ prompt: string; attachments: AgentAttachment[] } | null>(null);
+  const [lastSent, setLastSent] = useState<{ prompt: string; attachments: DraftAttachment[] } | null>(null);
   // The choices the owner closed with Escape or ✕, by their call: still answerable from their card.
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
   const root = useRef<HTMLDivElement>(null);
@@ -129,14 +129,16 @@ export function AgentTab({
   };
 
   // Whether it was sent: the composer then empties.
-  async function send(prompt: string, attachments: AgentAttachment[] = []): Promise<boolean> {
+  async function send(prompt: string, attachments: DraftAttachment[] = []): Promise<boolean> {
     if (!listing || busy) return false;
     setLastSent({ prompt, attachments });
     setSending(true);
     setSendError(null);
     try {
       const thread = threads?.active?.id ?? null;
-      const turn = await api.sendAgentTurn(jobId, candidateId, turnRequest({ provider: listing.provider.id, model, prompt, thread, attachments }));
+      // Images go as base64, read from their files only now.
+      const encoded = await encodeAttachments(attachments);
+      const turn = await api.sendAgentTurn(jobId, candidateId, turnRequest({ provider: listing.provider.id, model, prompt, thread, attachments: encoded }));
       stream.prompted(
         turn,
         prompt,
@@ -160,7 +162,7 @@ export function AgentTab({
   const error = sendError ?? stream.state.error ?? threads?.error ?? null;
   const open = busy ? null : openChoices(stream.state.turns);
   const popup = open && !dismissed.has(open.call) ? open : null;
-  const host: AgentUiHost = { jobId, candidate, busy, choose: (prompt) => void send(prompt), popup: popup?.call ?? null };
+  const host: AgentUiHost = { jobId, candidateId, candidate, busy, choose: (prompt) => void send(prompt), popup: popup?.call ?? null };
   // The pop up gone, the focus it held goes back to the message box.
   const backToComposer = () => root.current?.querySelector<HTMLTextAreaElement>("[data-composer] textarea")?.focus();
   return (

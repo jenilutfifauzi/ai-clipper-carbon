@@ -2,6 +2,7 @@
 the Agent as context before the prompt, while the chat keeps the owner's own words and the
 attachments' names. On the fake provider of test_agent_api_loop."""
 
+import base64
 import json
 
 from app.agent.transcript_store import load_transcript, newest_thread
@@ -201,3 +202,94 @@ def test_the_channel_profile_goes_at_most_once(served, chat, job):
 
     assert twice.status_code == 400
     assert chat.requests == []
+
+
+# .scratch/agent-attachments/issues/04: images the model sees.
+
+# The first bytes of a PNG: the route serves what was sent, whatever it shows.
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + bytes(range(32))
+PNG = base64.b64encode(PNG_BYTES).decode()
+
+
+def image(name: str = "shot.png", media_type: str = "image/png", data: str = PNG) -> dict:
+    return {"kind": "image", "name": name, "media_type": media_type, "data": data}
+
+
+def test_an_image_goes_to_the_model_with_the_prompt_and_is_kept_with_the_job(served, chat, job):
+    candidate = job["candidates"][0]
+    chat.replies = [answer("I see the caption.")]
+    stream = agent_events(served, job, candidate)
+    next(stream)
+
+    sent = send(served, job, candidate, "Fix this caption", [image()])
+    assert sent.status_code == 202, sent.text
+    started = until_finished(stream)[0][1]
+
+    assert chat.requests[-1]["messages"][-1] == {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Fix this caption"},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{PNG}"}},
+        ],
+    }
+    [attached] = started["attachments"]
+    assert (attached["kind"], attached["name"]) == ("image", "shot.png")
+    assert attached["id"]
+    [kept] = served.get(f"{agent_url(job, candidate)}/transcript").json()
+    assert kept["prompt"] == "Fix this caption"
+    assert kept["attachments"] == [attached]
+    shown = served.get(f"{agent_url(job, candidate)}/attachments/{attached['id']}")
+    assert shown.status_code == 200
+    assert shown.headers["content-type"] == "image/png"
+    assert shown.content == PNG_BYTES
+
+
+def test_an_image_goes_with_its_own_message_only(served, chat, job):
+    candidate = job["candidates"][0]
+    chat.replies = [answer("Seen.")]
+    stream = agent_events(served, job, candidate)
+    next(stream)
+    send(served, job, candidate, "Look", [image(), image("after.jpg", "image/jpeg")])
+    until_finished(stream)
+
+    chat.replies = [answer("Again.")]
+    send(served, job, candidate, "Next")
+    until_finished(stream)
+
+    assert chat.requests[-1]["messages"][1:] == [
+        {"role": "user", "content": "Look"},
+        {"role": "assistant", "content": "Seen."},
+        {"role": "user", "content": "Next"},
+    ]
+
+
+def test_an_image_of_another_type_over_5_mb_or_not_base64_is_refused(served, chat, job):
+    candidate = job["candidates"][0]
+    over = base64.b64encode(b"\0" * (5 * 1024 * 1024 + 1)).decode()
+
+    svg = send(served, job, candidate, "Hi", [image("a.svg", "image/svg+xml")])
+    too_big = send(served, job, candidate, "Hi", [image(data=over)])
+    not_base64 = send(served, job, candidate, "Hi", [image(data="not base64!")])
+
+    assert [r.status_code for r in (svg, too_big, not_base64)] == [422, 422, 422]
+    assert chat.requests == []
+
+
+def test_an_image_of_up_to_5_mb_is_accepted(served, chat, job):
+    candidate = job["candidates"][0]
+    chat.replies = [answer("Ok.")]
+    stream = agent_events(served, job, candidate)
+    next(stream)
+
+    sent = send(served, job, candidate, "Hi", [image(data=base64.b64encode(b"\0" * 5 * 1024 * 1024).decode())])
+    until_finished(stream)
+
+    assert sent.status_code == 202, sent.text
+
+
+def test_an_unknown_or_malformed_image_id_is_not_found(served, job):
+    url = f"{agent_url(job, job['candidates'][0])}/attachments"
+
+    assert served.get(f"{url}/0123456789abcdef").status_code == 404
+    assert served.get(f"{url}/..%2F..%2Fjob.json").status_code == 404
+    assert served.get(f"{url}/.png").status_code == 404

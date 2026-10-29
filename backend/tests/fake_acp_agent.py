@@ -11,7 +11,8 @@ turn of the JSON file FAKE_ACP_SCRIPT, a list of turns, each a list of actions:
 
 Turns are counted across processes from the log, so a restarted agent goes on with the next one.
 FAKE_ACP_REFUSE_SESSION, when set, is the error `session/new` is answered with; FAKE_ACP_NO_HTTP, when
-set, leaves MCP over HTTP out of its capabilities."""
+set, leaves MCP over HTTP out of its capabilities; FAKE_ACP_NO_IMAGE, when set, says its prompts take no
+images."""
 
 import itertools
 import json
@@ -82,10 +83,12 @@ def main() -> None:
         log.write(json.dumps({"started": os.getpid(), "argv0": os.path.basename(sys.argv[0]), "args": sys.argv[1:]}) + "\n")
     refusal = os.environ.get("FAKE_ACP_REFUSE_SESSION")
     http = not os.environ.get("FAKE_ACP_NO_HTTP")
+    image = not os.environ.get("FAKE_ACP_NO_IMAGE")
     while (message := receive()) is not None:
         method = message.get("method")
         if method == "initialize":
-            result = {"protocolVersion": 1, "agentCapabilities": {"mcpCapabilities": {"http": http}}, "authMethods": AUTH_METHODS}
+            capabilities = {"mcpCapabilities": {"http": http}, "promptCapabilities": {"image": image}}
+            result = {"protocolVersion": 1, "agentCapabilities": capabilities, "authMethods": AUTH_METHODS}
             write({"jsonrpc": "2.0", "id": message["id"], "result": result})
         elif method == "session/new" and refusal:
             write({"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32000, "message": refusal}})

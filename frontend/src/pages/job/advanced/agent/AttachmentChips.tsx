@@ -1,16 +1,17 @@
-import { Clapperboard, FileText, UserRound, X, type LucideIcon } from "lucide-react";
+import { Clapperboard, FileText, Image as ImageIcon, UserRound, X, type LucideIcon } from "lucide-react";
 import { cx } from "../../../../format";
 
 /**
- * A row of Agent Attachment chips: its kind's icon and the name of each. In the composer (`onRemove`) each
- * has a × that takes it off the message; in the owner's bubble they only name what went with it.
+ * A row of Agent Attachment chips: its kind's icon, or an image's thumbnail (`preview`), and the name of
+ * each. In the composer (`onRemove`) each has a × that takes it off the message; in the owner's bubble
+ * they only name what went with it.
  */
 export function AttachmentChips({
   attachments,
   onRemove,
   className,
 }: {
-  attachments: { kind: string; name: string }[];
+  attachments: { kind: string; name: string; preview?: string | null }[];
   onRemove?: (index: number) => void;
   className?: string;
 }) {
@@ -23,7 +24,12 @@ export function AttachmentChips({
           className="flex h-7 max-w-48 min-w-0 items-center gap-1.5 rounded-lg border border-border bg-bg pr-1 pl-2 text-xs text-text/80"
           title={attachment.name}
         >
-          <ChipIcon kind={attachment.kind} />
+          {attachment.preview ? (
+            // Sized up front, so the row doesn't move as it loads.
+            <img src={attachment.preview} alt="" width={20} height={20} decoding="async" className="-ml-1 size-5 shrink-0 rounded object-cover" />
+          ) : (
+            <ChipIcon kind={attachment.kind} />
+          )}
           <span className={cx("min-w-0 truncate", !onRemove && "pr-1")}>{attachment.name}</span>
           {onRemove && (
             // The × is small to see; its hit area reaches the chip's height.
@@ -44,7 +50,7 @@ export function AttachmentChips({
 }
 
 // Each kind's icon, as the + menu shows it; a text file's for any other.
-const KIND_ICONS: Record<string, LucideIcon> = { text: FileText, candidate: Clapperboard, channel_profile: UserRound };
+const KIND_ICONS: Record<string, LucideIcon> = { image: ImageIcon, text: FileText, candidate: Clapperboard, channel_profile: UserRound };
 
 function ChipIcon({ kind }: { kind: string }) {
   const Icon = KIND_ICONS[kind] ?? FileText;

@@ -2,9 +2,19 @@
 // agreed. No jsdom: the markup is checked with renderToStaticMarkup.
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import type { AgentAttachment, AgentProviderListing, AgentUi } from "../../../../api";
+import type { AgentProviderListing, AgentUi } from "../../../../api";
 import type { AgentTurnView } from "./agentStream";
-import { attach, attachmentName, attachTextFiles, clipChoices, MAX_ATTACHMENTS, type ReferableClip } from "./attachments";
+import {
+  attach,
+  attachImages,
+  attachmentName,
+  attachTextFiles,
+  clipChoices,
+  MAX_ATTACHMENTS,
+  type DraftAttachment,
+  type DraftImage,
+  type ReferableClip,
+} from "./attachments";
 import { ChatHeader } from "./ChatHeader";
 import { Composer } from "./Composer";
 import { TurnView } from "./TurnView";
@@ -25,7 +35,7 @@ const deepseek: AgentProviderListing = {
   status: { id: "deepseek", ready: true, installed: null, command: null, version: null, login: null, has_key: true, key_source: "saved", base_url: null, model: null },
 };
 
-const composer = (change: { running?: boolean; attachments?: AgentAttachment[]; candidates?: ReferableClip[] } = {}) =>
+const composer = (change: { running?: boolean; attachments?: DraftAttachment[]; candidates?: ReferableClip[] } = {}) =>
   renderToStaticMarkup(
     <Composer
       providers={[deepseek]}
@@ -90,7 +100,7 @@ describe("Composer", () => {
 
 // .scratch/agent-attachments/issues/01: the + menu and text-file Agent Attachments.
 describe("the composer's attachments", () => {
-  const brief: AgentAttachment = { kind: "text", name: "brief.md", text: "Short hooks only." };
+  const brief: DraftAttachment = { kind: "text", name: "brief.md", text: "Short hooks only." };
   const button = (html: string, label: string) => html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? "";
 
   test("a + first in the toolbar, labelled Add to message, opens a menu offering a text file", () => {
@@ -105,7 +115,7 @@ describe("the composer's attachments", () => {
   });
 
   test("a hidden file input takes several text files of the kinds the Agent reads", () => {
-    const input = composer().match(/<input[^>]*type="file"[^>]*>/)?.[0] ?? "";
+    const input = composer().match(/<input[^>]*type="file"[^>]*accept="\.txt[^>]*>/)?.[0] ?? "";
     expect(input).toContain('accept=".txt,.md,.srt,.vtt,.json,.csv"');
     expect(input).toContain("multiple");
     expect(input).toMatch(/\bhidden\b/);
@@ -191,10 +201,10 @@ describe("referencing a clip", () => {
   });
 
   test(`a clip is refused past ${MAX_ATTACHMENTS} attachments, and twice`, () => {
-    const brief: AgentAttachment = { kind: "text", name: "brief.md", text: "x" };
+    const brief: DraftAttachment = { kind: "text", name: "brief.md", text: "x" };
     const six = Array.from({ length: MAX_ATTACHMENTS }, () => brief);
     expect(attach(six, { kind: "candidate", candidate_id: "c2" })).toEqual({ attached: six, error: `At most ${MAX_ATTACHMENTS} attachments go with a message.` });
-    const once: AgentAttachment[] = [{ kind: "candidate", candidate_id: "c2" }];
+    const once: DraftAttachment[] = [{ kind: "candidate", candidate_id: "c2" }];
     expect(attach(once, { kind: "candidate", candidate_id: "c2" })).toEqual({ attached: once, error: null });
     expect(attach([], once[0])).toEqual({ attached: once, error: null });
   });
@@ -203,7 +213,7 @@ describe("referencing a clip", () => {
 // .scratch/agent-attachments/issues/03: the Channel Profile, in one click.
 describe("attaching the Channel Profile", () => {
   const item = (html: string, text: string) => html.match(new RegExp(`<button[^>]*role="menuitem"[^>]*>(?:(?!</button>).)*${text}`, "s"))?.[0] ?? "";
-  const profile: AgentAttachment = { kind: "channel_profile" };
+  const profile: DraftAttachment = { kind: "channel_profile" };
 
   test("the + menu offers the Channel Profile, off while it is attached", () => {
     const offered = item(composer(), "Channel Profile");
@@ -260,5 +270,73 @@ describe("the chat without orange", () => {
     ],
   ])("%s", (_, html) => {
     expect(html()).not.toMatch(/accent/);
+  });
+});
+
+// .scratch/agent-attachments/issues/04: images the model sees.
+describe("attaching images", () => {
+  const button = (html: string, label: string) => html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? "";
+  const item = (html: string, text: string) => html.match(new RegExp(`<button[^>]*role="menuitem"[^>]*>(?:(?!</button>).)*${text}`, "s"))?.[0] ?? "";
+  const picture = (name: string, type = "image/png", size = 8) => new File([new Uint8Array(size)], name, { type });
+  // Each preview made, by file name, in place of an object URL.
+  const previews: string[] = [];
+  const preview = (file: File) => {
+    previews.push(file.name);
+    return `blob:${file.name}`;
+  };
+
+  test("the + menu's first item is Upload image, behind a hidden input taking several pictures", () => {
+    const html = composer();
+    const upload = item(html, "Upload image");
+    expect(upload).toContain("lucide-image-up");
+    expect(html.indexOf("Upload image")).toBeLessThan(html.indexOf("Add text file"));
+    const input = html.match(/<input[^>]*type="file"[^>]*accept="image\/[^>]*>/)?.[0] ?? "";
+    expect(input).toContain('accept="image/png,image/jpeg,image/webp,image/gif"');
+    expect(input).toContain("multiple");
+    expect(input).toMatch(/\bhidden\b/);
+  });
+
+  test("an attached image is a chip with its thumbnail and a ×, above the message box", () => {
+    const shot: DraftImage = { kind: "image", name: "shot.png", media_type: "image/png", file: picture("shot.png"), preview: "blob:shot" };
+    const html = composer({ attachments: [shot] });
+    expect(html).toMatch(/<img[^>]*src="blob:shot"[^>]*>/);
+    expect(html.indexOf("blob:shot")).toBeLessThan(html.indexOf("<textarea"));
+    expect(button(html, "Remove shot.png")).toContain('type="button"');
+    expect(button(html, "Send")).toMatch(/ disabled=""/);
+  });
+
+  test("PNG, JPEG, WebP and GIF pictures are attached with a thumbnail each", () => {
+    previews.length = 0;
+    const added = attachImages([], [picture("a.png"), picture("b.jpg", "image/jpeg"), picture("c.webp", "image/webp"), picture("d.gif", "image/gif")], preview);
+    expect(added.error).toBeNull();
+    expect(added.attached.map((each) => [attachmentName(each, []), each.kind === "image" && each.media_type, each.kind === "image" && each.preview])).toEqual([
+      ["a.png", "image/png", "blob:a.png"],
+      ["b.jpg", "image/jpeg", "blob:b.jpg"],
+      ["c.webp", "image/webp", "blob:c.webp"],
+      ["d.gif", "image/gif", "blob:d.gif"],
+    ]);
+  });
+
+  test("a pasted screenshot, which comes unnamed, is named for what it is", () => {
+    const [pasted] = attachImages([], [picture("", "image/png")], preview).attached;
+    expect(attachmentName(pasted, [])).toBe("Pasted image.png");
+  });
+
+  test("a picture of another kind or over 5 MB isn't attached, nor previewed, and says why", () => {
+    previews.length = 0;
+    const svg = attachImages([], [picture("logo.svg", "image/svg+xml"), picture("ok.png")], preview);
+    expect(svg.attached.map((each) => attachmentName(each, []))).toEqual(["ok.png"]);
+    expect(svg.error).toBe("logo.svg isn't a picture the Agent can see: attach a PNG, JPEG, WebP or GIF.");
+
+    const big = attachImages([], [picture("huge.png", "image/png", 5 * 1024 * 1024 + 1)], preview);
+    expect(big).toEqual({ attached: [], error: "huge.png is over 5 MB." });
+    expect(previews).toEqual(["ok.png"]);
+  });
+
+  test(`images count toward the ${MAX_ATTACHMENTS} a message takes`, () => {
+    const five: DraftAttachment[] = Array.from({ length: 5 }, (_, n) => ({ kind: "text", name: `${n}.md`, text: "x" }));
+    const added = attachImages(five, [picture("a.png"), picture("b.png")], preview);
+    expect(added.attached.map((each) => attachmentName(each, []))).toEqual(["0.md", "1.md", "2.md", "3.md", "4.md", "a.png"]);
+    expect(added.error).toBe(`At most ${MAX_ATTACHMENTS} attachments go with a message.`);
   });
 });

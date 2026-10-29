@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { AgentProviderListing, AgentUi, Candidate } from "../../../../api";
 import { AgentTab, turnRequest } from "./AgentTab";
+import { encodeAttachments } from "./attachments";
 import { transcriptText } from "./ChatHeader";
 import { ToolGroup } from "./ToolGroup";
 import { prettyJson, toolLabel, ToolRow, type ToolPart } from "./ToolRow";
@@ -167,6 +168,47 @@ describe("Agent Attachments", () => {
     );
     expect(html).toContain("Channel Profile");
     expect(html).toContain("lucide-user-round");
+  });
+});
+
+// .scratch/agent-attachments/issues/04: images go as base64, and come back from the Job.
+describe("images sent to the Agent", () => {
+  test("an image goes in the turn as its base64, beside the other attachments as they are", async () => {
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "shot.png", { type: "image/png" });
+    const brief = { kind: "text" as const, name: "brief.md", text: "x" };
+    const encoded = await encodeAttachments([{ kind: "image", name: "shot.png", media_type: "image/png", file, preview: "blob:shot" }, brief]);
+    expect(turnRequest({ provider: "claude-code", model: null, prompt: "Fix this", thread: null, attachments: encoded })).toEqual({
+      provider: "claude-code",
+      prompt: "Fix this",
+      tab: expect.any(String),
+      attachments: [{ kind: "image", name: "shot.png", media_type: "image/png", data: "iVBORw==" }, brief],
+    });
+  });
+
+  test("the bubble's image chip shows the picture kept with the Job", () => {
+    const html = renderToStaticMarkup(
+      <AgentUiContext.Provider value={{ jobId: "j1", candidateId: "c1", candidate: null, busy: false, choose: () => {} }}>
+        <TurnView
+          turn={{
+            id: "t1",
+            tab: null,
+            thread: null,
+            provider: "claude-code",
+            model: null,
+            prompt: "Fix this",
+            attachments: [{ kind: "image", name: "shot.png", id: "0123456789abcdef" }],
+            parts: [],
+            stop: "end_turn",
+            first_revision: null,
+            last_revision: null,
+            error: null,
+          }}
+        />
+      </AgentUiContext.Provider>,
+    );
+    expect(html).toMatch(/<img[^>]*src="\/api\/jobs\/j1\/candidates\/c1\/agent\/attachments\/0123456789abcdef"/);
+    expect(html).toContain("shot.png");
+    expect(html).not.toContain("Remove shot.png");
   });
 });
 

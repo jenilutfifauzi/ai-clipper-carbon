@@ -207,6 +207,12 @@ def reaches_http_mcp(initialized: dict[str, Any] | None) -> bool:
     return bool((capabilities.get("mcpCapabilities") or {}).get("http"))
 
 
+def sees_images(initialized: dict[str, Any] | None) -> bool:
+    """Whether the agent said, answering `initialize`, that its prompts take image blocks."""
+    capabilities = (initialized or {}).get("agentCapabilities") or {}
+    return bool((capabilities.get("promptCapabilities") or {}).get("image"))
+
+
 def login_method(auth_methods: list[dict[str, Any]]) -> dict[str, Any] | None:
     """The sign-in `authenticate` is called with: the agent's first method that the agent runs itself
     (a browser sign-in), passing over API keys, gateways, and methods run in a terminal."""
@@ -294,19 +300,25 @@ class AcpAgent:
         self._sandbox = sandbox
         self._connection: AcpConnection | None = None
         self._session_id: str | None = None
+        # Whether its prompts take images, as its `initialize` answer said.
+        self._sees_images = False
         self._turn: str | None = None
         self._updates: asyncio.Queue[dict[str, Any] | None] | None = None
         self._tool_calls: dict[str, dict[str, Any]] = {}
 
     async def run_turn(self, context: TurnContext) -> AsyncIterator[AgentEvent]:
         """The session's driver: send the prompt (the system prompt in front of a new process's
-        first), yield what the agent streams, end with its stop reason. Stopped, it sends
+        first) and its images, yield what the agent streams, end with its stop reason. Images to an
+        agent that didn't say it sees them fail the turn before it is prompted. Stopped, it sends
         `session/cancel`; a process that exits mid-turn fails the turn, and the next starts a new one."""
         is_new = await self._ensure_started(context)
+        if context.images and not self._sees_images:
+            raise AcpError(f"{self._label} can't see images: send them to an Agent Provider that can, or remove them")
         text = f"{context.system}\n\n{context.prompt}" if is_new else context.prompt
+        images = [{"type": "image", "mimeType": image.media_type, "data": image.data} for image in context.images]
         updates: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self._turn, self._updates, self._tool_calls = context.turn, updates, {}
-        params = {"sessionId": self._session_id, "prompt": [{"type": "text", "text": text}]}
+        params = {"sessionId": self._session_id, "prompt": [{"type": "text", "text": text}, *images]}
         prompt = asyncio.ensure_future(self._connection.request("session/prompt", params))
         # Its answer follows every update the agent sent before it, so this ends the queue.
         prompt.add_done_callback(lambda _: updates.put_nowait(None))
@@ -349,6 +361,7 @@ class AcpAgent:
         )
         if not reaches_http_mcp(initialized):
             raise AcpError(f"{self._label} doesn't connect to MCP servers over HTTP, which the Agent's tools are served on")
+        self._sees_images = sees_images(initialized)
         params: dict[str, Any] = {"cwd": str(self._sandbox), "mcpServers": [scoped_server(context.tools.url, context.tools.headers)]}
         if self._provider.session_meta is not None:
             params["_meta"] = self._provider.session_meta

@@ -1,13 +1,24 @@
-import { ArrowUp, Bot, ChevronDown, ChevronLeft, Clapperboard, FileText, Plus, Settings2, Square, UserRound } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import type { AgentAttachment, AgentProviderListing } from "../../../../api";
+import { ArrowUp, Bot, ChevronDown, ChevronLeft, Clapperboard, FileText, ImageUp, Plus, Settings2, Square, UserRound } from "lucide-react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import type { AgentProviderListing } from "../../../../api";
 import { Button, buttonClass } from "../../../../components/Button";
 import { Menu, MenuItem, useMenu } from "../../../../components/Menu";
 import { Select } from "../../../../components/Select";
 import { cx } from "../../../../format";
 import { keepEscape } from "../AudioEffectsFields";
 import { AttachmentChips } from "./AttachmentChips";
-import { attach, attachmentName, attachTextFiles, clipChoices, TEXT_FILE_TYPES, type ReferableClip } from "./attachments";
+import {
+  attach,
+  attachImages,
+  attachmentName,
+  attachTextFiles,
+  clipChoices,
+  IMAGE_TYPES,
+  isImageFile,
+  TEXT_FILE_TYPES,
+  type DraftAttachment,
+  type ReferableClip,
+} from "./attachments";
 import { ThinkingOrb } from "./ThinkingOrb";
 
 // The message box grows with its text up to this, then scrolls.
@@ -16,10 +27,12 @@ const MAX_HEIGHT_PX = 160;
 /**
  * The chat's framed message box: Enter sends, Shift+Enter breaks the line, Esc (or ⌘. anywhere)
  * stops a running turn. Above its text, the Agent Attachments going with it as chips (the first ones
- * `defaultAttachments`); under it a toolbar with the + that attaches them (a text file, one of
+ * `defaultAttachments`); under it a toolbar with the + that attaches them (images, a text file, one of
  * `candidates`, the Job's other Candidates, or the Channel Profile),
  * the Provider pill, then the Model pill (each opening its picker), the provider's setup and Send, or Stop
- * while a turn runs. Its text and attachments are its own state, emptied once `onSend` says they went. While the provider is being set up (`setup`) it is
+ * while a turn runs. Images are also pasted into the message box, and images or text files dropped onto
+ * it; an image is held as its file, its thumbnail an object URL let go of once it is removed, sent or
+ * the composer goes. Its text and attachments are its own state, emptied once `onSend` says they went. While the provider is being set up (`setup`) it is
  * only the toolbar, so that another provider can still be picked.
  */
 export function Composer({
@@ -48,17 +61,26 @@ export function Composer({
   onSetup: () => void;
   busy: boolean;
   running: boolean;
-  onSend: (prompt: string, attachments: AgentAttachment[]) => Promise<boolean>;
+  onSend: (prompt: string, attachments: DraftAttachment[]) => Promise<boolean>;
   onStop: () => void;
-  defaultAttachments?: AgentAttachment[];
+  defaultAttachments?: DraftAttachment[];
   candidates?: ReferableClip[];
 }) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState(defaultAttachments);
   // Why the last files chosen weren't all attached.
   const [attachError, setAttachError] = useState<string | null>(null);
+  // Whether files are dragged over the message box.
+  const [dragging, setDragging] = useState(false);
   const prompt = text.trim();
   const area = useRef<HTMLTextAreaElement>(null);
+
+  // The thumbnails still held when the composer goes are let go of.
+  const held = useRef(attachments);
+  useEffect(() => {
+    held.current = attachments;
+  });
+  useEffect(() => () => revokePreviews(held.current), []);
 
   // Autosize: as tall as its text, up to MAX_HEIGHT_PX.
   useLayoutEffect(() => {
@@ -70,6 +92,7 @@ export function Composer({
 
   const send = async () => {
     if (!prompt || busy || !(await onSend(prompt, attachments))) return;
+    revokePreviews(attachments);
     setText("");
     setAttachments(NO_ATTACHMENTS);
     setAttachError(null);
@@ -82,7 +105,26 @@ export function Composer({
     area.current?.focus();
   };
 
-  const add = (attachment: AgentAttachment) => {
+  const attachImageFiles = (files: File[]) => {
+    const added = attachImages(attachments, files);
+    setAttachments(added.attached);
+    setAttachError(added.error);
+    area.current?.focus();
+  };
+
+  // Dropped files: the images as images, the others as text files.
+  const attachDropped = async (files: File[]) => {
+    const images = attachImages(attachments, files.filter(isImageFile));
+    const texts = await attachTextFiles(images.attached, files.filter((file) => !isImageFile(file)));
+    setAttachments(texts.attached);
+    setAttachError(images.error ?? texts.error);
+    area.current?.focus();
+  };
+
+  // Only a drag carrying files is taken: dragged text still goes into the message box.
+  const takesDrag = (event: DragEvent) => !setup && event.dataTransfer.types.includes("Files");
+
+  const add = (attachment: DraftAttachment) => {
     const added = attach(attachments, attachment);
     setAttachments(added.attached);
     setAttachError(added.error);
@@ -90,6 +132,7 @@ export function Composer({
   };
 
   const remove = (index: number) => {
+    revokePreviews(attachments.slice(index, index + 1));
     setAttachments((all) => all.filter((_, i) => i !== index));
     setAttachError(null);
     area.current?.focus();
@@ -127,11 +170,33 @@ export function Composer({
           event.preventDefault();
           void send();
         }}
-        className="rounded-2xl border border-border bg-fill shadow-sm transition-colors focus-within:border-text/50"
+        onDragOver={(event) => {
+          if (!takesDrag(event)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+          setDragging(true);
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+        }}
+        onDrop={(event) => {
+          setDragging(false);
+          if (!takesDrag(event)) return;
+          event.preventDefault();
+          void attachDropped(Array.from(event.dataTransfer.files));
+        }}
+        className={cx(
+          "rounded-2xl border bg-fill shadow-sm motion-safe:transition-colors",
+          dragging ? "border-focus" : "border-border focus-within:border-text/50",
+        )}
       >
         {!setup && (
           <AttachmentChips
-            attachments={attachments.map((attachment) => ({ kind: attachment.kind, name: attachmentName(attachment, candidates) }))}
+            attachments={attachments.map((attachment) => ({
+              kind: attachment.kind,
+              name: attachmentName(attachment, candidates),
+              preview: attachment.kind === "image" ? attachment.preview : null,
+            }))}
             onRemove={remove}
             className="px-3 pt-3"
           />
@@ -150,6 +215,13 @@ export function Composer({
             placeholder="Describe a change…"
             onChange={(event) => setText(event.target.value)}
             onKeyDown={onKeyDown}
+            onPaste={(event) => {
+              // A pasted picture is attached; pasted text goes in as ever.
+              const images = Array.from(event.clipboardData.files).filter(isImageFile);
+              if (images.length === 0) return;
+              event.preventDefault();
+              attachImageFiles(images);
+            }}
             className="block w-full resize-none overflow-y-auto bg-transparent px-4 pt-3.5 pb-2 text-base caret-text outline-none placeholder:text-muted"
           />
         )}
@@ -158,6 +230,7 @@ export function Composer({
             <AddMenu
               clips={clipChoices(candidates, attachments)}
               profileAttached={attachments.some((attachment) => attachment.kind === "channel_profile")}
+              onImages={attachImageFiles}
               onTextFiles={(files) => void attachText(files)}
               onAttach={add}
             />
@@ -208,8 +281,12 @@ export function Composer({
   );
 }
 
-const NO_ATTACHMENTS: AgentAttachment[] = [];
+const NO_ATTACHMENTS: DraftAttachment[] = [];
 const NO_CLIPS: ReferableClip[] = [];
+
+function revokePreviews(attachments: DraftAttachment[]) {
+  for (const attachment of attachments) if (attachment.kind === "image") URL.revokeObjectURL(attachment.preview);
+}
 
 /**
  * The toolbar's +: a menu of what can go with the message, each kind's file picker hidden behind its
@@ -219,15 +296,18 @@ const NO_CLIPS: ReferableClip[] = [];
 function AddMenu({
   clips,
   profileAttached,
+  onImages,
   onTextFiles,
   onAttach,
 }: {
   clips: ReturnType<typeof clipChoices>;
   profileAttached: boolean;
+  onImages: (files: File[]) => void;
   onTextFiles: (files: File[]) => void;
-  onAttach: (attachment: AgentAttachment) => void;
+  onAttach: (attachment: DraftAttachment) => void;
 }) {
   const { buttonRef, menuRef, open, show, hide, toggle } = useMenu({ align: "start" });
+  const images = useRef<HTMLInputElement>(null);
   const textFiles = useRef<HTMLInputElement>(null);
   // The kinds of attachment, or the clips to reference.
   const [view, setView] = useState<"kinds" | "clips">("kinds");
@@ -293,6 +373,15 @@ function AddMenu({
               <MenuItem
                 onClick={() => {
                   hide();
+                  images.current?.click();
+                }}
+              >
+                <ImageUp aria-hidden size={15} className="text-muted" />
+                Upload image
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  hide();
                   textFiles.current?.click();
                 }}
               >
@@ -317,21 +406,29 @@ function AddMenu({
           )}
         </div>
       </Menu>
-      <input
-        ref={textFiles}
-        type="file"
-        accept={TEXT_FILE_TYPES.join(",")}
-        multiple
-        hidden
-        tabIndex={-1}
-        onChange={(event) => {
-          const files = Array.from(event.target.files ?? []);
-          // Emptied, so that choosing the same file again (after removing it) attaches it again.
-          event.target.value = "";
-          if (files.length > 0) onTextFiles(files);
-        }}
-      />
+      <FileInput inputRef={images} accept={IMAGE_TYPES.join(",")} onFiles={onImages} />
+      <FileInput inputRef={textFiles} accept={TEXT_FILE_TYPES.join(",")} onFiles={onTextFiles} />
     </>
+  );
+}
+
+/** A hidden picker of several files, behind a menu item. */
+function FileInput({ inputRef, accept, onFiles }: { inputRef: RefObject<HTMLInputElement>; accept: string; onFiles: (files: File[]) => void }) {
+  return (
+    <input
+      ref={inputRef}
+      type="file"
+      accept={accept}
+      multiple
+      hidden
+      tabIndex={-1}
+      onChange={(event) => {
+        const files = Array.from(event.target.files ?? []);
+        // Emptied, so that choosing the same file again (after removing it) attaches it again.
+        event.target.value = "";
+        if (files.length > 0) onFiles(files);
+      }}
+    />
   );
 }
 

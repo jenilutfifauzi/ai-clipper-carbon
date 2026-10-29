@@ -1,6 +1,6 @@
 import { Check, Copy } from "lucide-react";
 import { memo, useContext, useEffect, useState } from "react";
-import type { AgentStop, AgentTurnPart, AgentTurnUndo, AgentUi } from "../../../../api";
+import { agentAttachmentUrl, type AgentStop, type AgentTurnPart, type AgentTurnUndo, type AgentUi } from "../../../../api";
 import { Button } from "../../../../components/Button";
 import { writeClipboard } from "../../../../components/CopyButton";
 import type { AgentTurnView } from "./agentStream";
@@ -78,7 +78,14 @@ export const TurnView = memo(function TurnView({
     <div className="flex flex-col gap-2">
       {turn.prompt && (
         <div className="flex flex-col items-end gap-1.5">
-          <AttachmentChips attachments={turn.attachments ?? []} className="max-w-[85%] justify-end" />
+          <AttachmentChips
+            // An image's thumbnail is the picture kept with the Job, once the backend has named it.
+            attachments={(turn.attachments ?? []).map((attachment) => ({
+              ...attachment,
+              preview: attachment.kind === "image" && attachment.id && host?.candidateId ? agentAttachmentUrl(host.jobId, host.candidateId, attachment.id) : null,
+            }))}
+            className="max-w-[85%] justify-end"
+          />
           <p className="raised max-w-[85%] rounded-xl rounded-br-md px-3 py-2 text-sm text-pretty break-words whitespace-pre-wrap text-text">
             {turn.prompt}
           </p>

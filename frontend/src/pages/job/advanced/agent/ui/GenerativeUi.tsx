@@ -10,6 +10,8 @@ import { KeyValues } from "./KeyValues";
 // outside the Advanced Edit), and, for a choice, whether a turn is on its way and how one is sent.
 export interface AgentUiHost {
   jobId: string;
+  // The open Candidate's id, for what the chat fetches of it (an image sent); else none is fetched.
+  candidateId?: string;
   candidate: { value: Candidate; name: string } | null;
   busy: boolean;
   // Sends `prompt` as the owner's next message to the open Thread, as the composer does.

@@ -4,6 +4,7 @@ answers as its API streams, through the transport its SDK sends on (httpx2 for `
 otherwise); the scoped MCP server is a fake holding one tool, so that only the adapter is under test."""
 
 import asyncio
+import base64
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -15,6 +16,7 @@ import pytest
 from mcp_types import CallToolResult, ListToolsResult, TextContent, Tool
 
 from app.agent.api_gemini import gemini_schema
+from app.agent.attachments import ImageInput
 from app.agent.credentials import Credential, SavedCredential, credential_for, save_credential
 from app.agent.driver import ChatMessage, TurnContext
 from app.agent.providers import provider_by_id
@@ -168,7 +170,9 @@ SCRIPTS = {
 }
 
 
-def run_turn(provider_id: str, api: Scripted, endpoint: FakeEndpoint, transport, model: str | None = None) -> list[dict]:
+def run_turn(
+    provider_id: str, api: Scripted, endpoint: FakeEndpoint, transport, model: str | None = None, images: list[ImageInput] | None = None
+) -> list[dict]:
     provider = provider_by_id(provider_id)
     context = TurnContext(
         turn="t1",
@@ -180,6 +184,7 @@ def run_turn(provider_id: str, api: Scripted, endpoint: FakeEndpoint, transport,
         prompt="Set the hook",
         tools=endpoint,
         http_transport=transport,
+        images=images or [],
     )
 
     async def collect() -> list[dict]:
@@ -291,3 +296,66 @@ def test_anthropic_defaults_to_sonnet_and_lists_opus_and_haiku():
 
     assert anthropic.default_model == "claude-sonnet-5-5"
     assert set(anthropic.models) == {"claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"}
+
+
+# .scratch/agent-attachments/issues/04: the prompt's images, in each API's own form.
+IMAGES = [ImageInput(media_type="image/png", data="iVBORw0KGgo="), ImageInput(media_type="image/jpeg", data="/9j/4AAQ")]
+
+
+def test_chat_completions_sends_the_prompts_images_as_data_urls_after_its_text():
+    replies, _ = SCRIPTS["deepseek"]
+    api = Scripted(list(replies))
+    run_turn("deepseek", api, FakeEndpoint(), api.httpx(), images=IMAGES)
+
+    first, second = api.requests
+    assert first["messages"][1:] == [
+        {"role": "user", "content": "Hi"},
+        {"role": "assistant", "content": "Hello."},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Set the hook"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,/9j/4AAQ"}},
+            ],
+        },
+    ]
+    # Still there while the turn's tool calls run.
+    assert second["messages"][3] == first["messages"][3]
+
+
+def test_anthropic_sends_the_prompts_images_as_base64_blocks_before_its_text():
+    replies, _ = SCRIPTS["anthropic"]
+    api = Scripted(list(replies))
+    run_turn("anthropic", api, FakeEndpoint(), api.httpx2(), images=IMAGES)
+
+    first, _ = api.requests
+    assert first["messages"] == [
+        {"role": "user", "content": "Hi"},
+        {"role": "assistant", "content": "Hello."},
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "/9j/4AAQ"}},
+                {"type": "text", "text": "Set the hook"},
+            ],
+        },
+    ]
+
+
+def test_gemini_sends_the_prompts_images_as_inline_data_before_its_text():
+    replies, _ = SCRIPTS["gemini"]
+    api = Scripted(list(replies))
+    run_turn("gemini", api, FakeEndpoint(), api.httpx(), images=IMAGES)
+
+    first, _ = api.requests
+    earlier, answered, prompt = first["contents"]
+    assert earlier == {"role": "user", "parts": [{"text": "Hi"}]}
+    assert prompt["role"] == "user"
+    *images, text = prompt["parts"]
+    assert text == {"text": "Set the hook"}
+    # google-genai spells the blob's bytes in URL-safe base64, and its media type in snake case.
+    assert [(part["inlineData"]["mime_type"], base64.urlsafe_b64decode(part["inlineData"]["data"])) for part in images] == [
+        (image.media_type, base64.b64decode(image.data)) for image in IMAGES
+    ]

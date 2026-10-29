@@ -18,7 +18,7 @@ from app.agent.api_anthropic import run_anthropic_turn
 from app.agent.api_chat import run_chat_turn
 from app.agent.api_gemini import run_gemini_turn
 from app.agent.api_loop import HISTORY_TURNS
-from app.agent.attachments import ResolvedAttachments
+from app.agent.attachments import ImageInput, ResolvedAttachments
 from app.agent.credentials import Credential
 from app.agent.driver import ChatMessage, Driver, ScopedEndpoint, TurnContext
 from app.agent.events import AgentError, AgentEvent, AgentFeed, Stop, ToolFinished, TurnFinished, TurnStarted, topic
@@ -246,7 +246,7 @@ class AgentSessionManager:
         publish(TurnStarted(turn=turn, tab=session.tab, thread=thread, provider=session.provider.id, model=model, prompt=prompt,
                             attachments=attached.sent))
         try:
-            context = await self._context(session, thread, turn, model, attached.prompt(prompt))
+            context = await self._context(session, thread, turn, model, attached.prompt(prompt), attached.images)
             async for event in driver(context):
                 if isinstance(event, TurnFinished):
                     stop = event.stop
@@ -276,8 +276,10 @@ class AgentSessionManager:
         await asyncio.to_thread(append_turn, self._store.job_dir(session.job_id), session.candidate_id, thread, record)
         publish(TurnFinished(turn=turn, stop=stop, first_revision=first, last_revision=last))
 
-    async def _context(self, session: AgentSession, thread: str, turn: str, model: str | None, prompt: str) -> TurnContext:
-        """What the driver needs for the turn; its history is the Thread's turns alone."""
+    async def _context(
+        self, session: AgentSession, thread: str, turn: str, model: str | None, prompt: str, images: list[ImageInput]
+    ) -> TurnContext:
+        """What the driver needs for the turn; its history is the Thread's turns' words alone."""
         candidates = await asyncio.to_thread(self._store.load_candidates, session.job_id)
         candidate = next((c for c in candidates or [] if c.id == session.candidate_id), None)
         if candidate is None:
@@ -297,6 +299,7 @@ class AgentSessionManager:
             system=system_prompt(self._app.state.agent_mcp.instructions or "", session.job_id, candidate),
             history=history,
             prompt=prompt,
+            images=images,
             tools=ScopedEndpoint(self._app, session.token, self._app.state.settings.backend_origin),
             http_transport=self._http_transport,
         )
