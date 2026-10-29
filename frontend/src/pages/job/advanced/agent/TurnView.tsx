@@ -66,7 +66,7 @@ export const TurnView = memo(function TurnView({
     <div className="flex flex-col gap-2">
       {turn.prompt && (
         <div className="flex justify-end">
-          <p className="max-w-[85%] rounded-xl rounded-br-md bg-linear-to-b from-accent to-accent-end px-3 py-2 text-sm text-pretty break-words whitespace-pre-wrap text-on-accent">
+          <p className="raised max-w-[85%] rounded-xl rounded-br-md px-3 py-2 text-sm text-pretty break-words whitespace-pre-wrap text-text">
             {turn.prompt}
           </p>
         </div>

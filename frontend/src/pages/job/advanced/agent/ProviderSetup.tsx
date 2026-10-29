@@ -16,7 +16,7 @@ export function ProviderSetup({ listing, onSaved }: { listing: AgentProviderList
     <div data-provider-setup="" className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">
         <h2 className="font-semibold">Set up {provider.label}</h2>
-        <a href={provider.docs_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 self-start text-sm text-accent-text hover:underline">
+        <a href={provider.docs_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 self-start text-sm text-text underline decoration-text/40 hover:decoration-text">
           {provider.label}'s docs
           <ExternalLink aria-hidden size={13} />
         </a>
@@ -107,7 +107,7 @@ function ApiSetup({ provider, status, onSaved }: { provider: ApiAgentProvider; s
         </datalist>
       </div>
       {error && <p className="text-sm text-danger">{error}</p>}
-      <Button type="submit" variant="primary" className="self-start" disabled={saving || (!key.trim() && !status.has_key)}>
+      <Button type="submit" variant="solid" className="self-start" disabled={saving || (!key.trim() && !status.has_key)}>
         {saving ? "Saving…" : "Save"}
       </Button>
     </form>

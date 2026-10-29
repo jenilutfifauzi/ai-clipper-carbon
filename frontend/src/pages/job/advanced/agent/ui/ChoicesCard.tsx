@@ -33,7 +33,7 @@ export function ChoicesCard({
             onClick={() => host?.choose(option.prompt)}
             className={cx(
               "flex w-full items-start gap-2 rounded-lg border px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-focus",
-              chosen ? "border-accent-text" : "border-border",
+              chosen ? "border-text/40 bg-fill" : "border-border",
               locked ? "cursor-default" : "hover:bg-fill",
               locked && !chosen && "text-muted",
             )}
@@ -44,7 +44,7 @@ export function ChoicesCard({
             </span>
             {chosen && (
               <>
-                <Check aria-hidden size={14} className="mt-0.5 shrink-0 text-accent-text" />
+                <Check aria-hidden size={14} className="mt-0.5 shrink-0 text-text" />
                 <span className="sr-only">, chosen</span>
               </>
             )}
@@ -60,7 +60,7 @@ export function emphasized(label: string): ReactNode[] {
   const parts: ReactNode[] = [];
   let from = 0;
   for (const [open, close] of runs(label)) {
-    parts.push(label.slice(from, open), <strong key={open} className="font-semibold text-accent-text">{label.slice(open + 1, close)}</strong>);
+    parts.push(label.slice(from, open), <strong key={open} className="font-semibold text-text">{label.slice(open + 1, close)}</strong>);
     from = close + 1;
   }
   parts.push(label.slice(from));

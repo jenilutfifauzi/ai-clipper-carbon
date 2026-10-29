@@ -124,10 +124,10 @@ export function AgentTab({
   const host: AgentUiHost = { jobId, candidate, busy, choose: (prompt) => void send(prompt) };
   return (
     <AgentUiContext.Provider value={host}>
-      <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
         <ChatHeader turns={stream.state.turns} threads={threads} />
         {settingUp ? (
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+          <div className="relative min-h-0 flex-1 overflow-y-auto px-3 py-3">
             <ProviderSetup listing={listing} onSaved={saved} />
           </div>
         ) : (
@@ -178,7 +178,7 @@ function Transcript({ turns, onExample, onUndo }: { turns: AgentTurnView[]; onEx
 
   if (turns.length === 0) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col justify-end gap-2 overflow-y-auto px-3 py-3">
+      <div className="relative flex min-h-0 flex-1 flex-col justify-end gap-2 overflow-y-auto px-3 py-3">
         <p className="px-1 pb-1 text-sm text-pretty text-muted">Ask the Agent to change this clip. It edits only this Candidate, and each change can be undone.</p>
         {EXAMPLE_PROMPTS.map((prompt) => (
           <button
@@ -203,7 +203,9 @@ function Transcript({ turns, onExample, onUndo }: { turns: AgentTurnView[]; onEx
           following.current = view.scrollHeight - view.scrollTop - view.clientHeight < 24;
           setScrolledUp(!following.current);
         }}
-        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3"
+        // Relative, so that what is absolutely placed in a turn (its sr-only words) scrolls with it
+        // instead of spilling out and scrolling the Inspector, composer and all.
+        className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3"
       >
         {turns.map((turn, index) => (
           <TurnView key={turn.id} turn={turn} nextPrompt={turns[index + 1]?.prompt ?? null} onUndo={onUndo} />

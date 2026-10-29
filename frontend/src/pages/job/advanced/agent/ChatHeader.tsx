@@ -57,7 +57,7 @@ export function ChatHeader({ turns, threads }: { turns: AgentTurnView[]; threads
       <Button
         variant="ghost"
         size="icon-sm"
-        className="aria-pressed:text-accent-text"
+        className="aria-pressed:bg-fill aria-pressed:text-text"
         aria-label="Follow agent"
         aria-pressed={follow}
         title="Follow agent: the Timeline goes to what the Agent changes (until you scroll or zoom it in that turn)"
@@ -160,7 +160,7 @@ function ThreadList({ threads }: { threads: AgentThreads }) {
                 }}
                 className="flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-fill aria-[current]:bg-fill"
               >
-                <Check aria-hidden size={13} className={`shrink-0 ${thread.id === active?.id ? "text-accent-text" : "invisible"}`} />
+                <Check aria-hidden size={13} className={`shrink-0 ${thread.id === active?.id ? "text-text" : "invisible"}`} />
                 <span className="min-w-0 flex-1 truncate">{thread.title}</span>
                 <span className="shrink-0 text-xs text-muted tabular-nums">{formatRelative(thread.updated_at)}</span>
               </button>
