@@ -22,7 +22,7 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin, get_typ
 
 import httpx
 from anyio import to_thread
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
@@ -30,6 +30,8 @@ from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Fiel
 
 from app.agent.scope import ALLOWED_TOOLS, AgentScope, ScopeRegistry
 from app.agent.ui_spec import UiSpec
+from app.auth import internal_user_context, require_auth
+from app.workspace import workspace_for_app_context
 from app.api import (
     PICTURES_ROUTE,
     SHAPES_MAX,
@@ -542,10 +544,15 @@ instead: choices to pick from, the Candidate after a change, a table, a callout.
 {INSTRUCTIONS}"""
 
 
-def build_mcp(app: FastAPI, scoped: bool = False) -> MCPServer:
+def build_mcp(app: FastAPI, scoped: bool = False, authenticated: bool = True) -> MCPServer:
     """The MCP server for `app`, whose services (app.state) its tools use. `scoped`, the Agent's: only
     ALLOWED_TOOLS, each call bound to the scope its bearer token names in app.state.agent_scopes."""
-    mcp = _ScopedServer(app.state.agent_scopes) if scoped else MCPServer("AI Clipper", instructions=INSTRUCTIONS)
+    if scoped:
+        mcp = _ScopedServer(app.state.agent_scopes)
+    elif authenticated:
+        mcp = _AuthenticatedServer("AI Clipper", instructions=INSTRUCTIONS)
+    else:
+        mcp = MCPServer("AI Clipper", instructions=INSTRUCTIONS)
 
     def tool(*, read_only: bool = False, destructive: bool = False):
         # Unstructured: the result's JSON is sent once, as text, rather than twice. Each tool returns an
@@ -595,18 +602,19 @@ def build_mcp(app: FastAPI, scoped: bool = False) -> MCPServer:
 
     def copied(job_id: str, segment: dict) -> bool:
         """Whether a reversed Segment's full-size Retimed copy, which its render reads, is made."""
+        workspace = workspace_for_app_context(app)
         if segment["media"] is not None:
-            retimed = app.state.media.retimed(segment["media"])
+            retimed = workspace.media.retimed(segment["media"])
         else:
-            job = app.state.store.get(job_id)
-            retimed = source_copies(app.state.store.job_dir(job_id), job.source)
+            job = workspace.store.get(job_id)
+            retimed = source_copies(workspace.store.job_dir(job_id), job.source)
         return retimed.find(CopySize.FULL, Retime(segment["source_start"], segment["source_end"])) is not None
 
     def new_title(layer: Any) -> Any:
         """A new Text Layer, its style the fields it gives over the Text Preset used for new titles'."""
         if not isinstance(layer, dict):
             return layer
-        style = _dump(TextStyle, app.state.text_presets.default().style)
+        style = _dump(TextStyle, workspace_for_app_context(app).text_presets.default().style)
         return layer | {"style": _merged_fields(style, layer["style"]) if isinstance(layer.get("style"), dict) else style}
 
     def new_titles(changes: Any) -> Any:
@@ -616,7 +624,7 @@ def build_mcp(app: FastAPI, scoped: bool = False) -> MCPServer:
         return changes
 
     def clips(job_id: str, listed: list[dict]) -> list[dict]:
-        job_dir = app.state.store.job_dir(job_id).resolve()
+        job_dir = workspace_for_app_context(app).store.job_dir(job_id).resolve()
         return [_clip_view(job_dir, clip) for clip in listed]
 
     # Jobs
@@ -634,9 +642,10 @@ def build_mcp(app: FastAPI, scoped: bool = False) -> MCPServer:
     async def create_job_from_file(path: str, options: JobOptions = JobOptions()) -> dict:
         """Start a Job from a video file on this Mac, by its path. The file is left where it is (the
         Job keeps a clone or copy of it). Follow it with wait_for_job."""
-        settings, store = app.state.settings, app.state.store
+        workspace = workspace_for_app_context(app)
+        settings, store = workspace.settings, workspace.store
         try:
-            options = app.state.templates.for_new_job(options)
+            options = workspace.templates.for_new_job(options)
         except TemplateNotFound as exc:
             raise ToolError(str(exc)) from None
         file = Path(path).expanduser()
@@ -644,8 +653,8 @@ def build_mcp(app: FastAPI, scoped: bool = False) -> MCPServer:
             staged = await to_thread.run_sync(stage, file, settings.data_dir / UPLOADS_DIR, settings.upload_reserve_bytes)
         except (BadUpload, NotEnoughSpace) as exc:
             raise ToolError(str(exc)) from None
-        job = store.create("", options, app.state.profiles.load(), upload=(staged.path, staged.name))
-        app.state.worker.submit(job.id)
+        job = store.create("", options, workspace.profiles.load(), upload=(staged.path, staged.name))
+        workspace.worker.submit(job.id)
         return _job_view(_JOB.dump_python(job, mode="json"))
 
     @tool(read_only=True)
@@ -680,8 +689,9 @@ def build_mcp(app: FastAPI, scoped: bool = False) -> MCPServer:
         review or error without reaching `until`, `reached` is false; call it again to go on waiting."""
         wanted = set(until or SETTLED)
         reached = False
+        workspace = workspace_for_app_context(app)
         try:
-            async with asyncio.timeout(timeout_secs), aclosing(job_events(app.state.store, job_id)) as events:
+            async with asyncio.timeout(timeout_secs), aclosing(job_events(workspace.store, job_id)) as events:
                 async for event in events:
                     if event.event == "end" and event.data == "deleted":
                         raise ToolError(f"No Job {job_id}")
@@ -696,7 +706,7 @@ def build_mcp(app: FastAPI, scoped: bool = False) -> MCPServer:
         except TimeoutError:
             pass
         try:
-            job = app.state.store.get(job_id)
+            job = workspace.store.get(job_id)
         except JobNotFound:
             raise ToolError(f"No Job {job_id}") from None
         return {"reached": reached, "job": _job_view(_JOB.dump_python(job, mode="json"))}
@@ -1131,10 +1141,11 @@ def build_mcp(app: FastAPI, scoped: bool = False) -> MCPServer:
             return {key: [_face(face) for face in imported[key]] for key in ("faces", "existing")} | {"warnings": imported["warnings"]}
 
         def add() -> Any:
+            workspace = workspace_for_app_context(app)
             with file.open("rb") as data:
                 if kind == "logo":
-                    return app.state.logos.add(data.read(MAX_UPLOAD_BYTES + 1), file.name)
-                return app.state.media.add(data, file.name)
+                    return workspace.logos.add(data.read(MAX_UPLOAD_BYTES + 1), file.name)
+                return workspace.media.add(data, file.name)
 
         try:
             item = await to_thread.run_sync(add)
@@ -1151,7 +1162,7 @@ def build_mcp(app: FastAPI, scoped: bool = False) -> MCPServer:
         the Media Library item's id, name, duration. One at a time."""
         body = {"text": text, "engine": engine, "voice": voice, "speed": speed, "pauses": pauses, "style": style}
         started = await api("POST", "/narrations", json=body)
-        async with aclosing(app.state.narrations.events(started["id"])) as events:
+        async with aclosing(workspace_for_app_context(app).narrations.events(started["id"])) as events:
             async for event in events:
                 if event.event == "done":
                     item = _dump(MediaItem, event.data)
@@ -1233,6 +1244,45 @@ def build_mcp(app: FastAPI, scoped: bool = False) -> MCPServer:
     return mcp
 
 
+class _AuthenticatedServer(MCPServer):
+    """The general MCP endpoint: tool calls must carry a valid Clerk session token."""
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], context: Context | None = None) -> Any:
+        user_id = _mcp_user_id(context)
+        with internal_user_context(user_id):
+            return await super().call_tool(name, arguments, context)
+
+
+def _mcp_user_id(context: Context | None) -> str:
+    """Authenticate an MCP transport's request headers using the same Clerk verifier as REST."""
+    headers = getattr(context, "headers", None) if context is not None else None
+    if not headers:
+        raise ToolError("Authentication required: send a valid Clerk session token")
+    encoded_headers = [(str(key).lower().encode("latin-1"), str(value).encode("latin-1")) for key, value in headers.items()]
+    request = Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "https",
+            "path": "/mcp",
+            "raw_path": b"/mcp",
+            "query_string": b"",
+            "headers": encoded_headers,
+            "server": ("localhost", 443),
+            "client": ("127.0.0.1", 0),
+        }
+    )
+    try:
+        require_auth(request)
+    except HTTPException as error:
+        raise ToolError(f"Authentication required: {error.detail}") from error
+    user_id = getattr(request.state, "clerk_user_id", None)
+    if not user_id:
+        raise ToolError("Authentication required: session has no user identity")
+    return user_id
+
+
 class _ScopedServer(MCPServer):
     """The Agent's MCP server: a call is refused unless its bearer token names an open scope and the
     Job and Candidates it names are that scope's; its saves name the scope's Agent Turn (ADR 0003)."""
@@ -1243,13 +1293,14 @@ class _ScopedServer(MCPServer):
 
     async def call_tool(self, name: str, arguments: dict[str, Any], context: Context | None = None) -> Any:
         scope = self._scopes.resolve(_bearer(context))
-        if scope is None:
+        if scope is None or not scope.user_id:
             raise ToolError("Refused: this server takes only the bearer token of an open Agent Session")
         if (refusal := _out_of_scope(scope, arguments)) is not None:
             raise ToolError(refusal)
         edit = _edit_headers.set({"X-Edit-Source": "agent", "X-Edit-Tab": scope.edit_tab})
         try:
-            return await super().call_tool(name, arguments, context)
+            with internal_user_context(scope.user_id):
+                return await super().call_tool(name, arguments, context)
         finally:
             _edit_headers.reset(edit)
 

@@ -123,6 +123,7 @@ from app.transcript import Language, Transcript, Word
 from app.uploads import OPTIONS_FIELD, UPLOADS_DIR, BadUpload, NotEnoughSpace, check_room, receive
 from app.voices import SpeechError, default_engine
 from app.worker import Worker
+from app.workspace import workspace_for_request
 
 router = APIRouter(prefix="/api")
 media = APIRouter(prefix="/media")
@@ -158,56 +159,56 @@ _HISTORY_ENTRY = TypeAdapter(HistoryEntry)
 
 
 def _settings(request: Request) -> Settings:
-    return request.app.state.settings
+    return workspace_for_request(request).settings
 
 
 def _store(request: Request) -> JobStore:
-    return request.app.state.store
+    return workspace_for_request(request).store
 
 
 def _worker(request: Request) -> Worker:
-    return request.app.state.worker
+    return workspace_for_request(request).worker
 
 
 def _profiles(request: Request) -> ProfileStore:
-    return request.app.state.profiles
+    return workspace_for_request(request).profiles
 
 
 def _starred(request: Request) -> StarredStore:
-    return request.app.state.starred
+    return workspace_for_request(request).starred
 
 
 def _presets(request: Request) -> PresetStore:
-    return request.app.state.presets
+    return workspace_for_request(request).presets
 
 
 def _text_presets(request: Request) -> TextPresetStore:
-    return request.app.state.text_presets
+    return workspace_for_request(request).text_presets
 
 
 def _export_presets(request: Request) -> ExportPresetStore:
-    return request.app.state.export_presets
+    return workspace_for_request(request).export_presets
 
 
 def _logos(request: Request) -> LogoStore:
-    return request.app.state.logos
+    return workspace_for_request(request).logos
 
 
 def _media(request: Request) -> MediaStore:
-    return request.app.state.media
+    return workspace_for_request(request).media
 
 
 def _templates(request: Request) -> TemplateStore:
-    return request.app.state.templates
+    return workspace_for_request(request).templates
 
 
 def _narrations(request: Request) -> NarrationRunner:
-    return request.app.state.narrations
+    return workspace_for_request(request).narrations
 
 
 def _kokoro(request: Request) -> KokoroModel:
     """Kokoro's model, or a 404 when this app doesn't offer Kokoro."""
-    model = request.app.state.kokoro
+    model = workspace_for_request(request).kokoro
     if model is None:
         raise HTTPException(404, "Kokoro isn't offered here")
     return model
@@ -215,26 +216,26 @@ def _kokoro(request: Request) -> KokoroModel:
 
 def _person_model(request: Request) -> PersonModel:
     """The person model, or a 404 when this app doesn't offer it."""
-    model = request.app.state.person_model
+    model = workspace_for_request(request).person_model
     if model is None:
         raise HTTPException(404, "The person model isn't offered here")
     return model
 
 
 def _mattes(request: Request) -> MatteRunner:
-    return request.app.state.mattes
+    return workspace_for_request(request).mattes
 
 
 def _media_words(request: Request) -> MediaWordsStore:
-    return request.app.state.media_words
+    return workspace_for_request(request).media_words
 
 
 def _imported_looks(request: Request) -> ImportedLooks:
-    return request.app.state.looks
+    return workspace_for_request(request).looks
 
 
 def _faces(request: Request) -> Faces:
-    return request.app.state.faces
+    return workspace_for_request(request).faces
 
 
 def _edit(request: Request) -> Edit:
@@ -247,7 +248,7 @@ def _after_save(request: Request, background: BackgroundTasks) -> Callable[[str,
     its Candidates uses, made before the save started (`sweep_unused_effected`); and asking for the
     Matte pieces each saved Candidate's cut-out Segments lack (`ask_mattes`), as switching Background
     removal on, changing a range or applying a Template needs."""
-    state = request.app.state
+    state = workspace_for_request(request)
 
     def after(job_id: str, started: float, saved: Sequence[Candidate]) -> None:
         background.add_task(sweep_unused_effected, state.store, state.settings, state.presets, state.logos, state.media, job_id, started)
@@ -2451,7 +2452,7 @@ def list_voices(request: Request, narrations: Narrations, language: Language | N
         )
         for engine in narrations.engines
     ]
-    kokoro: KokoroModel | None = request.app.state.kokoro
+    kokoro: KokoroModel | None = workspace_for_request(request).kokoro
     return VoicesList(
         engines=engines, default=default_engine(narrations.engines, language), kokoro=KokoroInfo(**kokoro.state()) if kokoro else None
     )

@@ -112,6 +112,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
 from functools import cache
+from pathlib import Path
 from typing import Protocol, TypeVar
 
 from pydantic import ConfigDict, computed_field
@@ -2614,12 +2615,11 @@ class FontMetrics:
 
 
 @cache
-def font_metrics(font_id: str = DEFAULT_FONT) -> FontMetrics:
-    """A Face's measures (app/fonts.py), read with fontTools; cleared whenever the Faces change.
-    MissingFace when its file is gone."""
+def _font_metrics_for_file(font_id: str, face_file: Path) -> FontMetrics:
+    """A Face's measures, cached by both id and the active workspace's file path."""
     from fontTools.ttLib import TTFont
 
-    file = TTFont(registry().file(font_id), lazy=True)
+    file = TTFont(face_file, lazy=True)
     widths = file["hmtx"]
     os2 = file["OS/2"]
     return FontMetrics(
@@ -2632,6 +2632,12 @@ def font_metrics(font_id: str = DEFAULT_FONT) -> FontMetrics:
     )
 
 
+def font_metrics(font_id: str = DEFAULT_FONT) -> FontMetrics:
+    """A Face's measures (app/fonts.py), scoped by the active registry. MissingFace if it is gone."""
+    return _font_metrics_for_file(font_id, registry().file(font_id))
+
+
+font_metrics.cache_clear = _font_metrics_for_file.cache_clear  # type: ignore[attr-defined]
 on_change(font_metrics.cache_clear)
 
 
