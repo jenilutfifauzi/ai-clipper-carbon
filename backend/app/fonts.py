@@ -21,8 +21,9 @@ planner's cache of measures) are called whenever its Faces change.
 import hashlib
 import re
 import threading
-from collections.abc import Callable
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from functools import cache
 from io import BytesIO
@@ -308,11 +309,22 @@ class Faces:
 
 _registry = Faces()
 _changes = Listeners()
+_active_registry: ContextVar[Faces | None] = ContextVar("active_font_registry", default=None)
 
 
 def registry() -> Faces:
-    """The Faces of this process."""
-    return _registry
+    """The active workspace's Faces, or the process default outside an app request."""
+    return _active_registry.get() or _registry
+
+
+@contextmanager
+def using_registry(faces: Faces) -> Iterator[None]:
+    """Temporarily use one account's font registry in this request or worker task."""
+    token = _active_registry.set(faces)
+    try:
+        yield
+    finally:
+        _active_registry.reset(token)
 
 
 def use(folder: Path) -> Faces:
@@ -330,7 +342,7 @@ def on_change(listener: Callable[[], None]) -> None:
 
 def font(face_id: str) -> Face:
     """The Face `face_id`; KeyError for one that isn't."""
-    face = _registry.find(face_id)
+    face = registry().find(face_id)
     if face is None:
         raise KeyError(face_id)
     return face
@@ -512,4 +524,3 @@ def _unique(face_id: str, taken: set[str]) -> str:
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
-

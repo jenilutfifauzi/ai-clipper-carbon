@@ -301,6 +301,28 @@ class OpenAiLlm:
         return _parse(schema, content, name)
 
 
+class SelectableLlm:
+    """Use the provider selected in the shared Settings object, without restarting the app."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.gemini = GeminiLlm(settings)
+        self.openai = OpenAiLlm(settings)
+
+    def score(self, request: LlmRequest) -> ScoreResponse:
+        return self._selected().score(request)
+
+    def detail(self, request: LlmRequest) -> DetailResponse:
+        return self._selected().detail(request)
+
+    def refresh(self) -> None:
+        """Discard cached credentials so the next Gemini call uses the new key."""
+        self.gemini._client = None
+
+    def _selected(self) -> Llm:
+        return self.gemini if self.settings.llm_provider == "gemini" else self.openai
+
+
 def _parse[R: BaseModel](schema: type[R], text: str, name: str) -> R:
     try:
         return schema.model_validate_json(text)

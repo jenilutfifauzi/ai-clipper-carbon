@@ -47,7 +47,13 @@ def job(client) -> dict:
 
 @pytest.fixture
 def scope(job) -> AgentScope:
-    return AgentScope(job_id=job["id"], candidate_id=job["candidates"][0]["id"], session_id="s1", turn_id="t1")
+    return AgentScope(
+        user_id="test-injected-workspace",
+        job_id=job["id"],
+        candidate_id=job["candidates"][0]["id"],
+        session_id="s1",
+        turn_id="t1",
+    )
 
 
 @pytest.fixture

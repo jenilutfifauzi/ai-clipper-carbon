@@ -72,7 +72,7 @@ Run `make check-ffmpeg` at any time to confirm the `ass` and `scdet` filters and
 | `LLM_THINKING` | DeepSeek only, `enabled` or `disabled`. Thinking is slower and billed as output; compare with `make eval`. |
 | `LLM_REQUEST_INTERVAL_SECS` | The minimum gap between two LLM requests. Empty means 13 s for Gemini and 1 s for `openai`. |
 | `WHISPER_MODEL` | The mlx-whisper model for local transcription. |
-| `DATA_DIR` | Where Jobs live (default `./data`). |
+| `DATA_DIR` | Root for app data (default `./data`). In authenticated server mode, each Clerk account uses `DATA_DIR/users/<sha256-subject>/`; files already at the root remain unassigned legacy data. |
 | `YTDLP_COOKIES_FROM_BROWSER` | A browser (`chrome`, `safari`, `firefox`) to borrow YouTube cookies from when downloads fail with 403. |
 | `SELECTION_AUDIO_SIGNAL` | `true` also sends each shortlisted Window's audio to Gemini (needs `LLM_PROVIDER=gemini`). |
 
@@ -252,6 +252,10 @@ records the iterations so far.
   below 10 GB free. Delete Jobs you're done with.
 
 ## Where data lives
+
+In authenticated server mode, mutable account data (Jobs, media, profiles, presets, templates, imported assets, settings, Agent credentials and cookies) lives under a private workspace at `DATA_DIR/users/<sha256(Clerk subject)>/`. Existing files directly under `DATA_DIR` are legacy data with no assigned owner: they stay untouched and are not exposed to any account. Do not move them into the first account automatically; the owner must decide on an explicit migration after verifying account ownership.
+
+The layout below describes a local data root; in authenticated server mode these account-owned entries are nested under the account workspace instead.
 
 ```
 data/                        DATA_DIR, git-ignored

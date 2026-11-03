@@ -1,110 +1,133 @@
-import shutil
-from collections.abc import AsyncIterator
+import os
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
-from app import api, fonts, looks
+from app import api
 from app.agent import routes as agent_routes
 from app.agent.scope import ScopeRegistry
-from app.agent.sessions import AgentSessionManager
+from app.auth import require_auth
 from app.config import Settings, load_settings
-from app.jobs import JobStore
-from app.kokoro import KokoroSpeech
-from app.logos import LOGOS_DIR, LogoStore
-from app.matte import MatteRunner
 from app.mcp_server import build_mcp
-from app.media import MEDIA_DIR, MediaStore
-from app.media_words import MediaWordsStore
-from app.narration import NARRATIONS_DIR, VOICE_SAMPLES_DIR, NarrationRunner
-from app.pipeline import Pipeline
 from app.ports import Ports, real_ports
-from app.profile import PROFILE_FILE, ProfileStore
-from app.rendering import Renders
-from app.starred_effects import STARRED_FILE, StarredStore
-from app.styles import PRESETS_FILE, PresetStore
-from app.text_presets import TEXT_PRESETS_FILE, TextPresetStore
-from app.templates import TEMPLATES_FILE, TemplateStore
-from app.uploads import UPLOADS_DIR
-from app.worker import Worker
+from app.settings_api import router as settings_router
+from app.workspace import UserWorkspace, WorkspaceRegistry, bind_workspace
 
 
-def create_app(settings: Settings | None = None, ports: Ports | None = None) -> FastAPI:
-    """The app, wired to `ports` (the real ones by default). Run with `uvicorn --factory app.main:create_app`."""
+def create_app(
+    settings: Settings | None = None,
+    ports: Ports | None = None,
+    *,
+    ports_factory: Callable[[Settings], Ports] | None = None,
+    test_mode: bool | None = None,
+) -> FastAPI:
+    """Create the app. Production requests get a private workspace selected by verified Clerk subject.
+
+    Only `test_mode=True` allows explicit Settings/Ports injection and disables Clerk dependencies.
+    The test suite opts into this through its own bootstrap; production callers cannot disable auth merely
+    by supplying a Settings object.
+    """
+    if test_mode is None:
+        test_mode = os.environ.get("AI_CLIPPER_TEST_MODE") == "1"
+    if test_mode:
+        if settings is None:
+            raise ValueError("test_mode requires explicit Settings")
+        if ports_factory is not None:
+            raise ValueError("Use injected Ports or a per-user ports_factory, not both")
+    elif settings is not None or ports is not None:
+        raise ValueError("Explicit Settings/Ports injection requires test_mode=True")
+
     settings = settings or load_settings()
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
-    # What is there is left from uploads cut short when the app last stopped: none was complete.
-    shutil.rmtree(settings.data_dir / UPLOADS_DIR, ignore_errors=True)
-    # And from Narrations being made: none was added.
-    shutil.rmtree(settings.data_dir / NARRATIONS_DIR, ignore_errors=True)
-    media = MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin)
-    store = JobStore(settings.data_dir / "jobs", media.sizes)
-    ports = ports or real_ports(settings)
-    # One for the app, so that what the render queue has queued shows in the editor.
-    media_words = MediaWordsStore(settings.data_dir / MEDIA_DIR, settings.whisper_model)
-    # One for the app: a Matte piece is made one at a time, for the editor or a render.
-    mattes = MatteRunner(ports.person_model, ports.matter, settings.ffmpeg_bin)
-    renders = Renders(store, settings, ports.transcriber, media_words, mattes)
-    templates = TemplateStore(settings.data_dir / TEMPLATES_FILE)
-    worker = Worker(store, Pipeline(store, ports, settings, templates, media.lengths), renders)
+    auth_dependencies = [Depends(bind_workspace)] if test_mode else [Depends(require_auth), Depends(bind_workspace)]
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        # The MCP server's sessions: a mounted app's own lifespan doesn't run.
+        # The MCP servers are app-wide, while their tool calls resolve an account workspace from
+        # authenticated context. Jobs and Agent sessions themselves are owned by each workspace.
         async with app.state.mcp.session_manager.run(), app.state.agent_mcp.session_manager.run():
-            app.state.agent_sessions = AgentSessionManager(app, ports.agent_transport)
-            worker.start()
-            yield
-            worker.stop()
-            await app.state.agent_sessions.close()
+            if app.state.default_workspace is not None:
+                app.state.default_workspace.start()
+            else:
+                app.state.workspace_registry.start()
+            try:
+                yield
+            finally:
+                if app.state.default_workspace is not None:
+                    await app.state.default_workspace.stop()
+                else:
+                    await app.state.workspace_registry.stop()
 
     app = FastAPI(title="AI Clipper", lifespan=lifespan)
-    app.state.settings = settings
-    app.state.store = store
-    app.state.worker = worker
-    app.state.profiles = ProfileStore(settings.data_dir / PROFILE_FILE)
-    app.state.presets = PresetStore(settings.data_dir / PRESETS_FILE)
-    app.state.text_presets = TextPresetStore(settings.data_dir / TEXT_PRESETS_FILE)
-    app.state.export_presets = renders.export_presets
-    app.state.templates = templates
-    app.state.starred = StarredStore(settings.data_dir / STARRED_FILE)
-    app.state.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin)
-    app.state.media = media
-    # One for the app: a Narration is made one at a time, whichever tab or agent asks. Kokoro, on this
-    # Mac, after the cloud engines; its model downloaded one at a time, apart from the runner.
-    app.state.kokoro = ports.kokoro
-    # The person model, for Background removal's Matte: downloaded from the Inspector or by the agent.
-    app.state.person_model = ports.person_model
-    app.state.mattes = mattes
-    engines = [*ports.voices, *([KokoroSpeech(ports.kokoro)] if ports.kokoro else [])]
-    app.state.narrations = NarrationRunner(
-        media, engines, settings.ffmpeg_bin, settings.data_dir / NARRATIONS_DIR, samples_dir=settings.data_dir / VOICE_SAMPLES_DIR
-    )
-    app.state.media_words = media_words
-    app.state.faces = fonts.use(settings.data_dir / fonts.IMPORTED_DIR)
-    app.state.looks = looks.use(settings.data_dir / looks.IMPORTED_DIR)
-    app.include_router(api.router)
-    app.include_router(api.media)
-    app.include_router(agent_routes.router)
-    app.include_router(agent_routes.candidate_router)
-    # The MCP server at /mcp (streamable HTTP; localhost only), ahead of the frontend's catch-all. Its
-    # route is added as it is, not mounted: a mount at /mcp wouldn't match /mcp itself.
-    app.state.mcp = build_mcp(app)
-    app.router.routes.extend(app.state.mcp.streamable_http_app(streamable_http_path="/mcp", stateless_http=True).routes)
-    # The Agent's at /mcp/agent (localhost only too): its tools only, bound by a bearer token to one Candidate.
+    app.state.default_workspace = None
+    app.state.workspace_registry = None
     app.state.agent_scopes = ScopeRegistry()
+
+    app.include_router(api.router, dependencies=auth_dependencies)
+    app.include_router(api.media, dependencies=auth_dependencies)
+    app.include_router(settings_router, dependencies=auth_dependencies)
+    app.include_router(agent_routes.router, dependencies=auth_dependencies)
+    app.include_router(agent_routes.candidate_router, dependencies=auth_dependencies)
+
+    # The MCP server at /mcp (streamable HTTP). Its tool calls require Clerk auth; API calls made
+    # in-process by a tool inherit that verified identity through a task-local context.
+    app.state.mcp = build_mcp(app, authenticated=not test_mode)
+    app.router.routes.extend(app.state.mcp.streamable_http_app(streamable_http_path="/mcp", stateless_http=True).routes)
+    # The Agent's /mcp/agent tools additionally require an unguessable, user-bound Candidate scope.
     app.state.agent_mcp = build_mcp(app, scoped=True)
     app.router.routes.extend(app.state.agent_mcp.streamable_http_app(streamable_http_path="/mcp/agent", stateless_http=True).routes)
+
+    if test_mode:
+        app.state.default_workspace = UserWorkspace(
+            settings,
+            app,
+            app.state.agent_scopes,
+            # This factory path exists only for explicit isolated test injection, not production auth.
+            user_id="test-injected-workspace",
+            ports=ports,
+        )
+        # Preserve the old single-workspace test helpers without adding these shared aliases to production.
+        for name in (
+            "settings",
+            "settings_store",
+            "store",
+            "worker",
+            "profiles",
+            "presets",
+            "text_presets",
+            "export_presets",
+            "templates",
+            "starred",
+            "logos",
+            "media",
+            "narrations",
+            "kokoro",
+            "person_model",
+            "mattes",
+            "media_words",
+            "looks",
+            "faces",
+            "agent_sessions",
+            "agent_detection",
+        ):
+            setattr(app.state, name, getattr(app.state.default_workspace, name))
+    else:
+        app.state.workspace_registry = WorkspaceRegistry(
+            settings,
+            app,
+            app.state.agent_scopes,
+            ports_factory=ports_factory or real_ports,
+        )
+
     if (settings.frontend_dir / "index.html").is_file():
         _serve_frontend(app, settings.frontend_dir)
     return app
 
 
 def _serve_frontend(app: FastAPI, dist: Path) -> None:
-    """Serve the built frontend: its files as they are, and index.html for every other path, so that
-    the client-side routes (such as /jobs/<id>) survive a reload. Unknown /api, /media and /mcp paths stay 404."""
+    """Serve built assets and client-side routes; unknown API, media and MCP paths stay 404."""
     dist = dist.resolve()
 
     @app.get("/{path:path}", include_in_schema=False)

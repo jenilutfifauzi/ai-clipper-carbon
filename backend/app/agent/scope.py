@@ -32,6 +32,7 @@ ALLOWED_TOOLS = (
 class AgentScope(BaseModel):
     """The Candidate an Agent Session works on, and its Agent Turn running now (None between turns)."""
 
+    user_id: str
     job_id: str
     candidate_id: str
     session_id: str

@@ -1,4 +1,5 @@
-import { Scissors } from "lucide-react";
+import { Scissors, Settings2 } from "lucide-react";
+import { UserButton } from "@clerk/react";
 import { Suspense } from "react";
 import { Link, Outlet, useMatch } from "react-router";
 import { ThemeToggle } from "./components/ThemeToggle";
@@ -25,7 +26,18 @@ export function App() {
           </span>
           AI Clipper
         </Link>
-        <ThemeToggle />
+        <div className="flex items-center gap-1.5">
+          <Link
+            to="/settings"
+            aria-current={useMatch("/settings") ? "page" : undefined}
+            className="inline-flex min-h-10 items-center gap-2 rounded-control px-3 text-sm font-medium text-muted hover:bg-fill hover:text-text"
+          >
+            <Settings2 aria-hidden size={17} />
+            Pengaturan
+          </Link>
+          <ThemeToggle />
+          <UserButton />
+        </div>
       </header>
       <main className={cx("mx-auto px-4 py-5 sm:px-6 sm:py-8", width)}>
         {/* Only the Job page loads lazily. */}

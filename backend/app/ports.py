@@ -7,7 +7,7 @@ import httpx
 
 from app.config import Settings
 from app.kokoro import KokoroModel
-from app.llm import GeminiLlm, Llm, OpenAiLlm
+from app.llm import Llm, SelectableLlm
 from app.matte import Matter, RvmMatter
 from app.model_download import MODELS_DIR
 from app.person_model import PersonModel
@@ -37,7 +37,7 @@ def real_ports(settings: Settings) -> Ports:
     return Ports(
         video_source=YtDlpVideoSource(settings),
         transcriber=WhisperTranscriber(settings),
-        llm=GeminiLlm(settings) if settings.llm_provider == "gemini" else OpenAiLlm(settings),
+        llm=SelectableLlm(settings),
         voices=voice_engines(settings),
         kokoro=KokoroModel(settings.data_dir / MODELS_DIR),
         person_model=PersonModel(settings.data_dir / MODELS_DIR),
