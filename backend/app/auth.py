@@ -19,6 +19,7 @@ DEFAULT_AUTHORIZED_PARTIES = (
     "http://127.0.0.1:5173",
     "http://localhost:8000",
     "http://127.0.0.1:8000",
+    "https://ai-clipper.sistems.web.id",
 )
 _trusted_internal_user: ContextVar[str | None] = ContextVar("trusted_internal_user", default=None)
 
