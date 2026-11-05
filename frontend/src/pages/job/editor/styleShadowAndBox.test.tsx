@@ -90,6 +90,16 @@ describe("box shape in the clip editor's style fields", () => {
     expect(sets).toEqual([["hook", "padding_x", 48]]);
   });
 
+  test("the hook's box border is set in pixels", () => {
+    const sets: [StylePart, string, StyleValue][] = [];
+    const style = controls(sets);
+    style.hook = { ...style.hook, border: 0, border_colour: "#FFFFFF" };
+    const border = slider(HookMoreOptions({ style, open: true, onToggle: () => {} }), "Border");
+    expect([border.value, border.min, border.max]).toEqual([0, 0, 20]);
+    border.onChange(8);
+    expect(sets).toEqual([["hook", "border", 8]]);
+  });
+
   test("the highlight box's padding and corners are shown with a box highlight, its own until set", () => {
     const sets: [StylePart, string, StyleValue][] = [];
     const panel = CaptionStylePanel({ style: controls(sets), fonts: null, more: true, onMore: () => {} });

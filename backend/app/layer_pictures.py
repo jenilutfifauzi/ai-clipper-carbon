@@ -58,7 +58,7 @@ import cv2
 import numpy as np
 
 from app.ass import (
-    ass_alpha, ass_filter, ass_text, reversed_drawing, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked,
+    ass_alpha, ass_filter, ass_text, moved_drawing, reversed_drawing, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked,
 )
 from app.candidates import Candidate, ShapeKind, ShapeStyle
 from app.emoji import image_pixels
@@ -203,7 +203,7 @@ def text_script(layout: TextLayout) -> str:
     if layout.plates:
         plate = style.plate
         # One drawing, so that Strips that overlap are drawn once.
-        drawing = " ".join(_moved(rounded_box(box.width, box.height, layout.radius), box.x, box.y) for box in layout.plates)
+        drawing = " ".join(moved_drawing(rounded_box(box.width, box.height, layout.radius), box.x, box.y) for box in layout.plates)
         events.append(f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\c{tag_colour(plate.colour)}\\alpha{ass_alpha(plate.opacity)}}}{drawing}{{\\p0}}")
     placed = []
     for runs, (_, baseline) in zip(layout.runs, layout.anchors):
@@ -255,9 +255,9 @@ def shape_script(layout: ShapeLayout) -> str:
     events = []
     if style.shadow.on:
         dx, dy = style.shadow.offset
-        events.append(f"{{\\an7\\pos(0,0)\\p1{shadow_tags(style.shadow, 0)}}}{_moved(shadowed, left + dx, top + dy)}{{\\p0}}")
+        events.append(f"{{\\an7\\pos(0,0)\\p1{shadow_tags(style.shadow, 0)}}}{moved_drawing(shadowed, left + dx, top + dy)}{{\\p0}}")
     for drawing, colour in drawn:
-        events.append(f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\c{tag_colour(colour)}}}{_moved(drawing, left, top)}{{\\p0}}")
+        events.append(f"{{\\an7\\pos(0,0)\\p1\\bord0\\shad0\\c{tag_colour(colour)}}}{moved_drawing(drawing, left, top)}{{\\p0}}")
     return _script(layout, "Shape,Arial,20,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1", events)
 
 
@@ -312,7 +312,7 @@ def figure_drawing(style: ShapeStyle, inset: float = 0.0) -> str:
                 return ""
             # Inset, a rounded corner keeps its centre: its radius is less by the inset.
             radius = max(style.radius * min(width, height) - inset, 0)
-            return _moved(rounded_box(width - 2 * inset, height - 2 * inset, radius), inset, inset)
+            return moved_drawing(rounded_box(width - 2 * inset, height - 2 * inset, radius), inset, inset)
         case ShapeKind.ELLIPSE:
             return _ellipse(width / 2, height / 2, inset)
         case ShapeKind.TRIANGLE:
@@ -407,18 +407,6 @@ def _ellipse(across: float, down: float, inset: float) -> str:
         nearest = np.sqrt(((curve[:, None, :] - edges[None, :, :]) ** 2).sum(axis=2)).min(axis=1)
         curve = curve[nearest >= inset - 0.01]
     return _polygon([(x + across, y + down) for x, y in curve.tolist()])
-
-
-def _moved(drawing: str, x: float, y: float) -> str:
-    """An ASS drawing's points moved `x` right and `y` down."""
-    words, moved, axis = drawing.split(), [], 0
-    for word in words:
-        if word.isalpha():
-            moved.append(word)
-            continue
-        moved.append(f"{float(word) + (x, y)[axis]:g}")
-        axis = 1 - axis
-    return " ".join(moved)
 
 
 def pictures_used(candidates: Iterable[Candidate]) -> set[str]:

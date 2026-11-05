@@ -168,6 +168,7 @@ from app.styles import (
     HookPosition,
     HookShape,
     HookStyle,
+    QuotePlace,
     WatermarkKind,
     WatermarkPosition,
     WatermarkStyle,
@@ -221,8 +222,11 @@ KICKER_GAP = 0.25
 # The Quote Mark's badge is a square this many hook sizes wide over the top-left corner of the first
 # line's box, reaching into it by QUOTE_INSET of the box's padding (so never over the text); with no
 # box, just above and left of the first line's text.
+# Centred on the box's top edge (QuotePlace.TOP), the box's padding above the first line is at
+# least half the badge and QUOTE_CLEARANCE hook sizes, so that it is clear of the text.
 QUOTE_SCALE = 0.9
 QUOTE_INSET = 0.75
+QUOTE_CLEARANCE = 0.2
 # A Text Layer is at most as wide as the frame less this many pixels either side.
 TEXT_MARGIN = 48
 # A Text Layer's picture holds its box and this many of its sizes round it, plus its stroke: room
@@ -2315,7 +2319,7 @@ def fit_hook(text: str, style: HookStyle = HookStyle(), *, canvas: Canvas) -> tu
     metrics = font_metrics(style.font)
     tracking = style.tracking
     own = style.padding_x is not None and style.shape != HookShape.NONE
-    room, padding = (kicker_widest(canvas), 2 * style.padding_x) if own else (hook_width(canvas), 0.0)
+    room, padding = (kicker_widest(canvas), 2 * (style.padding_x + hook_border(style))) if own else (hook_width(canvas), 0.0)
 
     def widest(lines: list[str]) -> float:
         return max(metrics.width(line, style.size, tracking) for line in lines)
@@ -2328,20 +2332,26 @@ def fit_hook(text: str, style: HookStyle = HookStyle(), *, canvas: Canvas) -> tu
     return lines, max(math.floor(size * 10) / 10, MIN_SIZE)
 
 
+def hook_border(style: HookStyle) -> int:
+    """How wide the hook's box's border is drawn, in output pixels: the style's, or 0 with no box."""
+    return style.border if style.shape != HookShape.NONE and style.box_opacity > 0 else 0
+
+
 def _hook_padding(style: HookStyle, size: float) -> tuple[float, float]:
     """The hook's box padding across and down, in output pixels, set at `size`: the style's (given at
     its size), or its Shape's own: HOOK_PAD_X and HOOK_PAD_Y round a block (and round lines with no
-    box, which the style's don't change), STRIP_PAD_X and STRIP_PAD_Y of the size round a strip."""
+    box, which the style's don't change), STRIP_PAD_X and STRIP_PAD_Y of the size round a strip;
+    either way with its border (hook_border) more."""
     if style.shape == HookShape.STRIPS:
         own = STRIP_PAD_X * size, STRIP_PAD_Y * size
     else:
         own = HOOK_PAD_X, HOOK_PAD_Y
     if style.shape == HookShape.NONE:
         return own
-    scale = size / style.size
+    scale, border = size / style.size, hook_border(style)
     return (
-        own[0] if style.padding_x is None else style.padding_x * scale,
-        own[1] if style.padding_y is None else style.padding_y * scale,
+        (own[0] if style.padding_x is None else style.padding_x * scale) + border,
+        (own[1] if style.padding_y is None else style.padding_y * scale) + border,
     )
 
 
@@ -2437,8 +2447,9 @@ def _hook(
 
     The `kicker`, if any, goes above them in a pill (`_kicker_pill`), centred over them or starting where
     they do, KICKER_GAP of the hook's size away. A Quote Mark (QUOTE_SCALE) is on the first line's
-    corner: the lines move down by what of it sticks out above them, but not sideways, so they stay
-    centred."""
+    corner, or centred on its box's top edge (its padding there then QUOTE_CLEARANCE clear of the
+    badge) or above its text: the lines move down by what of it sticks out above them, but not
+    sideways, so they stay centred."""
     lines, size = fit_hook(text, style, canvas=canvas)
     start = round(max(start, 0.0), 3)
     if not lines or start >= duration:
@@ -2452,6 +2463,10 @@ def _hook(
     widths = [metrics.width(line, size, style.tracking) for line in lines]
     left = style.align == HookAlign.LEFT
     pad_x, pad_y = _hook_padding(style, size)
+    badge = round(QUOTE_SCALE * size) if style.quote else 0
+    on_top = badge and style.quote_place == QuotePlace.TOP
+    if on_top and style.shape != HookShape.NONE:
+        pad_y = max(pad_y, badge / 2 + QUOTE_CLEARANCE * size)
     # Boxes from the hook's top-left corner, and anchors from where it is.
     if style.shape == HookShape.STRIPS:
         strip_height = math.ceil(metrics.letters_height(size) + 2 * pad_y)
@@ -2493,12 +2508,12 @@ def _hook(
             full_width = max(width, pill.width)
             pill_x, lines_x = (full_width - pill.width) // 2, (full_width - width) // 2
         width = full_width
-    badge = round(QUOTE_SCALE * size) if style.quote else 0
     # How far it reaches into the first line's box: into its padding.
     box_pad_x, box_pad_y = (0, 0) if style.shape == HookShape.NONE else (pad_x, pad_y)
     inset_x, inset_y = math.floor(QUOTE_INSET * box_pad_x), math.floor(QUOTE_INSET * box_pad_y)
     if badge:
-        lines_y += badge - inset_y
+        # Up to its middle above the box's top, or as in its corner.
+        lines_y += badge // 2 if on_top and boxes else badge - inset_y
     height = lines_y + lines_height
     safe = canvas.safe_area
     bottom = safe.y + safe.height - height
@@ -2518,12 +2533,20 @@ def _hook(
     placed_boxes = [Box(area.x + lines_x + box.x, area.y + lines_y + box.y, box.width, box.height) for box in boxes]
     quote = None
     if badge:
-        if placed_boxes:
-            corner_x, corner_y = placed_boxes[0].x, placed_boxes[0].y
-        else:
+        if on_top and placed_boxes:
+            first_box = placed_boxes[0]
+            quote = Box(first_box.x + (first_box.width - badge) // 2, first_box.y - badge // 2, badge, badge)
+        elif on_top:
             x, baseline = placed_anchors[0]
-            corner_x, corner_y = x - widths[0] / 2, baseline - metrics.cap_height / metrics.units * size
-        quote = Box(math.floor(corner_x) + inset_x - badge, math.floor(corner_y) + inset_y - badge, badge, badge)
+            caps = baseline - metrics.cap_height / metrics.units * size
+            quote = Box(math.floor(x - badge / 2), math.floor(caps) - badge, badge, badge)
+        else:
+            if placed_boxes:
+                corner_x, corner_y = placed_boxes[0].x, placed_boxes[0].y
+            else:
+                x, baseline = placed_anchors[0]
+                corner_x, corner_y = x - widths[0] / 2, baseline - metrics.cap_height / metrics.units * size
+            quote = Box(math.floor(corner_x) + inset_x - badge, math.floor(corner_y) + inset_y - badge, badge, badge)
         left_edge, right_edge = min(area.x, quote.x), max(area.x + area.width, quote.x + quote.width)
         area = Box(left_edge, area.y, right_edge - left_edge, area.height)
     # With its middle at the style's x, or as near as keeps it in the frame.

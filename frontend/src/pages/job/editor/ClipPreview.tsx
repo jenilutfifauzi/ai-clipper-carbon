@@ -53,7 +53,7 @@ import { maskAlpha, segmentShows } from "./behindStage";
 import { behindId, stagePictures } from "./stagePictures";
 import { picturesAt } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem } from "./StageEdit";
-import { drawnShadow, highlightShape } from "./styleShape";
+import { drawnShadow, highlightShape, hookBorder } from "./styleShape";
 import { trackedWidth, trackedX, wordSpan } from "./tracking";
 import { cueLineMiddle, cueStageId, cueWordAt, cueWords } from "./cues";
 import type { GripSet } from "./stagePicture";
@@ -1252,27 +1252,44 @@ function Hook({
   };
   const outline = style.outline > 0 ? { stroke: style.outline_colour, strokeWidth: 2 * style.outline } : {};
   const strips = hook.boxes.length > 1;
+  const border = hookBorder(style);
   const kicker = hook.kicker;
   const quote = hook.quote;
   return (
     <g transform={moving}>
       {style.box_opacity > 0 &&
-        hook.boxes.map((box, i) =>
-          moved(
-            strips ? first + i : first,
-            <rect
-              x={box.x}
-              y={box.y}
-              width={box.width}
-              height={box.height}
-              rx={Math.min(style.radius, Math.floor(box.height / 2))}
-              fill={style.box_colour}
-              fillOpacity={style.box_opacity}
-              style={grown(strips ? first + i : first)}
-            />,
+        hook.boxes.map((box, i) => {
+          const rank = strips ? first + i : first;
+          const radius = Math.min(style.radius, Math.floor(box.height / 2));
+          // Filled inside its border, and the border a ring round that, as the renderer draws them.
+          return moved(
+            rank,
+            <g style={grown(rank)}>
+              <rect
+                x={box.x + border}
+                y={box.y + border}
+                width={box.width - 2 * border}
+                height={box.height - 2 * border}
+                rx={Math.max(radius - border, 0)}
+                fill={style.box_colour}
+                fillOpacity={style.box_opacity}
+              />
+              {border > 0 && (
+                <rect
+                  x={box.x + border / 2}
+                  y={box.y + border / 2}
+                  width={box.width - border}
+                  height={box.height - border}
+                  rx={Math.max(radius - border / 2, 0)}
+                  fill="none"
+                  stroke={style.border_colour}
+                  strokeWidth={border}
+                />
+              )}
+            </g>,
             i,
-          ),
-        )}
+          );
+        })}
       {kicker &&
         moved(
           0,

@@ -16,7 +16,15 @@ const HIGHLIGHT_PAD_X = 0.12;
 const HIGHLIGHT_PAD_Y = 0.08;
 const HIGHLIGHT_RADIUS = 0.12;
 
-/** The hook's box padding across and down at its style's size: the style's, or its Shape's own. */
+/** How wide the hook's box's border is drawn: the style's, or 0 with no box (planner.py's hook_border). */
+export function hookBorder(style: Pick<HookStyle, "shape" | "box_opacity" | "border">): number {
+  return style.shape !== "none" && style.box_opacity > 0 ? style.border : 0;
+}
+
+/**
+ * The hook's padding across and down inside its border at its style's size: the style's, or its
+ * Shape's own. The planner pads the box by its border (hookBorder) more.
+ */
 export function hookPadding(style: Pick<HookStyle, "shape" | "size" | "padding_x" | "padding_y">): [number, number] {
   const strips = style.shape === "strips";
   const own: [number, number] = strips ? [STRIP_PAD_X * style.size, STRIP_PAD_Y * style.size] : [HOOK_PAD_X, HOOK_PAD_Y];

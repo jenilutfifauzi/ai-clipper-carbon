@@ -381,6 +381,26 @@ def test_a_quote_mark_is_a_badge_of_its_colour_with_white_quote_marks_over_the_b
     assert "Dialogue: 3," not in _ass(plan()) and "Dialogue: 4," not in _ass(plan())
 
 
+# A border round the hook's box (hook-cards).
+
+
+def test_a_border_is_a_ring_of_its_colour_round_the_box_filled_inside_it():
+    for animation, corner in (("fade", True), ("pop", False)):
+        style = HookStyle(border=8, border_colour="#E11D2E", box_colour="#FFFFFF", box_opacity=1.0, animation_in=animation)
+        planned = plan_render(0, 5, SOURCE, hook=HOOK, hook_style=style, canvas=PORTRAIT)
+        box = planned.hook.boxes[0]
+        boxes = [line for line in _ass(planned).splitlines() if line.startswith("Dialogue: 1,0:00:00.00") and ",Hook," in line]
+        [fill] = [line for line in boxes if "\\c&HFFFFFF&" in line]
+        [ring] = [line for line in boxes if "\\c&H2E1DE1&" in line]
+        # Both placed by the box's corner (the fill's drawing moved in by the border), or its centre.
+        place = f"\\an7\\pos({box.x},{box.y})" if corner else f"\\an5\\pos({box.x + box.width / 2:g},{box.y + box.height / 2:g})"
+        assert place in fill and place in ring
+        # Two figures, the inner one a hole.
+        assert ring.split("}")[1].count("m ") == 2 and fill.split("}")[1].count("m ") == 1
+        assert ("m 24 8 " in fill) == corner
+    assert "\\c&H2E1DE1&" not in _ass(plan_render(0, 5, SOURCE, hook=HOOK, canvas=PORTRAIT))
+
+
 # Staggered entrance (hook-styles ticket 05).
 
 

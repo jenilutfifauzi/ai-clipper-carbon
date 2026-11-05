@@ -4,7 +4,7 @@
 import { describe, expect, test } from "vitest";
 import type { DropShadow } from "../../../api";
 import { NO_SHADOW } from "./shadow";
-import { highlightShape, hookPadding, drawnShadow } from "./styleShape";
+import { highlightShape, hookBorder, hookPadding, drawnShadow } from "./styleShape";
 import { overridden, sameValue } from "./useStyleDraft";
 
 describe("the hook's and captions' box shape", () => {
@@ -16,6 +16,14 @@ describe("the hook's and captions' box shape", () => {
     expect(hookPadding({ ...style, padding_x: 60, padding_y: 10 })).toEqual([60, 10]);
     // Lines with no box keep a block's own.
     expect(hookPadding({ ...style, shape: "none", padding_x: 60, padding_y: 10 })).toEqual([36, 26]);
+  });
+
+  test("the hook's box has its style's border, none with no box", () => {
+    const style = { shape: "block", box_opacity: 1, border: 8 } as const;
+    expect(hookBorder(style)).toBe(8);
+    expect(hookBorder({ ...style, shape: "strips" })).toBe(8);
+    expect(hookBorder({ ...style, shape: "none" })).toBe(0);
+    expect(hookBorder({ ...style, box_opacity: 0 })).toBe(0);
   });
 
   test("the highlight box is padded and rounded as its style says at its size, or in proportion to the line", () => {

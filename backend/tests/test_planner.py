@@ -1152,6 +1152,43 @@ def test_a_quote_mark_stays_clear_of_the_kicker_and_inside_the_safe_area():
     assert wide.quote.x >= 0 and wide.boxes[0].x + wide.boxes[0].width <= PORTRAIT.safe_area.x + PORTRAIT.safe_area.width
 
 
+# Borders and a Quote Mark on top (hook-cards).
+
+
+def test_a_border_pads_the_box_by_its_width_and_no_box_has_none():
+    for shape in ("block", "strips"):
+        plain = hooked(HOOK, hook_style=HookStyle(shape=shape))
+        bordered = hooked(HOOK, hook_style=HookStyle(shape=shape, border=8))
+        assert bordered.lines == plain.lines
+        for before, after in zip(plain.boxes, bordered.boxes):
+            assert after.width - before.width in (16, 17) and after.height - before.height in (16, 17)
+        assert bordered.anchors[0][1] - bordered.boxes[0].y == pytest.approx(plain.anchors[0][1] - plain.boxes[0].y + 8, abs=1)
+    for style in ({"shape": "none"}, {"box_opacity": 0}):
+        assert hooked(HOOK, hook_style=HookStyle(border=8, **style)) == hooked(HOOK, hook_style=HookStyle(**style))
+
+
+def test_a_quote_mark_on_top_is_centred_on_the_first_boxs_top_edge_clear_of_the_text():
+    for shape in ("block", "strips"):
+        for align in ("center", "left"):
+            hook = hooked(HOOK, hook_style=HookStyle(shape=shape, align=align, quote=True, quote_place="top"))
+            badge, first = hook.quote, hook.boxes[0]
+            assert badge.width == round(0.9 * HOOK_SIZE)
+            assert abs(badge.x + badge.width / 2 - (first.x + first.width / 2)) <= 1
+            assert badge.y + badge.height // 2 == first.y and hook.area.y == badge.y == PORTRAIT.safe_area.y
+            # Its lower half in the box, clear of the first line's capitals.
+            cap = font_metrics().cap_height / font_metrics().units * hook.size
+            assert badge.y + badge.height + 0.2 * HOOK_SIZE <= hook.anchors[0][1] - cap + 1
+            # The lines across as they were.
+            plain = hooked(HOOK, hook_style=HookStyle(shape=shape, align=align))
+            assert [x for x, _ in hook.anchors] == [x for x, _ in plain.anchors]
+    # No box: centred above the first line's capitals.
+    bare = hooked(HOOK, hook_style=HookStyle(shape="none", quote=True, quote_place="top"))
+    x, baseline = bare.anchors[0]
+    cap = font_metrics().cap_height / font_metrics().units * bare.size
+    assert abs(bare.quote.x + bare.quote.width / 2 - x) <= 1 and bare.quote.y + bare.quote.height <= baseline - cap + 1
+    assert contains(bare.area, bare.quote)
+
+
 # Fixes from the hook-styles review.
 
 

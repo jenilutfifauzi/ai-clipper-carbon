@@ -6236,5 +6236,2282 @@
    "quote": null
   },
   "ass": "cf2c2b3df121b20fc65a30d4e6c3a05bb012991ac05283d1a134ee3c7eaa9c03"
+ },
+ "framed-blue/short": {
+  "captions": [
+   {
+    "text": "HALO SEMUA APA",
+    "start": 0.0,
+    "end": 1.2,
+    "words": [
+     {
+      "text": "HALO",
+      "start": 0.0,
+      "end": 0.4
+     },
+     {
+      "text": "SEMUA",
+      "start": 0.4,
+      "end": 0.8
+     },
+     {
+      "text": "APA",
+      "start": 0.8,
+      "end": 1.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "KABAR HARI INI?",
+    "start": 1.2,
+    "end": 2.4,
+    "words": [
+     {
+      "text": "KABAR",
+      "start": 1.2,
+      "end": 1.6
+     },
+     {
+      "text": "HARI",
+      "start": 1.6,
+      "end": 2.0
+     },
+     {
+      "text": "INI?",
+      "start": 2.0,
+      "end": 2.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TERIMA KASIH",
+    "start": 2.4,
+    "end": 3.2,
+    "words": [
+     {
+      "text": "TERIMA",
+      "start": 2.4,
+      "end": 2.8
+     },
+     {
+      "text": "KASIH",
+      "start": 2.8,
+      "end": 3.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "BANYAK YA",
+    "start": 3.2,
+    "end": 4.0,
+    "words": [
+     {
+      "text": "BANYAK",
+      "start": 3.2,
+      "end": 3.6
+     },
+     {
+      "text": "YA",
+      "start": 3.6,
+      "end": 4.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+    "start": 4.0,
+    "end": 4.4,
+    "words": [
+     {
+      "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+      "start": 4.0,
+      "end": 4.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 55.9
+   },
+   {
+    "text": "TEMAN SEMUANYA",
+    "start": 4.4,
+    "end": 5.2,
+    "words": [
+     {
+      "text": "TEMAN",
+      "start": 4.4,
+      "end": 4.8
+     },
+     {
+      "text": "SEMUANYA",
+      "start": 4.8,
+      "end": 5.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "LUAR BIASA",
+    "start": 5.2,
+    "end": 6.0,
+    "words": [
+     {
+      "text": "LUAR",
+      "start": 5.2,
+      "end": 5.6
+     },
+     {
+      "text": "BIASA",
+      "start": 5.6,
+      "end": 6.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "SEKALI",
+    "start": 6.0,
+    "end": 6.65,
+    "words": [
+     {
+      "text": "SEKALI",
+      "start": 6.0,
+      "end": 6.65
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   }
+  ],
+  "hook": {
+   "lines": [
+    "Kenapa gagal?"
+   ],
+   "start": 0.0,
+   "end": 3.0,
+   "area": {
+    "x": 310,
+    "y": 1417,
+    "width": 460,
+    "height": 119
+   },
+   "size": 84.0,
+   "anchors": [
+    [
+     540.0,
+     1484.6095346197503
+    ]
+   ],
+   "boxes": [
+    {
+     "x": 310,
+     "y": 1417,
+     "width": 460,
+     "height": 119
+    }
+   ],
+   "emphasis": [
+    [
+     [
+      7,
+      12
+     ]
+    ]
+   ],
+   "kicker": null,
+   "quote": null
+  },
+  "ass": "a23b259c1900c7eb88b6a8030c5a7dd1f79c1a759b0f98ec69b1819ad4b56c8e"
+ },
+ "framed-blue/kicked": {
+  "captions": [
+   {
+    "text": "HALO SEMUA APA",
+    "start": 0.0,
+    "end": 1.2,
+    "words": [
+     {
+      "text": "HALO",
+      "start": 0.0,
+      "end": 0.4
+     },
+     {
+      "text": "SEMUA",
+      "start": 0.4,
+      "end": 0.8
+     },
+     {
+      "text": "APA",
+      "start": 0.8,
+      "end": 1.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "KABAR HARI INI?",
+    "start": 1.2,
+    "end": 2.4,
+    "words": [
+     {
+      "text": "KABAR",
+      "start": 1.2,
+      "end": 1.6
+     },
+     {
+      "text": "HARI",
+      "start": 1.6,
+      "end": 2.0
+     },
+     {
+      "text": "INI?",
+      "start": 2.0,
+      "end": 2.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TERIMA KASIH",
+    "start": 2.4,
+    "end": 3.2,
+    "words": [
+     {
+      "text": "TERIMA",
+      "start": 2.4,
+      "end": 2.8
+     },
+     {
+      "text": "KASIH",
+      "start": 2.8,
+      "end": 3.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "BANYAK YA",
+    "start": 3.2,
+    "end": 4.0,
+    "words": [
+     {
+      "text": "BANYAK",
+      "start": 3.2,
+      "end": 3.6
+     },
+     {
+      "text": "YA",
+      "start": 3.6,
+      "end": 4.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+    "start": 4.0,
+    "end": 4.4,
+    "words": [
+     {
+      "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+      "start": 4.0,
+      "end": 4.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 55.9
+   },
+   {
+    "text": "TEMAN SEMUANYA",
+    "start": 4.4,
+    "end": 5.2,
+    "words": [
+     {
+      "text": "TEMAN",
+      "start": 4.4,
+      "end": 4.8
+     },
+     {
+      "text": "SEMUANYA",
+      "start": 4.8,
+      "end": 5.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "LUAR BIASA",
+    "start": 5.2,
+    "end": 6.0,
+    "words": [
+     {
+      "text": "LUAR",
+      "start": 5.2,
+      "end": 5.6
+     },
+     {
+      "text": "BIASA",
+      "start": 5.6,
+      "end": 6.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "SEKALI",
+    "start": 6.0,
+    "end": 6.65,
+    "words": [
+     {
+      "text": "SEKALI",
+      "start": 6.0,
+      "end": 6.65
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   }
+  ],
+  "hook": {
+   "lines": [
+    "Setetes racun bisa",
+    "bunuh perusahaan",
+    "kamu sekarang juga?"
+   ],
+   "start": 0.0,
+   "end": 3.0,
+   "area": {
+    "x": 227,
+    "y": 1180,
+    "width": 625,
+    "height": 356
+   },
+   "size": 84.0,
+   "anchors": [
+    [
+     539.5,
+     1346.6095346197503
+    ],
+    [
+     539.5,
+     1415.4895346197502
+    ],
+    [
+     539.5,
+     1484.3695346197503
+    ]
+   ],
+   "boxes": [
+    {
+     "x": 227,
+     "y": 1279,
+     "width": 625,
+     "height": 257
+    }
+   ],
+   "emphasis": [
+    [],
+    [
+     [
+      0,
+      16
+     ]
+    ],
+    []
+   ],
+   "kicker": {
+    "text": "TERBONGKAR!",
+    "size": 67.2,
+    "box": {
+     "x": 368,
+     "y": 1180,
+     "width": 343,
+     "height": 78
+    },
+    "anchor": [
+     539.5,
+     1225.7036276958002
+    ]
+   },
+   "quote": null
+  },
+  "ass": "ce2fbb9d05ecff6b166f53b2b0f98080da5dcd8aa44c98e2d6cb6b393b23bc0d"
+ },
+ "framed-blue/long": {
+  "captions": [
+   {
+    "text": "HALO SEMUA APA",
+    "start": 0.0,
+    "end": 1.2,
+    "words": [
+     {
+      "text": "HALO",
+      "start": 0.0,
+      "end": 0.4
+     },
+     {
+      "text": "SEMUA",
+      "start": 0.4,
+      "end": 0.8
+     },
+     {
+      "text": "APA",
+      "start": 0.8,
+      "end": 1.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "KABAR HARI INI?",
+    "start": 1.2,
+    "end": 2.4,
+    "words": [
+     {
+      "text": "KABAR",
+      "start": 1.2,
+      "end": 1.6
+     },
+     {
+      "text": "HARI",
+      "start": 1.6,
+      "end": 2.0
+     },
+     {
+      "text": "INI?",
+      "start": 2.0,
+      "end": 2.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TERIMA KASIH",
+    "start": 2.4,
+    "end": 3.2,
+    "words": [
+     {
+      "text": "TERIMA",
+      "start": 2.4,
+      "end": 2.8
+     },
+     {
+      "text": "KASIH",
+      "start": 2.8,
+      "end": 3.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "BANYAK YA",
+    "start": 3.2,
+    "end": 4.0,
+    "words": [
+     {
+      "text": "BANYAK",
+      "start": 3.2,
+      "end": 3.6
+     },
+     {
+      "text": "YA",
+      "start": 3.6,
+      "end": 4.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+    "start": 4.0,
+    "end": 4.4,
+    "words": [
+     {
+      "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+      "start": 4.0,
+      "end": 4.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 55.9
+   },
+   {
+    "text": "TEMAN SEMUANYA",
+    "start": 4.4,
+    "end": 5.2,
+    "words": [
+     {
+      "text": "TEMAN",
+      "start": 4.4,
+      "end": 4.8
+     },
+     {
+      "text": "SEMUANYA",
+      "start": 4.8,
+      "end": 5.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "LUAR BIASA",
+    "start": 5.2,
+    "end": 6.0,
+    "words": [
+     {
+      "text": "LUAR",
+      "start": 5.2,
+      "end": 5.6
+     },
+     {
+      "text": "BIASA",
+      "start": 5.6,
+      "end": 6.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "SEKALI",
+    "start": 6.0,
+    "end": 6.65,
+    "words": [
+     {
+      "text": "SEKALI",
+      "start": 6.0,
+      "end": 6.65
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   }
+  ],
+  "hook": {
+   "lines": [
+    "Ini adalah hook yang sangat panjang sekali",
+    "sehingga harus dipecah menjadi beberapa",
+    "baris dan mungkin diperkecil ukurannya"
+   ],
+   "start": 0.0,
+   "end": 3.0,
+   "area": {
+    "x": 122,
+    "y": 1267,
+    "width": 836,
+    "height": 269
+   },
+   "size": 58.4,
+   "anchors": [
+    [
+     540.0,
+     1394.366628830874
+    ],
+    [
+     540.0,
+     1442.254628830874
+    ],
+    [
+     540.0,
+     1490.142628830874
+    ]
+   ],
+   "boxes": [
+    {
+     "x": 122,
+     "y": 1337,
+     "width": 836,
+     "height": 199
+    }
+   ],
+   "emphasis": [
+    [],
+    [],
+    []
+   ],
+   "kicker": {
+    "text": "Wow",
+    "size": 46.72,
+    "box": {
+     "x": 482,
+     "y": 1267,
+     "width": 115,
+     "height": 55
+    },
+    "anchor": [
+     539.5,
+     1298.7749030646992
+    ]
+   },
+   "quote": null
+  },
+  "ass": "f7f3f92039e2e8e015f4053b74669a70068779e28b59defedb740b8b1b7addba"
+ },
+ "red-quote-card/short": {
+  "captions": [
+   {
+    "text": "HALO SEMUA APA",
+    "start": 0.0,
+    "end": 1.2,
+    "words": [
+     {
+      "text": "HALO",
+      "start": 0.0,
+      "end": 0.4
+     },
+     {
+      "text": "SEMUA",
+      "start": 0.4,
+      "end": 0.8
+     },
+     {
+      "text": "APA",
+      "start": 0.8,
+      "end": 1.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "KABAR HARI INI?",
+    "start": 1.2,
+    "end": 2.4,
+    "words": [
+     {
+      "text": "KABAR",
+      "start": 1.2,
+      "end": 1.6
+     },
+     {
+      "text": "HARI",
+      "start": 1.6,
+      "end": 2.0
+     },
+     {
+      "text": "INI?",
+      "start": 2.0,
+      "end": 2.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TERIMA KASIH",
+    "start": 2.4,
+    "end": 3.2,
+    "words": [
+     {
+      "text": "TERIMA",
+      "start": 2.4,
+      "end": 2.8
+     },
+     {
+      "text": "KASIH",
+      "start": 2.8,
+      "end": 3.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "BANYAK YA",
+    "start": 3.2,
+    "end": 4.0,
+    "words": [
+     {
+      "text": "BANYAK",
+      "start": 3.2,
+      "end": 3.6
+     },
+     {
+      "text": "YA",
+      "start": 3.6,
+      "end": 4.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+    "start": 4.0,
+    "end": 4.4,
+    "words": [
+     {
+      "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+      "start": 4.0,
+      "end": 4.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 55.9
+   },
+   {
+    "text": "TEMAN SEMUANYA",
+    "start": 4.4,
+    "end": 5.2,
+    "words": [
+     {
+      "text": "TEMAN",
+      "start": 4.4,
+      "end": 4.8
+     },
+     {
+      "text": "SEMUANYA",
+      "start": 4.8,
+      "end": 5.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "LUAR BIASA",
+    "start": 5.2,
+    "end": 6.0,
+    "words": [
+     {
+      "text": "LUAR",
+      "start": 5.2,
+      "end": 5.6
+     },
+     {
+      "text": "BIASA",
+      "start": 5.6,
+      "end": 6.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "SEKALI",
+    "start": 6.0,
+    "end": 6.65,
+    "words": [
+     {
+      "text": "SEKALI",
+      "start": 6.0,
+      "end": 6.65
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   }
+  ],
+  "hook": {
+   "lines": [
+    "KENAPA GAGAL?"
+   ],
+   "start": 0.0,
+   "end": 3.0,
+   "area": {
+    "x": 273,
+    "y": 870,
+    "width": 534,
+    "height": 179
+   },
+   "size": 76.0,
+   "anchors": [
+    [
+     540.0,
+     987.2588988476313
+    ]
+   ],
+   "boxes": [
+    {
+     "x": 273,
+     "y": 904,
+     "width": 534,
+     "height": 145
+    }
+   ],
+   "emphasis": [
+    [
+     [
+      7,
+      12
+     ]
+    ]
+   ],
+   "kicker": null,
+   "quote": {
+    "x": 506,
+    "y": 870,
+    "width": 68,
+    "height": 68
+   }
+  },
+  "ass": "05b2d6a9eed726dbe8c004ee1a09294580fd1ea7db51ac454789dcec36a2e6cc"
+ },
+ "red-quote-card/kicked": {
+  "captions": [
+   {
+    "text": "HALO SEMUA APA",
+    "start": 0.0,
+    "end": 1.2,
+    "words": [
+     {
+      "text": "HALO",
+      "start": 0.0,
+      "end": 0.4
+     },
+     {
+      "text": "SEMUA",
+      "start": 0.4,
+      "end": 0.8
+     },
+     {
+      "text": "APA",
+      "start": 0.8,
+      "end": 1.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "KABAR HARI INI?",
+    "start": 1.2,
+    "end": 2.4,
+    "words": [
+     {
+      "text": "KABAR",
+      "start": 1.2,
+      "end": 1.6
+     },
+     {
+      "text": "HARI",
+      "start": 1.6,
+      "end": 2.0
+     },
+     {
+      "text": "INI?",
+      "start": 2.0,
+      "end": 2.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TERIMA KASIH",
+    "start": 2.4,
+    "end": 3.2,
+    "words": [
+     {
+      "text": "TERIMA",
+      "start": 2.4,
+      "end": 2.8
+     },
+     {
+      "text": "KASIH",
+      "start": 2.8,
+      "end": 3.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "BANYAK YA",
+    "start": 3.2,
+    "end": 4.0,
+    "words": [
+     {
+      "text": "BANYAK",
+      "start": 3.2,
+      "end": 3.6
+     },
+     {
+      "text": "YA",
+      "start": 3.6,
+      "end": 4.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+    "start": 4.0,
+    "end": 4.4,
+    "words": [
+     {
+      "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+      "start": 4.0,
+      "end": 4.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 55.9
+   },
+   {
+    "text": "TEMAN SEMUANYA",
+    "start": 4.4,
+    "end": 5.2,
+    "words": [
+     {
+      "text": "TEMAN",
+      "start": 4.4,
+      "end": 4.8
+     },
+     {
+      "text": "SEMUANYA",
+      "start": 4.8,
+      "end": 5.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "LUAR BIASA",
+    "start": 5.2,
+    "end": 6.0,
+    "words": [
+     {
+      "text": "LUAR",
+      "start": 5.2,
+      "end": 5.6
+     },
+     {
+      "text": "BIASA",
+      "start": 5.6,
+      "end": 6.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "SEKALI",
+    "start": 6.0,
+    "end": 6.65,
+    "words": [
+     {
+      "text": "SEKALI",
+      "start": 6.0,
+      "end": 6.65
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   }
+  ],
+  "hook": {
+   "lines": [
+    "SETETES RACUN BISA",
+    "BUNUH PERUSAHAAN",
+    "KAMU SEKARANG JUGA?"
+   ],
+   "start": 0.0,
+   "end": 3.0,
+   "area": {
+    "x": 172,
+    "y": 762,
+    "width": 736,
+    "height": 395
+   },
+   "size": 76.0,
+   "anchors": [
+    [
+     540.0,
+     970.2588988476313
+    ],
+    [
+     540.0,
+     1032.5788988476313
+    ],
+    [
+     540.0,
+     1094.8988988476312
+    ]
+   ],
+   "boxes": [
+    {
+     "x": 172,
+     "y": 887,
+     "width": 736,
+     "height": 270
+    }
+   ],
+   "emphasis": [
+    [],
+    [
+     [
+      0,
+      16
+     ]
+    ],
+    []
+   ],
+   "kicker": {
+    "text": "TERBONGKAR!",
+    "size": 60.800000000000004,
+    "box": {
+     "x": 357,
+     "y": 762,
+     "width": 366,
+     "height": 72
+    },
+    "anchor": [
+     540.0,
+     806.271119078105
+    ]
+   },
+   "quote": {
+    "x": 506,
+    "y": 853,
+    "width": 68,
+    "height": 68
+   }
+  },
+  "ass": "6973cc7429227360bb24bd884ddf7535e0a4f7d89053ac37726902af7a703a66"
+ },
+ "red-quote-card/long": {
+  "captions": [
+   {
+    "text": "HALO SEMUA APA",
+    "start": 0.0,
+    "end": 1.2,
+    "words": [
+     {
+      "text": "HALO",
+      "start": 0.0,
+      "end": 0.4
+     },
+     {
+      "text": "SEMUA",
+      "start": 0.4,
+      "end": 0.8
+     },
+     {
+      "text": "APA",
+      "start": 0.8,
+      "end": 1.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "KABAR HARI INI?",
+    "start": 1.2,
+    "end": 2.4,
+    "words": [
+     {
+      "text": "KABAR",
+      "start": 1.2,
+      "end": 1.6
+     },
+     {
+      "text": "HARI",
+      "start": 1.6,
+      "end": 2.0
+     },
+     {
+      "text": "INI?",
+      "start": 2.0,
+      "end": 2.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TERIMA KASIH",
+    "start": 2.4,
+    "end": 3.2,
+    "words": [
+     {
+      "text": "TERIMA",
+      "start": 2.4,
+      "end": 2.8
+     },
+     {
+      "text": "KASIH",
+      "start": 2.8,
+      "end": 3.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "BANYAK YA",
+    "start": 3.2,
+    "end": 4.0,
+    "words": [
+     {
+      "text": "BANYAK",
+      "start": 3.2,
+      "end": 3.6
+     },
+     {
+      "text": "YA",
+      "start": 3.6,
+      "end": 4.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+    "start": 4.0,
+    "end": 4.4,
+    "words": [
+     {
+      "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+      "start": 4.0,
+      "end": 4.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 55.9
+   },
+   {
+    "text": "TEMAN SEMUANYA",
+    "start": 4.4,
+    "end": 5.2,
+    "words": [
+     {
+      "text": "TEMAN",
+      "start": 4.4,
+      "end": 4.8
+     },
+     {
+      "text": "SEMUANYA",
+      "start": 4.8,
+      "end": 5.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "LUAR BIASA",
+    "start": 5.2,
+    "end": 6.0,
+    "words": [
+     {
+      "text": "LUAR",
+      "start": 5.2,
+      "end": 5.6
+     },
+     {
+      "text": "BIASA",
+      "start": 5.6,
+      "end": 6.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "SEKALI",
+    "start": 6.0,
+    "end": 6.65,
+    "words": [
+     {
+      "text": "SEKALI",
+      "start": 6.0,
+      "end": 6.65
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 1296,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   }
+  ],
+  "hook": {
+   "lines": [
+    "INI ADALAH HOOK YANG SANGAT",
+    "PANJANG SEKALI SEHINGGA HARUS",
+    "DIPECAH MENJADI BEBERAPA BARIS",
+    "DAN MUNGKIN DIPERKECIL UKURANNYA"
+   ],
+   "start": 0.0,
+   "end": 3.0,
+   "area": {
+    "x": 122,
+    "y": 799,
+    "width": 836,
+    "height": 321
+   },
+   "size": 53.4,
+   "anchors": [
+    [
+     540.0,
+     944.6108578745198
+    ],
+    [
+     540.0,
+     988.3988578745198
+    ],
+    [
+     540.0,
+     1032.1868578745198
+    ],
+    [
+     540.0,
+     1075.9748578745198
+    ]
+   ],
+   "boxes": [
+    {
+     "x": 122,
+     "y": 886,
+     "width": 836,
+     "height": 234
+    }
+   ],
+   "emphasis": [
+    [],
+    [],
+    [],
+    []
+   ],
+   "kicker": {
+    "text": "WOW",
+    "size": 42.72,
+    "box": {
+     "x": 474,
+     "y": 799,
+     "width": 131,
+     "height": 50
+    },
+    "anchor": [
+     539.5,
+     830.1062862996158
+    ]
+   },
+   "quote": {
+    "x": 516,
+    "y": 862,
+    "width": 48,
+    "height": 48
+   }
+  },
+  "ass": "bb87c3598be4dc09c81f6c36eabad63739a0b140df9bff300e395f10a9733bd9"
+ },
+ "white-card/short": {
+  "captions": [
+   {
+    "text": "HALO SEMUA APA",
+    "start": 0.0,
+    "end": 1.2,
+    "words": [
+     {
+      "text": "HALO",
+      "start": 0.0,
+      "end": 0.4
+     },
+     {
+      "text": "SEMUA",
+      "start": 0.4,
+      "end": 0.8
+     },
+     {
+      "text": "APA",
+      "start": 0.8,
+      "end": 1.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "KABAR HARI INI?",
+    "start": 1.2,
+    "end": 2.4,
+    "words": [
+     {
+      "text": "KABAR",
+      "start": 1.2,
+      "end": 1.6
+     },
+     {
+      "text": "HARI",
+      "start": 1.6,
+      "end": 2.0
+     },
+     {
+      "text": "INI?",
+      "start": 2.0,
+      "end": 2.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TERIMA KASIH",
+    "start": 2.4,
+    "end": 3.2,
+    "words": [
+     {
+      "text": "TERIMA",
+      "start": 2.4,
+      "end": 2.8
+     },
+     {
+      "text": "KASIH",
+      "start": 2.8,
+      "end": 3.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "BANYAK YA",
+    "start": 3.2,
+    "end": 4.0,
+    "words": [
+     {
+      "text": "BANYAK",
+      "start": 3.2,
+      "end": 3.6
+     },
+     {
+      "text": "YA",
+      "start": 3.6,
+      "end": 4.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+    "start": 4.0,
+    "end": 4.4,
+    "words": [
+     {
+      "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+      "start": 4.0,
+      "end": 4.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 55.9
+   },
+   {
+    "text": "TEMAN SEMUANYA",
+    "start": 4.4,
+    "end": 5.2,
+    "words": [
+     {
+      "text": "TEMAN",
+      "start": 4.4,
+      "end": 4.8
+     },
+     {
+      "text": "SEMUANYA",
+      "start": 4.8,
+      "end": 5.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "LUAR BIASA",
+    "start": 5.2,
+    "end": 6.0,
+    "words": [
+     {
+      "text": "LUAR",
+      "start": 5.2,
+      "end": 5.6
+     },
+     {
+      "text": "BIASA",
+      "start": 5.6,
+      "end": 6.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "SEKALI",
+    "start": 6.0,
+    "end": 6.65,
+    "words": [
+     {
+      "text": "SEKALI",
+      "start": 6.0,
+      "end": 6.65
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   }
+  ],
+  "hook": {
+   "lines": [
+    "KENAPA GAGAL?"
+   ],
+   "start": 0.0,
+   "end": 3.0,
+   "area": {
+    "x": 290,
+    "y": 1050,
+    "width": 500,
+    "height": 96
+   },
+   "size": 72.0,
+   "anchors": [
+    [
+     539.6491677336747,
+     1108.2663252240718
+    ]
+   ],
+   "boxes": [
+    {
+     "x": 290,
+     "y": 1050,
+     "width": 500,
+     "height": 96
+    }
+   ],
+   "emphasis": [
+    [
+     [
+      7,
+      12
+     ]
+    ]
+   ],
+   "kicker": null,
+   "quote": null
+  },
+  "ass": "36d4d75753035216c00bde3cc8f1a302c59e62ed03a3f95626f4c7917d1cd9cc"
+ },
+ "white-card/kicked": {
+  "captions": [
+   {
+    "text": "HALO SEMUA APA",
+    "start": 0.0,
+    "end": 1.2,
+    "words": [
+     {
+      "text": "HALO",
+      "start": 0.0,
+      "end": 0.4
+     },
+     {
+      "text": "SEMUA",
+      "start": 0.4,
+      "end": 0.8
+     },
+     {
+      "text": "APA",
+      "start": 0.8,
+      "end": 1.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "KABAR HARI INI?",
+    "start": 1.2,
+    "end": 2.4,
+    "words": [
+     {
+      "text": "KABAR",
+      "start": 1.2,
+      "end": 1.6
+     },
+     {
+      "text": "HARI",
+      "start": 1.6,
+      "end": 2.0
+     },
+     {
+      "text": "INI?",
+      "start": 2.0,
+      "end": 2.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TERIMA KASIH",
+    "start": 2.4,
+    "end": 3.2,
+    "words": [
+     {
+      "text": "TERIMA",
+      "start": 2.4,
+      "end": 2.8
+     },
+     {
+      "text": "KASIH",
+      "start": 2.8,
+      "end": 3.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "BANYAK YA",
+    "start": 3.2,
+    "end": 4.0,
+    "words": [
+     {
+      "text": "BANYAK",
+      "start": 3.2,
+      "end": 3.6
+     },
+     {
+      "text": "YA",
+      "start": 3.6,
+      "end": 4.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+    "start": 4.0,
+    "end": 4.4,
+    "words": [
+     {
+      "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+      "start": 4.0,
+      "end": 4.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 55.9
+   },
+   {
+    "text": "TEMAN SEMUANYA",
+    "start": 4.4,
+    "end": 5.2,
+    "words": [
+     {
+      "text": "TEMAN",
+      "start": 4.4,
+      "end": 4.8
+     },
+     {
+      "text": "SEMUANYA",
+      "start": 4.8,
+      "end": 5.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "LUAR BIASA",
+    "start": 5.2,
+    "end": 6.0,
+    "words": [
+     {
+      "text": "LUAR",
+      "start": 5.2,
+      "end": 5.6
+     },
+     {
+      "text": "BIASA",
+      "start": 5.6,
+      "end": 6.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "SEKALI",
+    "start": 6.0,
+    "end": 6.65,
+    "words": [
+     {
+      "text": "SEKALI",
+      "start": 6.0,
+      "end": 6.65
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   }
+  ],
+  "hook": {
+   "lines": [
+    "SETETES RACUN BISA",
+    "BUNUH PERUSAHAAN",
+    "KAMU SEKARANG JUGA?"
+   ],
+   "start": 0.0,
+   "end": 3.0,
+   "area": {
+    "x": 193,
+    "y": 1050,
+    "width": 694,
+    "height": 300
+   },
+   "size": 72.0,
+   "anchors": [
+    [
+     498.7234314980794,
+     1194.2663252240718
+    ],
+    [
+     502.7336747759283,
+     1253.3063252240718
+    ],
+    [
+     539.51728553137,
+     1312.3463252240717
+    ]
+   ],
+   "boxes": [
+    {
+     "x": 193,
+     "y": 1136,
+     "width": 694,
+     "height": 214
+    }
+   ],
+   "emphasis": [
+    [],
+    [
+     [
+      0,
+      16
+     ]
+    ],
+    []
+   ],
+   "kicker": {
+    "text": "TERBONGKAR!",
+    "size": 57.6,
+    "box": {
+     "x": 193,
+     "y": 1050,
+     "width": 349,
+     "height": 68
+    },
+    "anchor": [
+     367.5,
+     1091.9410601792572
+    ]
+   },
+   "quote": null
+  },
+  "ass": "0dbd87f9796feec7c5a60ceaeca38e062d85f15419d8afade28eea4a16f47262"
+ },
+ "white-card/long": {
+  "captions": [
+   {
+    "text": "HALO SEMUA APA",
+    "start": 0.0,
+    "end": 1.2,
+    "words": [
+     {
+      "text": "HALO",
+      "start": 0.0,
+      "end": 0.4
+     },
+     {
+      "text": "SEMUA",
+      "start": 0.4,
+      "end": 0.8
+     },
+     {
+      "text": "APA",
+      "start": 0.8,
+      "end": 1.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "KABAR HARI INI?",
+    "start": 1.2,
+    "end": 2.4,
+    "words": [
+     {
+      "text": "KABAR",
+      "start": 1.2,
+      "end": 1.6
+     },
+     {
+      "text": "HARI",
+      "start": 1.6,
+      "end": 2.0
+     },
+     {
+      "text": "INI?",
+      "start": 2.0,
+      "end": 2.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TERIMA KASIH",
+    "start": 2.4,
+    "end": 3.2,
+    "words": [
+     {
+      "text": "TERIMA",
+      "start": 2.4,
+      "end": 2.8
+     },
+     {
+      "text": "KASIH",
+      "start": 2.8,
+      "end": 3.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "BANYAK YA",
+    "start": 3.2,
+    "end": 4.0,
+    "words": [
+     {
+      "text": "BANYAK",
+      "start": 3.2,
+      "end": 3.6
+     },
+     {
+      "text": "YA",
+      "start": 3.6,
+      "end": 4.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+    "start": 4.0,
+    "end": 4.4,
+    "words": [
+     {
+      "text": "TEMANTEMAN_PANJANGSEKALIKATANYA",
+      "start": 4.0,
+      "end": 4.4
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 55.9
+   },
+   {
+    "text": "TEMAN SEMUANYA",
+    "start": 4.4,
+    "end": 5.2,
+    "words": [
+     {
+      "text": "TEMAN",
+      "start": 4.4,
+      "end": 4.8
+     },
+     {
+      "text": "SEMUANYA",
+      "start": 4.8,
+      "end": 5.2
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "LUAR BIASA",
+    "start": 5.2,
+    "end": 6.0,
+    "words": [
+     {
+      "text": "LUAR",
+      "start": 5.2,
+      "end": 5.6
+     },
+     {
+      "text": "BIASA",
+      "start": 5.6,
+      "end": 6.0
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   },
+   {
+    "text": "SEKALI",
+    "start": 6.0,
+    "end": 6.65,
+    "words": [
+     {
+      "text": "SEKALI",
+      "start": 6.0,
+      "end": 6.65
+     }
+    ],
+    "area": {
+     "x": 130,
+     "y": 430,
+     "width": 820,
+     "height": 200
+    },
+    "size": 110.0
+   }
+  ],
+  "hook": {
+   "lines": [
+    "INI ADALAH HOOK YANG SANGAT",
+    "PANJANG SEKALI SEHINGGA HARUS",
+    "DIPECAH MENJADI BEBERAPA BARIS",
+    "DAN MUNGKIN DIPERKECIL UKURANNYA"
+   ],
+   "start": 0.0,
+   "end": 3.0,
+   "area": {
+    "x": 130,
+    "y": 1050,
+    "width": 819,
+    "height": 278
+   },
+   "size": 52.9,
+   "anchors": [
+    [
+     474.5099551856594,
+     1162.706786171575
+    ],
+    [
+     496.2355313700384,
+     1206.084786171575
+    ],
+    [
+     507.1914532650448,
+     1249.4627861715749
+    ],
+    [
+     539.4326824583867,
+     1292.840786171575
+    ]
+   ],
+   "boxes": [
+    {
+     "x": 130,
+     "y": 1113,
+     "width": 819,
+     "height": 215
+    }
+   ],
+   "emphasis": [
+    [],
+    [],
+    [],
+    []
+   ],
+   "kicker": {
+    "text": "WOW",
+    "size": 42.32,
+    "box": {
+     "x": 130,
+     "y": 1050,
+     "width": 131,
+     "height": 50
+    },
+    "anchor": [
+     195.5,
+     1080.81502893726
+    ]
+   },
+   "quote": null
+  },
+  "ass": "20b97be177bae034d9cc4895ea2a142eb92d7cb801eef5371c1eb00cad0fe269"
  }
 }

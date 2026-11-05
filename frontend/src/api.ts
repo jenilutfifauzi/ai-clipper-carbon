@@ -294,6 +294,7 @@ export interface CaptionStyle {
 // One box behind all the lines, a strip behind each, or none.
 export type HookShape = "block" | "strips" | "none";
 export type HookAlign = "center" | "left";
+export type QuotePlace = "corner" | "top";
 
 export interface HookStyle {
   shape: HookShape;
@@ -321,9 +322,13 @@ export interface HookStyle {
   radius: number;
   padding_x: number | null;
   padding_y: number | null;
-  // A badge with quote marks on the corner of the first line's box.
+  // A line this wide just inside the box's edge (its padding as much wider), in output pixels; 0: none.
+  border: number;
+  border_colour: string;
+  // A badge with quote marks on the first line's box: over its corner, or centred on its top edge.
   quote: boolean;
   quote_colour: string;
+  quote_place: QuotePlace;
   // The Kicker's text, and its pill.
   kicker_colour: string;
   kicker_box_colour: string;
