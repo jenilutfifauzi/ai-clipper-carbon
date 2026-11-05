@@ -19,6 +19,7 @@ import {
 } from "react-native";
 
 import OnDeviceRenderer from "../../modules/on-device-renderer";
+import { buildLocalOverlayPlan, type LocalCaptionCueDraft } from "../lib/localOverlayPlan";
 
 type LocalVideo = {
   uri: string;
@@ -54,6 +55,9 @@ export default function LocalRenderScreen() {
   const [progress, setProgress] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [captionDrafts, setCaptionDrafts] = useState<LocalCaptionCueDraft[]>([]);
+  const [hookText, setHookText] = useState("");
+  const [watermarkText, setWatermarkText] = useState("");
 
   useEffect(() => {
     const subscription = OnDeviceRenderer.addListener(
@@ -81,6 +85,47 @@ export default function LocalRenderScreen() {
       trim.end > trim.start &&
       (durationSeconds === null || trim.end <= durationSeconds),
   );
+  const overlayResult = useMemo(
+    () =>
+      buildLocalOverlayPlan(
+        captionDrafts,
+        hookText,
+        watermarkText,
+        trim.end - trim.start,
+      ),
+    [captionDrafts, hookText, trim.end, trim.start, watermarkText],
+  );
+  const hasOverlayDraft = Boolean(
+    captionDrafts.length || hookText.trim() || watermarkText.trim(),
+  );
+  const overlayValid = !hasOverlayDraft || Boolean(overlayResult.plan);
+
+  function addCaptionCue() {
+    const duration = Math.max(0, trim.end - trim.start);
+    const lastEnd = captionDrafts.reduce(
+      (latest, cue) => Math.max(latest, parseSeconds(cue.end) || 0),
+      0,
+    );
+    const start = Math.min(lastEnd, Math.max(0, duration - 1));
+    const end = Math.min(duration, Math.max(start + 1, start + 3));
+    setCaptionDrafts((old) => [
+      ...old,
+      {
+        id: `${Date.now()}-${old.length}`,
+        start: String(start),
+        end: String(end),
+        text: "",
+      },
+    ]);
+    setRenderedUri(null);
+  }
+
+  function updateCaptionCue(id: string, changes: Partial<LocalCaptionCueDraft>) {
+    setCaptionDrafts((old) =>
+      old.map((cue) => (cue.id === id ? { ...cue, ...changes } : cue)),
+    );
+    setRenderedUri(null);
+  }
 
   async function chooseVideo() {
     setError(null);
@@ -103,6 +148,9 @@ export default function LocalRenderScreen() {
       name: asset.fileName || "video dari perangkat",
       durationMs,
     });
+    setCaptionDrafts([]);
+    setHookText("");
+    setWatermarkText("");
     setStartText("0");
     setEndText(String(Math.max(1, defaultEnd)));
     setRenderedUri(null);
@@ -111,16 +159,31 @@ export default function LocalRenderScreen() {
 
   async function renderClip() {
     if (!source || !validTrim || rendering) return;
+    if (!overlayResult.plan) {
+      setError(overlayResult.error || "Pengaturan overlay tidak valid.");
+      return;
+    }
     setError(null);
     setRendering(true);
     setProgress(0);
     setRenderedUri(null);
     try {
-      const uri = await OnDeviceRenderer.renderPortraitClipAsync(
-        source.uri,
-        trim.start * 1000,
-        trim.end * 1000,
+      const plan = overlayResult.plan;
+      const hasOverlays = Boolean(
+        plan.captions.length || plan.hookText || plan.watermarkText,
       );
+      const uri = hasOverlays
+        ? await OnDeviceRenderer.renderPortraitClipWithOverlaysAsync(
+            source.uri,
+            trim.start * 1000,
+            trim.end * 1000,
+            JSON.stringify(plan),
+          )
+        : await OnDeviceRenderer.renderPortraitClipAsync(
+            source.uri,
+            trim.start * 1000,
+            trim.end * 1000,
+          );
       setRenderedUri(uri);
       setProgress(100);
     } catch (renderError) {
@@ -294,10 +357,10 @@ export default function LocalRenderScreen() {
               ) : null}
               <Pressable
                 accessibilityRole="button"
-                disabled={!validTrim || rendering}
+                disabled={!validTrim || rendering || !overlayValid}
                 style={[
                   styles.primaryButton,
-                  (!validTrim || rendering) && styles.disabled,
+                  (!validTrim || rendering || !overlayValid) && styles.disabled,
                 ]}
                 onPress={() => void renderClip()}
               >
@@ -329,6 +392,127 @@ export default function LocalRenderScreen() {
                   </Pressable>
                 </View>
               ) : null}
+              </View>
+            ) : null}
+
+          {source ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Teks dan branding</Text>
+              <Text style={styles.muted}>
+                Waktu caption dihitung dari awal klip hasil potong. Kata disorot
+                merata selama cue; ini bukan transkripsi atau timing suara otomatis.
+                Jika teks tidak muat, render ditolak agar tidak ada kata yang terpotong.
+              </Text>
+
+              <View style={styles.rangeField}>
+                <Text style={styles.fieldLabel}>HOOK · 3 DETIK PERTAMA</Text>
+                <TextInput
+                  accessibilityLabel="Teks hook"
+                  style={styles.input}
+                  value={hookText}
+                  onChangeText={(value) => {
+                    setHookText(value);
+                    setRenderedUri(null);
+                  }}
+                  maxLength={120}
+                  placeholder="Contoh: Ini yang sering terlewat"
+                  placeholderTextColor="#777386"
+                />
+              </View>
+
+              <View style={styles.rangeField}>
+                <Text style={styles.fieldLabel}>WATERMARK · SELURUH KLIP</Text>
+                <TextInput
+                  accessibilityLabel="Teks watermark"
+                  style={styles.input}
+                  value={watermarkText}
+                  onChangeText={(value) => {
+                    setWatermarkText(value);
+                    setRenderedUri(null);
+                  }}
+                  maxLength={40}
+                  placeholder="Contoh: @akunmu"
+                  placeholderTextColor="#777386"
+                />
+              </View>
+
+              {captionDrafts.map((cue, index) => (
+                <View key={cue.id} style={styles.cueCard}>
+                  <View style={styles.cueHeader}>
+                    <Text style={styles.fieldLabel}>CAPTION {index + 1}</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Hapus caption ${index + 1}`}
+                      onPress={() => {
+                        setCaptionDrafts((old) =>
+                          old.filter((item) => item.id !== cue.id),
+                        );
+                        setRenderedUri(null);
+                      }}
+                    >
+                      <Text style={styles.removeText}>Hapus</Text>
+                    </Pressable>
+                  </View>
+                  <View style={styles.rangeRow}>
+                    <View style={styles.rangeField}>
+                      <Text style={styles.fieldLabel}>MULAI (DETIK)</Text>
+                      <TextInput
+                        accessibilityLabel={`Mulai caption ${index + 1} dalam detik`}
+                        style={styles.input}
+                        value={cue.start}
+                        onChangeText={(value) =>
+                          updateCaptionCue(cue.id, { start: value })
+                        }
+                        keyboardType="decimal-pad"
+                        selectTextOnFocus
+                      />
+                    </View>
+                    <View style={styles.rangeField}>
+                      <Text style={styles.fieldLabel}>AKHIR (DETIK)</Text>
+                      <TextInput
+                        accessibilityLabel={`Akhir caption ${index + 1} dalam detik`}
+                        style={styles.input}
+                        value={cue.end}
+                        onChangeText={(value) =>
+                          updateCaptionCue(cue.id, { end: value })
+                        }
+                        keyboardType="decimal-pad"
+                        selectTextOnFocus
+                      />
+                    </View>
+                  </View>
+                  <TextInput
+                    accessibilityLabel={`Teks caption ${index + 1}`}
+                    style={[styles.input, styles.multilineInput]}
+                    value={cue.text}
+                    onChangeText={(value) =>
+                      updateCaptionCue(cue.id, { text: value })
+                    }
+                    maxLength={160}
+                    multiline
+                    textAlignVertical="top"
+                    placeholder="Tulis teks caption"
+                    placeholderTextColor="#777386"
+                  />
+                </View>
+              ))}
+
+              <Pressable
+                accessibilityRole="button"
+                disabled={captionDrafts.length >= 50 || rendering}
+                style={[
+                  styles.secondaryButton,
+                  (captionDrafts.length >= 50 || rendering) && styles.disabled,
+                ]}
+                onPress={addCaptionCue}
+              >
+                <Text style={styles.secondaryText}>＋ Tambah caption</Text>
+              </Pressable>
+              {hasOverlayDraft && overlayResult.error ? (
+                <Text accessibilityRole="alert" style={styles.validation}>
+                  {overlayResult.error}
+                </Text>
+              ) : null}
             </View>
           ) : null}
 
@@ -336,7 +520,7 @@ export default function LocalRenderScreen() {
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Klip siap</Text>
               <Text style={styles.muted}>
-                MP4 H.264 · 720 × 1280 · trim dan crop diproses di ponsel.
+                MP4 H.264 · 720 × 1280 · trim, crop, dan teks overlay (jika diisi) diproses di ponsel.
               </Text>
               <Pressable
                 accessibilityRole="button"
@@ -366,9 +550,11 @@ export default function LocalRenderScreen() {
             </Text>
           ) : null}
           <Text style={styles.footnote}>
-            Tahap ini mendukung satu video, trim dasar, dan crop portrait
-            tengah. Caption, musik, template, track, keyframe, dan efek lanjutan
-            menyusul.
+            Mendukung satu video, trim, crop tengah 9:16, caption manual bertiming,
+            hook teks, dan watermark teks. Preview belum menunjukkan highlight
+            caption yang tersinkron; timeline multi-track, transkripsi, logo,
+            musik, template, keyframe, dan efek lanjutan belum tersedia di editor
+            native ini.
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -438,6 +624,19 @@ const styles = StyleSheet.create({
   secondaryText: { color: "#d1ccff", fontSize: 14, fontWeight: "700" },
   card: { backgroundColor: "#191725", borderRadius: 18, padding: 17, gap: 14 },
   cardTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
+  cueCard: {
+    backgroundColor: "#211f2e",
+    borderRadius: 13,
+    padding: 12,
+    gap: 10,
+  },
+  cueHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  removeText: { color: "#ffc0c0", fontSize: 12, fontWeight: "700" },
+  multilineInput: { minHeight: 74, paddingTop: 12 },
   fileName: { color: "#c3c0d0", fontSize: 13 },
   rangeRow: { flexDirection: "row", gap: 12 },
   rangeField: { flex: 1, gap: 7 },

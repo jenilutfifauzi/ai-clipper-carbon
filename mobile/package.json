@@ -46,7 +46,8 @@
     "android": "expo run:android",
     "android:prebuild": "expo prebuild --platform android",
     "android:export": "expo export --platform android",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --experimental-strip-types --test test/*.test.mjs"
   },
   "private": true
 }

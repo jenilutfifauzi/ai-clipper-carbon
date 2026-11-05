@@ -5,8 +5,10 @@ package expo.modules.ondevicerenderer
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
@@ -34,103 +36,26 @@ class OnDeviceRendererModule : Module() {
     Events("onRenderProgress")
 
     AsyncFunction("renderPortraitClipAsync") { sourceUri: String, startMs: Double, endMs: Double, promise: Promise ->
-      val context = appContext.reactContext
-      if (context == null) {
-        promise.reject("E_RENDER_CONTEXT", "The Android app context is unavailable.", null)
-        return@AsyncFunction
-      }
-      if (activeTransformer != null) {
-        promise.reject("E_RENDER_BUSY", "A video export is already running.", null)
-        return@AsyncFunction
-      }
+      startRender(sourceUri, startMs, endMs, LocalOverlayPlan.EMPTY, promise)
+    }
 
-      val startPositionMs = startMs.toLong()
-      val endPositionMs = endMs.toLong()
-      if (sourceUri.isBlank() || startPositionMs < 0 || endPositionMs <= startPositionMs) {
-        promise.reject("E_RENDER_RANGE", "Choose a valid video and a trim range longer than zero.", null)
-        return@AsyncFunction
-      }
-
-      val outputDirectory = File(context.cacheDir, "ai-clipper/renders")
-      if (!outputDirectory.exists() && !outputDirectory.mkdirs()) {
-        promise.reject("E_RENDER_STORAGE", "Could not create the temporary render folder.", null)
-        return@AsyncFunction
-      }
-      val renderId = UUID.randomUUID().toString()
-      val outputFile = File(outputDirectory, "clip-$renderId.mp4")
-
-      try {
-        val clipping = MediaItem.ClippingConfiguration.Builder()
-          .setStartPositionMs(startPositionMs)
-          .setEndPositionMs(endPositionMs)
-          .build()
-        val mediaItem = MediaItem.Builder()
-          .setUri(Uri.parse(sourceUri))
-          .setClippingConfiguration(clipping)
-          .build()
-        val portraitEffect = Presentation.createForWidthAndHeight(
-          720,
-          1280,
-          Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
-        )
-        val editedItem = EditedMediaItem.Builder(mediaItem)
-          .setEffects(Effects(emptyList(), listOf(portraitEffect)))
-          .build()
-
-        val transformer = Transformer.Builder(context)
-          .setVideoMimeType(MimeTypes.VIDEO_H264)
-          .setAudioMimeType(MimeTypes.AUDIO_AAC)
-          .addListener(object : Transformer.Listener {
-            override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-              if (activeRenderId != renderId) return
-              finishActiveState()
-              promise.resolve(Uri.fromFile(outputFile).toString())
-            }
-
-            override fun onError(
-              composition: Composition,
-              exportResult: ExportResult,
-              exportException: ExportException
-            ) {
-              if (activeRenderId != renderId) return
-              outputFile.delete()
-              finishActiveState()
-              promise.reject(
-                "E_RENDER_FAILED",
-                exportException.localizedMessage ?: "The device could not export this video.",
-                exportException
-              )
-            }
-          })
-          .build()
-
-        activeTransformer = transformer
-        activeOutputFile = outputFile
-        activePromise = promise
-        activeRenderId = renderId
-        mainHandler.post {
-          if (activeRenderId != renderId) return@post
-          try {
-            transformer.start(editedItem, outputFile.absolutePath)
-            startProgressPolling(transformer, renderId)
-          } catch (error: Throwable) {
-            outputFile.delete()
-            finishActiveState()
-            promise.reject(
-              "E_RENDER_START",
-              error.localizedMessage ?: "The video export could not start.",
-              error
-            )
-          }
-        }
+    AsyncFunction("renderPortraitClipWithOverlaysAsync") {
+        sourceUri: String,
+        startMs: Double,
+        endMs: Double,
+        overlayPlanJson: String,
+        promise: Promise ->
+      val plan = try {
+        LocalOverlayPlan.fromJson(overlayPlanJson, (endMs - startMs) / 1000.0)
       } catch (error: Throwable) {
-        outputFile.delete()
         promise.reject(
-          "E_RENDER_SETUP",
-          error.localizedMessage ?: "The video could not be prepared for export.",
-          error
+          "E_OVERLAY_PLAN",
+          error.localizedMessage ?: "Pengaturan caption atau overlay tidak valid.",
+          error,
         )
+        return@AsyncFunction
       }
+      startRender(sourceUri, startMs, endMs, plan, promise)
     }
 
     AsyncFunction("cancelRenderAsync") {
@@ -147,6 +72,116 @@ class OnDeviceRendererModule : Module() {
         }
       }
       true
+    }
+  }
+
+  private fun startRender(
+    sourceUri: String,
+    startMs: Double,
+    endMs: Double,
+    overlayPlan: LocalOverlayPlan,
+    promise: Promise,
+  ) {
+    val context = appContext.reactContext
+    if (context == null) {
+      promise.reject("E_RENDER_CONTEXT", "The Android app context is unavailable.", null)
+      return
+    }
+    if (activeTransformer != null) {
+      promise.reject("E_RENDER_BUSY", "A video export is already running.", null)
+      return
+    }
+
+    val startPositionMs = startMs.toLong()
+    val endPositionMs = endMs.toLong()
+    if (sourceUri.isBlank() || startPositionMs < 0 || endPositionMs <= startPositionMs) {
+      promise.reject("E_RENDER_RANGE", "Choose a valid video and a trim range longer than zero.", null)
+      return
+    }
+
+    val outputDirectory = File(context.cacheDir, "ai-clipper/renders")
+    if (!outputDirectory.exists() && !outputDirectory.mkdirs()) {
+      promise.reject("E_RENDER_STORAGE", "Could not create the temporary render folder.", null)
+      return
+    }
+    val renderId = UUID.randomUUID().toString()
+    val outputFile = File(outputDirectory, "clip-$renderId.mp4")
+
+    try {
+      val clipping = MediaItem.ClippingConfiguration.Builder()
+        .setStartPositionMs(startPositionMs)
+        .setEndPositionMs(endPositionMs)
+        .build()
+      val mediaItem = MediaItem.Builder()
+        .setUri(Uri.parse(sourceUri))
+        .setClippingConfiguration(clipping)
+        .build()
+      val portraitEffect = Presentation.createForWidthAndHeight(
+        720,
+        1280,
+        Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP,
+      )
+      val videoEffects = mutableListOf<Effect>(portraitEffect)
+      if (overlayPlan.hasOverlays) {
+        videoEffects += OverlayEffect(listOf(LocalTextOverlay(overlayPlan)))
+      }
+      val editedItem = EditedMediaItem.Builder(mediaItem)
+        .setEffects(Effects(emptyList(), videoEffects))
+        .build()
+
+      val transformer = Transformer.Builder(context)
+        .setVideoMimeType(MimeTypes.VIDEO_H264)
+        .setAudioMimeType(MimeTypes.AUDIO_AAC)
+        .addListener(object : Transformer.Listener {
+          override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+            if (activeRenderId != renderId) return
+            finishActiveState()
+            promise.resolve(Uri.fromFile(outputFile).toString())
+          }
+
+          override fun onError(
+            composition: Composition,
+            exportResult: ExportResult,
+            exportException: ExportException,
+          ) {
+            if (activeRenderId != renderId) return
+            outputFile.delete()
+            finishActiveState()
+            promise.reject(
+              "E_RENDER_FAILED",
+              exportException.localizedMessage ?: "The device could not export this video.",
+              exportException,
+            )
+          }
+        })
+        .build()
+
+      activeTransformer = transformer
+      activeOutputFile = outputFile
+      activePromise = promise
+      activeRenderId = renderId
+      mainHandler.post {
+        if (activeRenderId != renderId) return@post
+        try {
+          transformer.start(editedItem, outputFile.absolutePath)
+          startProgressPolling(transformer, renderId)
+        } catch (error: Throwable) {
+          outputFile.delete()
+          finishActiveState()
+          promise.reject(
+            "E_RENDER_START",
+            error.localizedMessage ?: "The video export could not start.",
+            error,
+          )
+        }
+      }
+    } catch (error: Throwable) {
+      outputFile.delete()
+      promise.reject(
+        "E_RENDER_SETUP",
+        error.localizedMessage ?: "The video could not be prepared for export.",
+        error,
+      )
     }
   }
 

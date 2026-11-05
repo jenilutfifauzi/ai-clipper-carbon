@@ -8,6 +8,12 @@ declare class OnDeviceRendererModule extends NativeModule<OnDeviceRendererModule
     startMs: number,
     endMs: number,
   ): Promise<string>;
+  renderPortraitClipWithOverlaysAsync(
+    sourceUri: string,
+    startMs: number,
+    endMs: number,
+    overlayPlanJson: string,
+  ): Promise<string>;
   cancelRenderAsync(): Promise<boolean>;
 }
 

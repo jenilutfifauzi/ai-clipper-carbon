@@ -10,8 +10,11 @@ Implementation is ready for an open PR on `feat/android-native-full-parity`; the
 - [x] Authenticated FastAPI create/list/detail workflow for YouTube + AI Jobs.
 - [x] AndroidX Media3 local trim + fixed 9:16 center crop, progress and cancel.
 - [x] Gallery save and system share sheet for the 720 × 1280 H.264/AAC MP4.
+- [x] Manual local Caption Cues with explicit (evenly estimated) per-word highlight timings, plus a three-second text hook and full-output text watermark burned through Media3.
 - [x] Setup guidance and `.env.example` with public Clerk publishable key and API origin placeholders.
+- [x] Documented the local-caption-only boundary; Candidate/transcript integration is the next explicit gap.
 - [x] TypeScript check passes.
+- [x] Six focused local overlay-plan unit tests pass.
 - [x] Android prebuild and Expo-module autolinking resolve.
 - [x] Android JavaScript bundle/export passes with dummy public configuration.
 
@@ -22,6 +25,7 @@ Implementation is ready for an open PR on `feat/android-native-full-parity`; the
 
 ## Follow-up tickets / parity gaps
 
+- Candidate/transcript/Preview Plan integration with the native editor and render input, preserving Candidate Revisions. The local-caption subset is not AI Candidate or transcript parity.
 - Candidate-to-editor flow and downloaded Job media handoff.
 - Multi-track timeline, segment tools, text/caption correction and caption styles.
 - Hook, logo, overlay, transition, template and branding workflows.
@@ -31,7 +35,7 @@ Implementation is ready for an open PR on `feat/android-native-full-parity`; the
 
 ## Notes
 
-The local gallery-video render does not upload the selected source to FastAPI. The Job workflow still keeps its YouTube download, transcription, analysis, and Job data on FastAPI. The current native render does not consume the server-side FFmpeg render plan. Clerk's native components are beta; this branch has no live Clerk key, Android SDK or emulator, so those items are intentionally not marked verified.
+The local gallery-video render, including its text overlays, does not upload the selected source to FastAPI. The Job workflow still keeps its YouTube download, transcription, analysis, and Job data on FastAPI. Manual Cue intervals are spread evenly across their words and are not transcript-derived. The native renderer does not consume the server-side FFmpeg render plan. Clerk's native components are beta; this branch has no live Clerk key, Android SDK or emulator, so those items are intentionally not marked verified.
 
 ## Dependency audit note
 
