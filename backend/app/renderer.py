@@ -2479,7 +2479,7 @@ def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
 
     step = _stagger(hook, style, first + len(hook.lines) - 1)
     # By part of the hook's time, then by element, as the parts are in time.
-    events = []
+    events = [(-1, i, event) for i, event in enumerate(_panel_events(hook, style))]
     for order, (layer, align, x, y, y_format, alpha, tags, body, rank, alpha_tag) in enumerate(elements):
         for part, (begin, finish, phase) in enumerate(_hook_phases(hook, style, rank * step)):
             start, end = ass_time(begin), ass_time(finish)
@@ -2494,6 +2494,24 @@ def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
                 text = f"{{\\an{align}{place}{motion}{tags}}}{body}"
             events.append((part, order, f"Dialogue: {layer},{start},{end},Hook,,0,0,0,,{text}"))
     return [event for _, _, event in sorted(events)]
+
+
+def _panel_events(hook: HookEvent, style: HookStyle) -> list[str]:
+    """The Hook Panel's Dialogue events, under everything else of the hook on its layer 1: its fill in
+    the box's colour and its border along its top, on for the hook's whole time. It only fades, in
+    and out as the hook comes on and goes off (_hook_ends), however they do."""
+    panel = hook.panel
+    if panel is None:
+        return []
+    on, off = _hook_ends(hook, style)
+    tags = f"\\an7\\pos({panel.x},{panel.y})\\p1\\bord0\\shad0" + (f"\\fad({round(on * 1000)},{round(off * 1000)})" if on or off else "")
+    start, end = ass_time(hook.start), ass_time(hook.end)
+    fill = f"{{{tags}\\c{tag_colour(style.box_colour)}\\alpha{ass_alpha(style.box_opacity)}}}{rounded_box(panel.width, panel.height, 0)}{{\\p0}}"
+    events = [f"Dialogue: 1,{start},{end},Hook,,0,0,0,,{fill}"]
+    if border := hook_border(style):
+        line = f"{{{tags}\\c{tag_colour(style.border_colour)}\\alpha&H00&}}{rounded_box(panel.width, border, 0)}{{\\p0}}"
+        events.append(f"Dialogue: 1,{start},{end},Hook,,0,0,0,,{line}")
+    return events
 
 
 def _emphasised(line: str, spans: list[tuple[int, int]], style: HookStyle) -> str:

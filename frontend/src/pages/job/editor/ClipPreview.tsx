@@ -1255,8 +1255,16 @@ function Hook({
   const border = hookBorder(style);
   const kicker = hook.kicker;
   const quote = hook.quote;
+  const panel = hook.panel;
   return (
     <g transform={moving}>
+      {/* Only fading, from the hook's start, as the renderer draws it. */}
+      {panel && (
+        <g opacity={looks[0][0]}>
+          <rect x={panel.x} y={panel.y} width={panel.width} height={panel.height} fill={style.box_colour} fillOpacity={style.box_opacity} />
+          {border > 0 && <rect x={panel.x} y={panel.y} width={panel.width} height={border} fill={style.border_colour} />}
+        </g>
+      )}
       {style.box_opacity > 0 &&
         hook.boxes.map((box, i) => {
           const rank = strips ? first + i : first;

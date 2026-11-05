@@ -16,6 +16,7 @@ The hook's box has no border, and the Quote Mark only sits on the top-left corne
 
 - **Hook Style** gains a **Hook Border** (`border`, 0–20 px, and `border_colour`). It is drawn just inside the edge of the block or of each strip, and the padding grows by the same width. It does nothing with no box.
 - The **Quote Mark** gains `quote_place`. `corner` is the default. `top` centres the badge on the first box's top edge, and the box's padding above the text grows to clear it. With no box, it centres the badge above the text.
+- A **Hook Panel** (`panel`) fills the frame in the box's colour, from the middle of the box down to the bottom, with the border along its top. It shows for the hook's time and only fades. Framed blue turns it on and sits in the middle.
 - Three built-in **Style Presets**, one per reference: `framed-blue`, `red-quote-card` and `white-card`.
 - The editor's Hook Style panel gets Border and Border colour controls under Box, and a Corner / Top middle choice for the Quote Mark.
 

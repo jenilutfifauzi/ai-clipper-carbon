@@ -531,6 +531,8 @@ class HookEvent:
     emphasis: list[list[tuple[int, int]]]
     # Above the lines; None without one.
     kicker: HookKicker | None = None
+    # The Hook Panel, across the frame and down to its bottom; None without one.
+    panel: Box | None = None
     # The Quote Mark's badge; None without one.
     quote: Box | None = None
 
@@ -2449,7 +2451,8 @@ def _hook(
     they do, KICKER_GAP of the hook's size away. A Quote Mark (QUOTE_SCALE) is on the first line's
     corner, or centred on its box's top edge (its padding there then QUOTE_CLEARANCE clear of the
     badge) or above its text: the lines move down by what of it sticks out above them, but not
-    sideways, so they stay centred."""
+    sideways, so they stay centred. A Hook Panel goes across the whole frame from the middle of
+    the boxes to the bottom, wherever they are."""
     lines, size = fit_hook(text, style, canvas=canvas)
     start = round(max(start, 0.0), 3)
     if not lines or start >= duration:
@@ -2549,6 +2552,10 @@ def _hook(
             quote = Box(math.floor(corner_x) + inset_x - badge, math.floor(corner_y) + inset_y - badge, badge, badge)
         left_edge, right_edge = min(area.x, quote.x), max(area.x + area.width, quote.x + quote.width)
         area = Box(left_edge, area.y, right_edge - left_edge, area.height)
+    panel = None
+    if style.panel and placed_boxes and style.box_opacity > 0:
+        top = (placed_boxes[0].y + placed_boxes[-1].y + placed_boxes[-1].height) // 2
+        panel = Box(0, top, canvas.width, canvas.height - top)
     # With its middle at the style's x, or as near as keeps it in the frame.
     dx = 0 if style.x is None else min(max((2 * canvas.x_from_reference(style.x) - area.width) // 2, 0), canvas.width - area.width) - area.x
     if dx and placed is not None:
@@ -2564,6 +2571,7 @@ def _hook(
         emphasis=emphasis,
         kicker=placed,
         quote=quote and _shifted(quote, dx),
+        panel=panel,
     )
 
 

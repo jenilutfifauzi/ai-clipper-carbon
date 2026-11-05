@@ -325,6 +325,8 @@ export interface HookStyle {
   // A line this wide just inside the box's edge (its padding as much wider), in output pixels; 0: none.
   border: number;
   border_colour: string;
+  // A Hook Panel: the box's colour from the middle of the box down to the bottom of the frame.
+  panel: boolean;
   // A badge with quote marks on the first line's box: over its corner, or centred on its top edge.
   quote: boolean;
   quote_colour: string;
@@ -644,6 +646,8 @@ export interface HookEvent {
   kicker: HookKicker | null;
   // The Quote Mark's badge; null without one.
   quote: Box | null;
+  // The Hook Panel, across the frame from the boxes' middle to its bottom; null without one.
+  panel: Box | null;
 }
 
 // The Kicker's text at font `size` on its pill, placed by its anchor (the middle of its text and its baseline).

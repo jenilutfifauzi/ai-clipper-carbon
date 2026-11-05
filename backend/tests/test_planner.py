@@ -1710,3 +1710,20 @@ def test_a_cue_parted_only_by_a_cue_edit_needs_no_join():
     split = retimed(words, [CueEdit(at=100 + (empat.start + empat.end) / 2)], 8, caption_style=SENTENCE).captions
     assert rows(split) == [["SATU DUA TIGA"], ["EMPAT LIMA ENAM"]]
     assert [(cue.joinable, cue.needs_join) for cue in split] == [(False, False), (True, False)]
+
+
+# A Hook Panel (hook-cards).
+
+
+def test_a_hook_panel_goes_across_the_frame_from_the_boxes_middle_to_the_bottom():
+    for shape in ("block", "strips"):
+        for position in ("top", "middle", "bottom"):
+            hook = hooked(HOOK, hook_style=HookStyle(shape=shape, panel=True, position=position))
+            first, last = hook.boxes[0], hook.boxes[-1]
+            assert hook.panel == Box(0, (first.y + last.y + last.height) // 2, PORTRAIT.width, PORTRAIT.height - hook.panel.y)
+            # It changes nothing else.
+            assert replace(hook, panel=None) == hooked(HOOK, hook_style=HookStyle(shape=shape, position=position))
+    # Off, or with no box.
+    assert hooked(HOOK).panel is None
+    for style in ({"shape": "none"}, {"box_opacity": 0}):
+        assert hooked(HOOK, hook_style=HookStyle(panel=True, **style)).panel is None

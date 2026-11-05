@@ -57,6 +57,7 @@ const MORE = [
   "padding_y",
   "border",
   "border_colour",
+  "panel",
   "outline",
   "outline_colour",
   "shadow",
@@ -230,6 +231,15 @@ export function HookMoreOptions({ style, open, onToggle }: { style: StyleControl
               <ColorField label="Border colour" value={hook.border_colour} onChange={(v) => set("border_colour", v)} marker={marker("border_colour", "box border colour")} />
             </>
           )}
+        </div>
+        {box && (
+          <Switch checked={hook.panel} onChange={(v) => set("panel", v)}>
+            <span className="flex items-center gap-1.5 text-sm">
+              Panel down to the bottom {marker("panel", "hook panel")}
+            </span>
+          </Switch>
+        )}
+        <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
           <Slider label="Outline" value={hook.outline} min={0} max={20} format={(v) => `${v} px`} onChange={(v) => set("outline", v)} marker={marker("outline", "hook outline")} />
           <ColorField label="Outline colour" value={hook.outline_colour} onChange={(v) => set("outline_colour", v)} marker={marker("outline_colour", "hook outline colour")} />
         </div>

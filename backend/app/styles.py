@@ -301,6 +301,9 @@ class HookStyle(_ReadsOldShadow):
     # padding as much wider; 0 draws none, as does no box.
     border: Annotated[int, Field(ge=0, le=20)] = 0
     border_colour: Colour = "#FFFFFF"
+    # A Hook Panel: the box's colour across the frame from the middle of its box(es) to the bottom,
+    # its border along its top, for the hook's time. None with no box.
+    panel: bool = False
     # The box's padding either side of the lines (of each line, for Strips) and above the capitals of
     # the first and below the descenders of the last (of each), in output pixels at the style's size
     # (smaller with a hook set smaller). None: the Shape's own (app/planner.py's HOOK_PAD_X and
@@ -476,7 +479,7 @@ BUILTIN_PRESETS = [
         CaptionStyle(position=CaptionPosition.TOP),
         HookStyle(
             font="poppins-bold", size=84, max_lines=3, emphasis_colour="#FFD23F", box_colour="#2D55D6", box_opacity=1.0,
-            radius=28, border=8, border_colour="#F5C518", position=HookPosition.BOTTOM,
+            radius=28, border=8, border_colour="#F5C518", panel=True, position=HookPosition.MIDDLE,
         ),
         builtin=True,
     ),

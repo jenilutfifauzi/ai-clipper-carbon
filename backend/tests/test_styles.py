@@ -619,3 +619,20 @@ def test_the_mcp_instructions_name_phrase_and_sentence_from_the_line_limits():
     flat = " ".join(INSTRUCTIONS.split())
     assert "The editor's Phrase is 1 line, 16 characters, no word limit, 1.4 s, 0.5 s pause;" in flat
     assert "its Sentence 2 lines, 24 characters, no word limit, 5 s, 0.7 s pause." in flat
+
+
+def test_a_hook_panel_is_drawn_under_the_box_in_its_colour_with_the_border_along_its_top_and_only_fades():
+    style = HookStyle(box_colour="#2D55D6", box_opacity=1.0, border=8, border_colour="#F5C518", panel=True, animation_in="pop")
+    planned = plan_render(0, 5, SOURCE, hook=HOOK, hook_style=style, canvas=PORTRAIT)
+    panel = planned.hook.panel
+    lines = [line for line in _ass(planned).splitlines() if line.startswith("Dialogue") and ",Hook," in line]
+    # First on layer 1, so under the box; for the hook's whole time, fading as long as it pops.
+    fill, top = lines[:2]
+    for line in (fill, top):
+        assert line.startswith("Dialogue: 1,0:00:00.00,0:00:03.00,") and f"\\an7\\pos(0,{panel.y})" in line and "\\fad(200,200)" in line
+        assert "\\fscx" not in line and "\\move" not in line
+    assert "\\c&HD6552D&" in fill and f"l {PORTRAIT.width} {panel.height} " in fill
+    assert "\\c&H18C5F5&" in top and f"l {PORTRAIT.width} 8 " in top
+    # No border, no line along its top.
+    plain = plan_render(0, 5, SOURCE, hook=HOOK, hook_style=replace(style, border=0), canvas=PORTRAIT)
+    assert sum(f"\\pos(0,{plain.hook.panel.y})" in line for line in _ass(plain).splitlines()) == 1

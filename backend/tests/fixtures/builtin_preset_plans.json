@@ -62,7 +62,7 @@
    {
     "text": "TERIMA KASIH",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "TERIMA",
@@ -85,7 +85,7 @@
    },
    {
     "text": "TERIMA KASIH",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -254,6 +254,7 @@
     ]
    ],
    "kicker": null,
+   "panel": null,
    "quote": null
   },
   "ass": "3a600d42004055b5ce90c8a7a7e44ed0b98919fe582ec4bd92922ab1e09be9f0"
@@ -321,7 +322,7 @@
    {
     "text": "TERIMA KASIH",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "TERIMA",
@@ -344,7 +345,7 @@
    },
    {
     "text": "TERIMA KASIH",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -537,6 +538,7 @@
      269.51394827144685
     ]
    },
+   "panel": null,
    "quote": null
   },
   "ass": "2e4026a06dc88dc854a29213571c1ac80268af159723988688284017902470ad"
@@ -604,7 +606,7 @@
    {
     "text": "TERIMA KASIH",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "TERIMA",
@@ -627,7 +629,7 @@
    },
    {
     "text": "TERIMA KASIH",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -810,6 +812,7 @@
      250.75697413572345
     ]
    },
+   "panel": null,
    "quote": null
   },
   "ass": "90ddc9f1fd39f8eb934ad981e2420dd8e5682f7065a3c997937a6c6449600b1d"
@@ -877,7 +880,7 @@
    {
     "text": "TERIMA KASIH",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "TERIMA",
@@ -900,7 +903,7 @@
    },
    {
     "text": "TERIMA KASIH",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -1055,6 +1058,7 @@
     ]
    ],
    "kicker": null,
+   "panel": null,
    "quote": null
   },
   "ass": "5d542bbdd9724178d4984ae61def4f0209c2f6c22c8fcd766047bb1186c593c6"
@@ -1122,7 +1126,7 @@
    {
     "text": "TERIMA KASIH",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "TERIMA",
@@ -1145,7 +1149,7 @@
    },
    {
     "text": "TERIMA KASIH",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -1324,6 +1328,7 @@
      286.6145352112676
     ]
    },
+   "panel": null,
    "quote": null
   },
   "ass": "bc63e5aff6563c19cf730fa81ee9341cd1d3b16e3af80e25e72dca170c35b3c7"
@@ -1391,7 +1396,7 @@
    {
     "text": "TERIMA KASIH",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "TERIMA",
@@ -1414,7 +1419,7 @@
    },
    {
     "text": "TERIMA KASIH",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -1583,6 +1588,7 @@
      261.54149859154927
     ]
    },
+   "panel": null,
    "quote": null
   },
   "ass": "aaf184c79a70e7655332939d185dcb9f0e9741e929279d9746f16a9a0f142e59"
@@ -1650,7 +1656,7 @@
    {
     "text": "TERIMA KASIH",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "TERIMA",
@@ -1673,7 +1679,7 @@
    },
    {
     "text": "TERIMA KASIH",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -1842,6 +1848,7 @@
     ]
    ],
    "kicker": null,
+   "panel": null,
    "quote": null
   },
   "ass": "f8897db23888d444c79d28a6356a6f32ed01d5c4ffad13a9b4e4ff1849b64351"
@@ -1909,7 +1916,7 @@
    {
     "text": "TERIMA KASIH",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "TERIMA",
@@ -1932,7 +1939,7 @@
    },
    {
     "text": "TERIMA KASIH",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -2125,6 +2132,7 @@
      269.51394827144685
     ]
    },
+   "panel": null,
    "quote": null
   },
   "ass": "c0167a169b926fb12994665a454fc30077d473906e5efb0b0c1a6fb9657db068"
@@ -2192,7 +2200,7 @@
    {
     "text": "TERIMA KASIH",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "TERIMA",
@@ -2215,7 +2223,7 @@
    },
    {
     "text": "TERIMA KASIH",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -2398,6 +2406,7 @@
      250.75697413572345
     ]
    },
+   "panel": null,
    "quote": null
   },
   "ass": "d06939584ab43e6dd9e0b679cdd29604e71ab8bcb46ded27cccc2510f0ac71c3"
@@ -2465,7 +2474,7 @@
    {
     "text": "terima kasih",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "terima",
@@ -2488,7 +2497,7 @@
    },
    {
     "text": "terima kasih",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -2643,6 +2652,7 @@
     ]
    ],
    "kicker": null,
+   "panel": null,
    "quote": null
   },
   "ass": "5182626eac0cd4b08bfcce5ea1c3bb6f8ce9f01941cd3432d7fafd6c31782b4e"
@@ -2710,7 +2720,7 @@
    {
     "text": "terima kasih",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "terima",
@@ -2733,7 +2743,7 @@
    },
    {
     "text": "terima kasih",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -2912,6 +2922,7 @@
      271.43605902383655
     ]
    },
+   "panel": null,
    "quote": null
   },
   "ass": "cca74811a667cfe46bfaf2154bb4e6c65812915b43b5dd9e808527051bd854dc"
@@ -2979,7 +2990,7 @@
    {
     "text": "terima kasih",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "terima",
@@ -3002,7 +3013,7 @@
    },
    {
     "text": "terima kasih",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -3171,6 +3182,7 @@
      252.15620794551646
     ]
    },
+   "panel": null,
    "quote": null
   },
   "ass": "0127dd76db761944365cb099400296aaa5399e4619b07e4f9918550be5285ce8"
@@ -3238,7 +3250,7 @@
    {
     "text": "TERIMA KASIH",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "TERIMA",
@@ -3261,7 +3273,7 @@
    },
    {
     "text": "TERIMA KASIH",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -3430,6 +3442,7 @@
     ]
    ],
    "kicker": null,
+   "panel": null,
    "quote": {
     "x": 181,
     "y": 232,
@@ -3502,7 +3515,7 @@
    {
     "text": "TERIMA KASIH",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "TERIMA",
@@ -3525,7 +3538,7 @@
    },
    {
     "text": "TERIMA KASIH",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -3748,6 +3761,7 @@
      285.5913546734955
     ]
    },
+   "panel": null,
    "quote": {
     "x": 123,
     "y": 342,
@@ -3820,7 +3834,7 @@
    {
     "text": "TERIMA KASIH",
     "start": 2.4,
-    "end": 3.0,
+    "end": 3,
     "words": [
      {
       "text": "TERIMA",
@@ -3843,7 +3857,7 @@
    },
    {
     "text": "TERIMA KASIH",
-    "start": 3.0,
+    "start": 3,
     "end": 3.2,
     "words": [
      {
@@ -4056,6 +4070,7 @@
      263.1062862996159
     ]
    },
+   "panel": null,
    "quote": {
     "x": 114,
     "y": 295,
@@ -4296,6 +4311,7 @@
     ]
    ],
    "kicker": null,
+   "panel": null,
    "quote": null
   },
   "ass": "c9a0ee9fe73753041716dc64908eff0982e1e53b350eb745ba4799d50733a066"
@@ -4556,6 +4572,7 @@
      1112.061971830986
     ]
    },
+   "panel": null,
    "quote": null
   },
   "ass": "87dcfd5d4cb95b529ac737013dc8d0c7112844fc56c12d468b0071e5c41f5ba7"
@@ -4817,6 +4834,7 @@
      1107.655571830986
     ]
    },
+   "panel": null,
    "quote": null
   },
   "ass": "8c8a1a9d459281dbb0ee4aa01bcd35bfee57e5ff3765435d349d249d6d74bbe1"
@@ -5024,6 +5042,7 @@
     ]
    ],
    "kicker": null,
+   "panel": null,
    "quote": {
     "x": 267,
     "y": 1376,
@@ -5261,6 +5280,7 @@
      1184.0087355278094
     ]
    },
+   "panel": null,
    "quote": {
     "x": 181,
     "y": 1238,
@@ -5493,6 +5513,7 @@
      1284.548847219069
     ]
    },
+   "panel": null,
    "quote": {
     "x": 105,
     "y": 1321,
@@ -5726,6 +5747,7 @@
     ]
    ],
    "kicker": null,
+   "panel": null,
    "quote": null
   },
   "ass": "7a2eb8258e8ba9bdc0704d349028a16d64c712ec9179e875000e32ee4d5d2774"
@@ -5979,6 +6001,7 @@
      842.6011779769526
     ]
    },
+   "panel": null,
    "quote": null
   },
   "ass": "df0e94d1f10d9e4c6110816e15335dd98b3df15de440f3d23bede8302d8cd4c4"
@@ -6233,6 +6256,7 @@
      851.1062862996158
     ]
    },
+   "panel": null,
    "quote": null
   },
   "ass": "cf2c2b3df121b20fc65a30d4e6c3a05bb012991ac05283d1a134ee3c7eaa9c03"
@@ -6440,7 +6464,7 @@
    "end": 3.0,
    "area": {
     "x": 310,
-    "y": 1417,
+    "y": 900,
     "width": 460,
     "height": 119
    },
@@ -6448,13 +6472,13 @@
    "anchors": [
     [
      540.0,
-     1484.6095346197503
+     967.6095346197503
     ]
    ],
    "boxes": [
     {
      "x": 310,
-     "y": 1417,
+     "y": 900,
      "width": 460,
      "height": 119
     }
@@ -6468,9 +6492,15 @@
     ]
    ],
    "kicker": null,
+   "panel": {
+    "x": 0,
+    "y": 959,
+    "width": 1080,
+    "height": 961
+   },
    "quote": null
   },
-  "ass": "a23b259c1900c7eb88b6a8030c5a7dd1f79c1a759b0f98ec69b1819ad4b56c8e"
+  "ass": "d748f3df99fa709633e0a23847e421c042ad8c22cca59f424ca997418f800907"
  },
  "framed-blue/kicked": {
   "captions": [
@@ -6677,7 +6707,7 @@
    "end": 3.0,
    "area": {
     "x": 227,
-    "y": 1180,
+    "y": 782,
     "width": 625,
     "height": 356
    },
@@ -6685,21 +6715,21 @@
    "anchors": [
     [
      539.5,
-     1346.6095346197503
+     948.6095346197503
     ],
     [
      539.5,
-     1415.4895346197502
+     1017.4895346197503
     ],
     [
      539.5,
-     1484.3695346197503
+     1086.3695346197503
     ]
    ],
    "boxes": [
     {
      "x": 227,
-     "y": 1279,
+     "y": 881,
      "width": 625,
      "height": 257
     }
@@ -6719,18 +6749,24 @@
     "size": 67.2,
     "box": {
      "x": 368,
-     "y": 1180,
+     "y": 782,
      "width": 343,
      "height": 78
     },
     "anchor": [
      539.5,
-     1225.7036276958002
+     827.7036276958003
     ]
+   },
+   "panel": {
+    "x": 0,
+    "y": 1009,
+    "width": 1080,
+    "height": 911
    },
    "quote": null
   },
-  "ass": "ce2fbb9d05ecff6b166f53b2b0f98080da5dcd8aa44c98e2d6cb6b393b23bc0d"
+  "ass": "e7720e83da43d26df42144c81c87884fb3177fcb8b7d1fabb47e4ecb7f266812"
  },
  "framed-blue/long": {
   "captions": [
@@ -6937,7 +6973,7 @@
    "end": 3.0,
    "area": {
     "x": 122,
-    "y": 1267,
+    "y": 825,
     "width": 836,
     "height": 269
    },
@@ -6945,21 +6981,21 @@
    "anchors": [
     [
      540.0,
-     1394.366628830874
+     952.366628830874
     ],
     [
      540.0,
-     1442.254628830874
+     1000.254628830874
     ],
     [
      540.0,
-     1490.142628830874
+     1048.142628830874
     ]
    ],
    "boxes": [
     {
      "x": 122,
-     "y": 1337,
+     "y": 895,
      "width": 836,
      "height": 199
     }
@@ -6974,18 +7010,24 @@
     "size": 46.72,
     "box": {
      "x": 482,
-     "y": 1267,
+     "y": 825,
      "width": 115,
      "height": 55
     },
     "anchor": [
      539.5,
-     1298.7749030646992
+     856.7749030646992
     ]
+   },
+   "panel": {
+    "x": 0,
+    "y": 994,
+    "width": 1080,
+    "height": 926
    },
    "quote": null
   },
-  "ass": "f7f3f92039e2e8e015f4053b74669a70068779e28b59defedb740b8b1b7addba"
+  "ass": "00a51f93f3e1fee7f921c65cd2270be90681b14be9e845bc5392ece9f4f248c9"
  },
  "red-quote-card/short": {
   "captions": [
@@ -7218,6 +7260,7 @@
     ]
    ],
    "kicker": null,
+   "panel": null,
    "quote": {
     "x": 506,
     "y": 870,
@@ -7483,6 +7526,7 @@
      806.271119078105
     ]
    },
+   "panel": null,
    "quote": {
     "x": 506,
     "y": 853,
@@ -7749,6 +7793,7 @@
      830.1062862996158
     ]
    },
+   "panel": null,
    "quote": {
     "x": 516,
     "y": 862,
@@ -7989,6 +8034,7 @@
     ]
    ],
    "kicker": null,
+   "panel": null,
    "quote": null
   },
   "ass": "36d4d75753035216c00bde3cc8f1a302c59e62ed03a3f95626f4c7917d1cd9cc"
@@ -8249,6 +8295,7 @@
      1091.9410601792572
     ]
    },
+   "panel": null,
    "quote": null
   },
   "ass": "0dbd87f9796feec7c5a60ceaeca38e062d85f15419d8afade28eea4a16f47262"
@@ -8510,6 +8557,7 @@
      1080.81502893726
     ]
    },
+   "panel": null,
    "quote": null
   },
   "ass": "20b97be177bae034d9cc4895ea2a142eb92d7cb801eef5371c1eb00cad0fe269"
