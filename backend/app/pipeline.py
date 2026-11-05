@@ -226,6 +226,15 @@ class Pipeline:
             reason = "YouTube captions ignored"
         else:
             reason = f"no '{language}' YouTube captions"
+
+        def downloading(arrived: int, total: int | None) -> None:
+            so_far = f"{arrived / 1e6:.0f} of {total / 1e6:.0f} MB" if total else f"{arrived / 1e6:.0f} MB"
+            self.store.update(
+                job.id, progress=round(100 * arrived / total, 1) if total else 0.0,
+                message=f"Downloading the Whisper model, the first time only: {so_far}.",
+            )
+
+        self.ports.transcriber.prepare(downloading)
         job = self.store.update(
             job.id,
             progress=0.0,

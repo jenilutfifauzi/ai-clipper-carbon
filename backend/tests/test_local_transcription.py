@@ -73,6 +73,32 @@ def test_progress_and_a_hint_to_close_heavy_apps_are_reported(client, uncaptione
     assert (job["status"], job["progress"], job["message"]) == ("review", None, None)
 
 
+def test_the_whisper_model_is_downloaded_first_showing_how_much_has_arrived(client, uncaptioned, transcriber, wait_for_status):
+    transcriber.download = [400_000_000, 1_614_000_000]
+    transcriber.hold_download()
+    job_id = create_job(client)["id"]
+
+    deadline = time.monotonic() + 5
+    while "Whisper model" not in ((job := client.get(f"/api/jobs/{job_id}").json())["message"] or ""):
+        assert time.monotonic() < deadline, f"No download shown: {job}"
+        time.sleep(0.01)
+    assert job["status"] == "transcribing" and job["progress"] == 100
+    assert job["message"] == "Downloading the Whisper model, the first time only: 1614 of 1614 MB."
+    assert transcriber.calls == []
+
+    transcriber.release()
+    job = wait_for_status(job_id, "review", "error")
+    assert job["status"] == "review" and transcriber.prepared == 1 and transcriber.calls
+
+
+def test_a_whisper_model_that_cant_be_downloaded_fails_the_job_to_be_retried(client, uncaptioned, transcriber, wait_for_status):
+    transcriber.download_error = "Couldn't download the Whisper model: retry the Job"
+    job = wait_for_status(create_job(client)["id"], "review", "error")
+
+    assert (job["status"], job["error"]) == ("error", "Couldn't download the Whisper model: retry the Job")
+    assert transcriber.calls == []
+
+
 @pytest.mark.tuning(budget_secs=0.3)
 def test_chunk_that_stalls_once_is_retried(client, uncaptioned, speech, transcriber, wait_for_status):
     transcriber.stall(1)

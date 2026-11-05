@@ -11,6 +11,7 @@ import numpy as np
 
 from app.llm import DetailResponse, LlmRequest, ScoreResponse
 from app.transcriber import TranscriptionStopped
+from app.whisper_model import ModelDownloadFailed
 from app.transcript import Segment, Transcript, Word
 from app.video_source import VIDEO_FILE, Source, probe
 from app.voices import Pcm, SpeechError, TransientSpeechError, Voice
@@ -85,6 +86,8 @@ class FakeTranscriber:
 
     `stall(n)` makes the next `n` calls hang like a stuck Whisper run, until `stop()`.
     `hold(after=n)` makes the calls after the first `n` wait for `release()`.
+    `prepare` reports `download` as arriving, then fails with `download_error`, if any, or, after
+    `hold_download()`, waits for `release()`.
     """
 
     def __init__(self, words: list[Word]) -> None:
@@ -97,6 +100,12 @@ class FakeTranscriber:
         self._stalled: list[threading.Event] = []
         self._hold_after: int | None = None
         self._released = threading.Event()
+        # prepare()'s calls, and the bytes it reports arriving, the last of them the total.
+        self.prepared = 0
+        self.download: list[int] = []
+        # What prepare() fails with; or, held, it waits for release() after reporting.
+        self.download_error: str | None = None
+        self._hold_download = False
 
     def calls_for(self, stem: str) -> int:
         """How many calls were of the file with this stem (a media item's id, or "source")."""
@@ -105,12 +114,25 @@ class FakeTranscriber:
     def stall(self, times: int) -> None:
         self._stalls = times
 
+    def hold_download(self) -> None:
+        self._hold_download = True
+        self._released.clear()
+
     def hold(self, after: int = 0) -> None:
         self._hold_after = after
         self._released.clear()
 
     def release(self) -> None:
         self._released.set()
+
+    def prepare(self, downloading: Callable[[int, int | None], None]) -> None:
+        self.prepared += 1
+        for arrived in self.download:
+            downloading(arrived, self.download[-1])
+        if self.download_error is not None:
+            raise ModelDownloadFailed(self.download_error)
+        if self._hold_download:
+            self._released.wait()
 
     def stop(self) -> None:
         for stalled in self._stalled:
