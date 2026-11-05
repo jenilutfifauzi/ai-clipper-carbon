@@ -327,6 +327,9 @@ def test_a_tracked_plan_is_saved_and_read_back_as_json():
 # frame's width at 9:8 (960x854), and Blur shows the whole frame 1080x608 over its blurred centre crop.
 SPLIT_CROP = (960, 854)
 TOP, BOTTOM = Box(0, 0, 1080, 960), Box(0, 960, 1080, 960)
+# With three faces, three panels of 1080x640, each crop a third of the frame's width at 27:16 (640x380).
+THIRD_CROP = (640, 380)
+THIRDS = (Box(0, 0, 1080, 640), Box(0, 640, 1080, 640), Box(0, 1280, 1080, 640))
 
 
 def people(count: int) -> list[Face]:
@@ -340,7 +343,7 @@ def layouts(plan: RenderPlan) -> list[tuple[float, float, SceneLayout]]:
 
 @pytest.mark.parametrize(
     ("count", "layout"),
-    [(0, SceneLayout.BLUR), (1, SceneLayout.TRACK), (2, SceneLayout.SPLIT), (3, SceneLayout.BLUR), (5, SceneLayout.BLUR)],
+    [(0, SceneLayout.BLUR), (1, SceneLayout.TRACK), (2, SceneLayout.SPLIT), (3, SceneLayout.SPLIT), (4, SceneLayout.BLUR), (5, SceneLayout.BLUR)],
 )
 def test_each_scene_is_laid_out_by_its_number_of_faces(count, layout):
     [scene] = tracked(sampled((3, people(count))), 3).scenes
@@ -348,8 +351,11 @@ def test_each_scene_is_laid_out_by_its_number_of_faces(count, layout):
     if layout is SceneLayout.TRACK:
         [panel] = scene.panels
         assert (panel.area, panel.crop_width, panel.crop_height) == (Box(0, 0, 1080, 1920), 608, 1080)
-    elif layout is SceneLayout.SPLIT:
+    elif layout is SceneLayout.SPLIT and count == 2:
         assert [(p.area, p.crop_width, p.crop_height) for p in scene.panels] == [(TOP, *SPLIT_CROP), (BOTTOM, *SPLIT_CROP)]
+    elif layout is SceneLayout.SPLIT:
+        # Three faces, a panel each: a third of the frame high, a crop a third of the Source wide.
+        assert [(p.area, p.crop_width, p.crop_height) for p in scene.panels] == [(third, *THIRD_CROP) for third in THIRDS]
     else:
         # The blurred centre crop fills the frame; the whole shot, as wide as the frame, is centred on it.
         background, shot = scene.panels
@@ -434,6 +440,73 @@ def test_split_puts_the_left_face_on_top_and_follows_each_face_with_its_own_came
         y = panel.path[0].y
         assert (seen.centre_y - y) / panel.crop_height == pytest.approx(0.4, abs=0.01)
         assert all(point.y == y for point in panel.path)
+
+
+def test_split_gives_three_faces_a_panel_each_from_the_leftmost_on_top():
+    # Detected right, left, middle: the faces' centres at x 1520, 400 and 960, y 450.
+    trio = [face(1520), face(400), face(960)]
+    [scene] = tracked(sampled((3, trio)), 3).scenes
+    assert scene.layout is SceneLayout.SPLIT
+    assert [panel.area for panel in scene.panels] == list(THIRDS)
+    for panel, x in zip(scene.panels, (400, 960, 1520)):
+        [start] = panel.path
+        assert start.x + panel.crop_width / 2 == pytest.approx(x, abs=2)
+        # Each face a little above the middle of its panel, as with two.
+        assert (450 - start.y) / panel.crop_height == pytest.approx(0.4, abs=0.01)
+
+
+def test_a_forced_split_of_four_faces_shows_the_three_seen_most():
+    # The fourth, on the right, is seen in only half of the frames: Auto would take it for four
+    # faces some of the time; forced, Split leaves it out.
+    a, b, c, d = face(320), face(800), face(1300), face(1760)
+    faces = sampled((1.5, [d, a, b, c]), (1.5, [a, b, c]))
+    [scene] = tracked(faces, 3, layout=Layout.SPLIT).scenes
+    assert [panel.area for panel in scene.panels] == list(THIRDS)
+    assert [panel.path[0].x + panel.crop_width / 2 for panel in scene.panels] == [320, 800, 1300]
+    # Four faces all through: Auto shows them all, over the blur.
+    assert tracked(sampled((3, [a, b, c, d])), 3).scenes[0].layout is SceneLayout.BLUR
+
+
+# Split 3: always three panels, of the three faces tracked or else of the frame's thirds.
+
+
+def test_split_three_with_three_tracked_faces_is_split_of_three():
+    trio = [face(1520), face(400), face(960)]
+    forced = tracked(sampled((3, trio)), 3, layout=Layout.SPLIT3).scenes
+    assert forced == tracked(sampled((3, trio)), 3).scenes
+    assert forced[0].layout is SceneLayout.SPLIT
+
+
+def test_split_three_shows_the_frames_thirds_each_following_the_faces_seen_in_it():
+    # A wide shot of three where the detector mostly sees only the one facing it, in the middle
+    # (centre y 340); the one on the right, in profile, is seen now and then. Auto takes it for Track.
+    middle, right = face(900, 80), face(1450, 100)
+    faces = sampled((0.5, [middle]), (0.2, [middle, right]), (1.3, [middle]), (0.2, [middle, right]), (0.8, [middle]))
+    assert tracked(faces, 3).scenes[0].layout is SceneLayout.TRACK
+    [scene] = tracked(faces, 3, layout=Layout.SPLIT3).scenes
+    assert scene.layout is SceneLayout.SPLIT
+    assert [(p.area, p.crop_width, p.crop_height) for p in scene.panels] == [(third, *THIRD_CROP) for third in THIRDS]
+    left_third, middle_third, right_third = scene.panels
+    # The middle and right thirds follow their faces, each a little above its panel's middle.
+    for panel, seen in ((middle_third, middle), (right_third, right)):
+        assert crop_at(panel.path, 2.9) + panel.crop_width / 2 == pytest.approx(seen.centre_x, abs=2)
+        assert (seen.centre_y - panel.path[0].y) / panel.crop_height == pytest.approx(0.4, abs=0.01)
+    # The left third sees no one: still on its share of the frame, at the faces' height (not centred,
+    # y 350, which would cut the heads off).
+    level = (sum(f.centre_y for frame in faces for f in frame.faces) / sum(len(frame.faces) for frame in faces))
+    [still] = left_third.path
+    assert still.x == 0
+    assert (level - still.y) / left_third.crop_height == pytest.approx(0.4, abs=0.01)
+
+
+def test_split_three_without_faces_shows_the_frames_thirds_still_and_centred():
+    [scene] = tracked(sampled((3, None)), 3, layout=Layout.SPLIT3).scenes
+    assert scene.layout is SceneLayout.SPLIT
+    assert [(p.area, p.crop_width, p.crop_height) for p in scene.panels] == [(third, *THIRD_CROP) for third in THIRDS]
+    assert [p.path for p in scene.panels] == [[CropPoint(0.0, x, 350)] for x in (0, 640, 1280)]
+    # Not analysed: the same.
+    [unseen] = tracked(None, 3, layout=Layout.SPLIT3).scenes
+    assert unseen.panels == scene.panels
 
 
 def test_a_portrait_source_is_passed_through_whatever_its_faces_or_automatic_layout():
@@ -654,8 +727,11 @@ def test_the_hook_sits_just_below_the_top_safe_zone_and_never_over_the_captions(
         for text in ("Kenapa gagal?", HOOK, LONG_HOOK, "W" * 30)
     ]
     plans.append(plan_render(100, 106, source(1080, 1920, fps=FPS), words=words, hook=HOOK, canvas=PORTRAIT))
-    # Every Layout's captions are there: the seam's band (Split) and the lower third.
-    assert {e.area for plan in plans for e in plan.captions} == {PORTRAIT.seam_captions, PORTRAIT.lower_captions}
+    # Every Layout's captions are there: the seam's band (Split), the lower seam's (Split 3) and the
+    # lower third.
+    assert {e.area for plan in plans for e in plan.captions} == {
+        PORTRAIT.seam_captions, PORTRAIT.split_captions(3), PORTRAIT.lower_captions
+    }
     for plan in plans:
         hook, area = plan.hook, plan.hook.area
         # Inside the safe zones, at the top just below the top one, centred like the captions.
@@ -753,8 +829,9 @@ def test_the_hook_goes_where_its_style_puts_it_at_its_size():
     bottom = hooked(HOOK, hook_style=HookStyle(position=HookPosition.BOTTOM)).area
     assert bottom.y + bottom.height == PORTRAIT.safe_area.y + PORTRAIT.safe_area.height
     assert hooked(HOOK, hook_style=HookStyle(position=HookPosition.CUSTOM, y=700)).area.y == 700
+    # By hand, below the Safe Area as far as its hook_bottom (y 1690 on 9:16).
     clamped = hooked(HOOK, hook_style=HookStyle(position=HookPosition.CUSTOM, y=1900)).area
-    assert clamped.y + clamped.height == PORTRAIT.safe_area.y + PORTRAIT.safe_area.height
+    assert clamped.y + clamped.height == PORTRAIT.hook_bottom == 1690
     # A smaller size: the same lines in a smaller box, and the text fits at that size.
     small = hooked(HOOK, hook_style=HookStyle(size=60))
     assert small.size == 60 and small.area.width < top.area.width and small.area.height < top.area.height
@@ -918,6 +995,13 @@ def test_a_layout_override_changes_only_the_scene_holding_it():
     assert [s.layout for s in overridden([LayoutOverride(4.0, Layout.TRACK)]).scenes] == ["blur", "track", "track"]
     two = [LayoutOverride(0.5, Layout.SPLIT), LayoutOverride(1.5, Layout.TRACK)]
     assert [s.layout for s in overridden(two).scenes] == ["track", "track", "split"]
+    # Split 3 on the two-face Scene: three panels where Split has two, its Auto captions on the lower seam.
+    words = said("lima enam", 4.5)
+    split, split_three = (overridden(given, words=words) for given in ([], [LayoutOverride(5.0, Layout.SPLIT3)]))
+    assert [len(s.panels) for s in split.scenes] == [2, 1, 2]
+    assert [s.layout for s in split_three.scenes] == ["blur", "track", "split"]
+    assert [len(s.panels) for s in split_three.scenes] == [2, 1, 3]
+    assert {cue.area for cue in split_three.captions} == {PORTRAIT.split_captions(3)}
     # Outside the Clip: nothing.
     assert [s.layout for s in overridden([LayoutOverride(-1, Layout.TRACK), LayoutOverride(9, Layout.TRACK)]).scenes] == [
         "blur", "track", "split"
@@ -1150,6 +1234,43 @@ def test_a_quote_mark_stays_clear_of_the_kicker_and_inside_the_safe_area():
         assert PORTRAIT.safe_area.y <= area.y and area.y + area.height <= PORTRAIT.safe_area.y + PORTRAIT.safe_area.height
     wide = hooked(LONG_HOOK, hook_style=HookStyle(quote=True))
     assert wide.quote.x >= 0 and wide.boxes[0].x + wide.boxes[0].width <= PORTRAIT.safe_area.x + PORTRAIT.safe_area.width
+
+
+# Borders and a Quote Mark on top (hook-cards).
+
+
+def test_a_border_pads_the_box_by_its_width_and_no_box_has_none():
+    for shape in ("block", "strips"):
+        plain = hooked(HOOK, hook_style=HookStyle(shape=shape))
+        bordered = hooked(HOOK, hook_style=HookStyle(shape=shape, border=8))
+        assert bordered.lines == plain.lines
+        for before, after in zip(plain.boxes, bordered.boxes):
+            assert after.width - before.width in (16, 17) and after.height - before.height in (16, 17)
+        assert bordered.anchors[0][1] - bordered.boxes[0].y == pytest.approx(plain.anchors[0][1] - plain.boxes[0].y + 8, abs=1)
+    for style in ({"shape": "none"}, {"box_opacity": 0}):
+        assert hooked(HOOK, hook_style=HookStyle(border=8, **style)) == hooked(HOOK, hook_style=HookStyle(**style))
+
+
+def test_a_quote_mark_on_top_is_centred_on_the_first_boxs_top_edge_clear_of_the_text():
+    for shape in ("block", "strips"):
+        for align in ("center", "left"):
+            hook = hooked(HOOK, hook_style=HookStyle(shape=shape, align=align, quote=True, quote_place="top"))
+            badge, first = hook.quote, hook.boxes[0]
+            assert badge.width == round(0.9 * HOOK_SIZE)
+            assert abs(badge.x + badge.width / 2 - (first.x + first.width / 2)) <= 1
+            assert badge.y + badge.height // 2 == first.y and hook.area.y == badge.y == PORTRAIT.safe_area.y
+            # Its lower half in the box, clear of the first line's capitals.
+            cap = font_metrics().cap_height / font_metrics().units * hook.size
+            assert badge.y + badge.height + 0.2 * HOOK_SIZE <= hook.anchors[0][1] - cap + 1
+            # The lines across as they were.
+            plain = hooked(HOOK, hook_style=HookStyle(shape=shape, align=align))
+            assert [x for x, _ in hook.anchors] == [x for x, _ in plain.anchors]
+    # No box: centred above the first line's capitals.
+    bare = hooked(HOOK, hook_style=HookStyle(shape="none", quote=True, quote_place="top"))
+    x, baseline = bare.anchors[0]
+    cap = font_metrics().cap_height / font_metrics().units * bare.size
+    assert abs(bare.quote.x + bare.quote.width / 2 - x) <= 1 and bare.quote.y + bare.quote.height <= baseline - cap + 1
+    assert contains(bare.area, bare.quote)
 
 
 # Fixes from the hook-styles review.
@@ -1673,3 +1794,20 @@ def test_a_cue_parted_only_by_a_cue_edit_needs_no_join():
     split = retimed(words, [CueEdit(at=100 + (empat.start + empat.end) / 2)], 8, caption_style=SENTENCE).captions
     assert rows(split) == [["SATU DUA TIGA"], ["EMPAT LIMA ENAM"]]
     assert [(cue.joinable, cue.needs_join) for cue in split] == [(False, False), (True, False)]
+
+
+# A Hook Panel (hook-cards).
+
+
+def test_a_hook_panel_goes_across_the_frame_from_the_boxes_middle_to_the_bottom():
+    for shape in ("block", "strips"):
+        for position in ("top", "middle", "bottom"):
+            hook = hooked(HOOK, hook_style=HookStyle(shape=shape, panel=True, position=position))
+            first, last = hook.boxes[0], hook.boxes[-1]
+            assert hook.panel == Box(0, (first.y + last.y + last.height) // 2, PORTRAIT.width, PORTRAIT.height - hook.panel.y)
+            # It changes nothing else.
+            assert replace(hook, panel=None) == hooked(HOOK, hook_style=HookStyle(shape=shape, position=position))
+    # Off, or with no box.
+    assert hooked(HOOK).panel is None
+    for style in ({"shape": "none"}, {"box_opacity": 0}):
+        assert hooked(HOOK, hook_style=HookStyle(panel=True, **style)).panel is None

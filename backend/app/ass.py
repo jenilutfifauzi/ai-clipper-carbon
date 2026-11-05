@@ -52,6 +52,18 @@ def rounded_box(width: float, height: float, radius: float) -> str:
     )
 
 
+def moved_drawing(drawing: str, x: float, y: float) -> str:
+    """An ASS drawing's points moved `x` right and `y` down."""
+    words, moved, axis = drawing.split(), [], 0
+    for word in words:
+        if word.isalpha():
+            moved.append(word)
+            continue
+        moved.append(f"{float(word) + (x, y)[axis]:g}")
+        axis = 1 - axis
+    return " ".join(moved)
+
+
 def reversed_drawing(drawing: str) -> str:
     """An ASS drawing of one closed figure (`m`, then `l` lines and `b` Béziers) gone round the other
     way. libass fills where a point is wound round a nonzero number of times, so a figure drawn the

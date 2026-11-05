@@ -115,6 +115,7 @@ def _scaled_hook(hook: HookEvent, k: float) -> HookEvent:
             kicker, size=kicker.size * k, box=_scaled_box(kicker.box, k), anchor=(kicker.anchor[0] * k, kicker.anchor[1] * k)
         ),
         quote=None if hook.quote is None else _scaled_box(hook.quote, k),
+        panel=None if hook.panel is None else _scaled_box(hook.panel, k),
     )
 
 

@@ -69,10 +69,10 @@ describe("a custom place's sliders", () => {
     return { ...style, hook: { ...style.hook, position: "custom", y: 400, x: null }, caption: { ...style.caption, position: "custom", y: 1300, x: null } } as StyleControls;
   };
 
-  test("end at 9:16's Safe Area outside a Candidate", () => {
+  test("end at 9:16's Safe Area outside a Candidate (the hook's lower, at its hook bottom)", () => {
     const style = custom([]);
     const hook = slider(HookPosition({ style }), "Height of the hook's top");
-    expect([hook.min, hook.max]).toEqual([232, 1536]);
+    expect([hook.min, hook.max]).toEqual([232, 1690]);
     const caption = slider(CaptionStylePanel({ style, fonts: null, more: false, onMore: () => {} }), "Height of the line's centre");
     expect([caption.min, caption.max]).toEqual([332, 1436]);
   });
@@ -81,7 +81,7 @@ describe("a custom place's sliders", () => {
     const style = custom([]);
     const canvas = CANVASES["16:9"];
     const hook = slider(HookPosition({ style, canvas }), "Height of the hook's top");
-    expect([hook.min, hook.max]).toEqual([96, 1824]);
+    expect([hook.min, hook.max]).toEqual([96, 1863.11]);
     const caption = slider(CaptionStylePanel({ style, fonts: null, more: false, onMore: () => {}, canvas }), "Height of the line's centre");
     expect([caption.min, caption.max]).toEqual([273.78, 1646.22]);
   });

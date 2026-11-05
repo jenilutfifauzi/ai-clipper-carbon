@@ -37,6 +37,30 @@ describe("two decks", () => {
     expect(playback.shownDeck).toBe(0);
   });
 
+  test("a Split's third panel's video is parked, swapped and kept in step with its master like the second's", () => {
+    const stage = harness();
+    const playback = new Playback();
+    playback.setSegments(twoCuts());
+    const [first, second] = stage.decks(playback);
+    playback.seek(1);
+    expect(first.third.currentTime).toBe(101);
+    expect(second.third.currentTime).toBe(200);
+    expect(first.third.muted && second.third.muted).toBe(true);
+    stage.settle();
+    playback.play();
+    stage.advance(1);
+    expect(first.third.paused).toBe(false);
+    // Drifted away from its master, it is put back in step.
+    first.third.currentTime = 90;
+    stage.advance(0.04);
+    expect(Math.abs(first.third.currentTime - first.master.currentTime)).toBeLessThan(0.05);
+    // Through the join, the second deck's plays and the first's waits.
+    stage.advance(3);
+    expect(playback.shownDeck).toBe(1);
+    expect(second.third.paused).toBe(false);
+    expect(first.third.paused).toBe(true);
+  });
+
   test("playing through 5 s swaps the decks: the parked one plays from 200 s and is heard", () => {
     const stage = harness();
     const playback = new Playback();

@@ -5,7 +5,7 @@ import { Segmented } from "../../../components/Segmented";
 import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
-import { type Canvas, PORTRAIT, REFERENCE, referenceSafeArea } from "./canvas";
+import { type Canvas, hookBottom, PORTRAIT, REFERENCE, referenceSafeArea, toReference } from "./canvas";
 import { HookShapePicker } from "./HookShapePicker";
 import { FacePicker } from "./FacePicker";
 import { ShadowFields } from "./ShadowFields";
@@ -32,6 +32,11 @@ const ALIGNS = [
   { value: "left", label: "Left" },
 ] as const;
 
+const QUOTE_PLACES = [
+  { value: "corner", label: "Corner" },
+  { value: "top", label: "Top middle" },
+] as const;
+
 const ANIMATIONS = [
   { value: "none", label: "None" },
   { value: "fade", label: "Fade" },
@@ -50,11 +55,15 @@ const MORE = [
   "radius",
   "padding_x",
   "padding_y",
+  "border",
+  "border_colour",
+  "panel",
   "outline",
   "outline_colour",
   "shadow",
   "quote",
   "quote_colour",
+  "quote_place",
   "kicker_colour",
   "kicker_box_colour",
   "animation_in",
@@ -121,7 +130,7 @@ export function HookPosition({ style, canvas = PORTRAIT }: { style: StyleControl
             label="Height of the hook's top"
             value={hook.y}
             min={safe.y}
-            max={safe.y + safe.height}
+            max={toReference(canvas, { x: 0, y: hookBottom(canvas) }).y}
             format={(v) => `${Math.round(v)} px`}
             onChange={(v) => set("y", v)}
             marker={marker("y", "hook height")}
@@ -143,7 +152,7 @@ export function HookMoreOptions({ style, open, onToggle }: { style: StyleControl
     <MoreOptions
       open={open}
       onToggle={onToggle}
-      contents="Lines, spacing, box, outline, shadow, Quote Mark, Kicker colours, animation"
+      contents="Lines, spacing, box, border, outline, shadow, Quote Mark, Kicker colours, animation"
       changed={countChanged(style, "hook", MORE)}
     >
       <Group title="Lines">
@@ -218,8 +227,19 @@ export function HookMoreOptions({ style, open, onToggle }: { style: StyleControl
                 onChange={(v) => set("padding_y", v)}
                 marker={marker("padding_y", "box padding down")}
               />
+              <Slider label="Border" value={hook.border} min={0} max={20} format={(v) => `${v} px`} onChange={(v) => set("border", v)} marker={marker("border", "box border")} />
+              <ColorField label="Border colour" value={hook.border_colour} onChange={(v) => set("border_colour", v)} marker={marker("border_colour", "box border colour")} />
             </>
           )}
+        </div>
+        {box && (
+          <Switch checked={hook.panel} onChange={(v) => set("panel", v)}>
+            <span className="flex items-center gap-1.5 text-sm">
+              Panel down to the bottom {marker("panel", "hook panel")}
+            </span>
+          </Switch>
+        )}
+        <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
           <Slider label="Outline" value={hook.outline} min={0} max={20} format={(v) => `${v} px`} onChange={(v) => set("outline", v)} marker={marker("outline", "hook outline")} />
           <ColorField label="Outline colour" value={hook.outline_colour} onChange={(v) => set("outline_colour", v)} marker={marker("outline_colour", "hook outline colour")} />
         </div>
@@ -230,11 +250,20 @@ export function HookMoreOptions({ style, open, onToggle }: { style: StyleControl
         <div className="grid grid-cols-1 items-end gap-x-4 gap-y-3 sm:grid-cols-2">
           <Switch checked={hook.quote} onChange={(v) => set("quote", v)}>
             <span className="flex items-center gap-1.5 text-sm">
-              On the first line's corner {marker("quote", "quote mark")}
+              On the first line {marker("quote", "quote mark")}
             </span>
           </Switch>
           {hook.quote && (
-            <ColorField label="Badge colour" value={hook.quote_colour} onChange={(v) => set("quote_colour", v)} marker={marker("quote_colour", "quote mark colour")} />
+            <>
+              <ColorField label="Badge colour" value={hook.quote_colour} onChange={(v) => set("quote_colour", v)} marker={marker("quote_colour", "quote mark colour")} />
+              <Segmented
+                legend="Place"
+                options={QUOTE_PLACES}
+                value={hook.quote_place}
+                onChange={(v) => set("quote_place", v)}
+                marker={marker("quote_place", "quote mark place")}
+              />
+            </>
           )}
         </div>
       </Group>

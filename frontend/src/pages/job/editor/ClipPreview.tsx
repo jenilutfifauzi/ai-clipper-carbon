@@ -29,8 +29,8 @@ import { useLooks } from "../../../looks";
 import { cx, formatPrecise } from "../../../format";
 import { usePlayback, useShown, type Playback } from "./playback";
 import { DeckTransport, LoopButton, RateMenu } from "./DeckTransport";
-import { CanvasContext, CAPTION_HEIGHT, fittedStage, useCanvas, useCanvasOf } from "./canvas";
-import { BLUR_BRIGHTNESS, BLUR_SIGMA, filledStyle, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
+import { CanvasContext, CAPTION_HEIGHT, fittedStage, hookBottom, useCanvas, useCanvasOf } from "./canvas";
+import { BLUR_BRIGHTNESS, BLUR_SIGMA, filledStyle, hasKeyedPictures, isKeyed, overlaysAt, PANEL_SLOTS, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewEffected } from "./PreviewEffected";
 import { PreviewMusic } from "./PreviewMusic";
 import { BehindOverlays, coversFrame, PreviewOverlays } from "./PreviewOverlays";
@@ -53,7 +53,7 @@ import { maskAlpha, segmentShows } from "./behindStage";
 import { behindId, stagePictures } from "./stagePictures";
 import { picturesAt } from "./smartGuides";
 import { StageHandles, useStageEdit, type StageEdit, type StageItem } from "./StageEdit";
-import { drawnShadow, highlightShape } from "./styleShape";
+import { drawnShadow, highlightShape, hookBorder } from "./styleShape";
 import { trackedWidth, trackedX, wordSpan } from "./tracking";
 import { cueLineMiddle, cueStageId, cueWordAt, cueWords } from "./cues";
 import type { GripSet } from "./stagePicture";
@@ -83,7 +83,7 @@ const percent = (value: number) => `${value * 100}%`;
  * crop of the video, following its path), with the plan's caption lines and hook drawn over it
  * where, when and how large the render will draw them. Drawn in the pixels of the plan's Canvas (the
  * 9:16 one until a plan comes), at its aspect, and scaled to fit. The Source plays on two decks (docs/adr/0006-the-preview-plays-the-source-on-two-decks.md),
- * each two videos in step, one per panel (Split's two, or Blur's background and shot): the first is
+ * each PANEL_SLOTS videos in step, one per panel (Split's two or three, or Blur's background and shot): the first is
  * the master, which `playback` drives and which is heard while its deck is live. The panels show
  * the live deck; the other waits, hidden, for the next join.
  * With `onWatermarkMove`, the Watermark can be dragged (or nudged with the arrow keys) to a new
@@ -148,8 +148,8 @@ export function ClipPreview({
   const room = useRef<HTMLDivElement>(null);
   // The Segments' picture, which a Transition's look styles as its incoming side.
   const incoming = useRef<HTMLDivElement>(null);
-  // Each deck's videos, its master then its follower; and the masters, whose sound PreviewMusic sets.
-  const decks = useMemo(() => [0, 1].map(() => [createRef<HTMLVideoElement>(), createRef<HTMLVideoElement>()]), []);
+  // Each deck's videos, its master then its followers; and the masters, whose sound PreviewMusic sets.
+  const decks = useMemo(() => [0, 1].map(() => Array.from({ length: PANEL_SLOTS }, () => createRef<HTMLVideoElement>())), []);
   const masters = useMemo(() => decks.map(([master]) => master), [decks]);
   const [scale, setScale] = useState(1 / 3);
   const plan = preview?.plan ?? null;
@@ -158,7 +158,7 @@ export function ClipPreview({
 
   useEffect(() => {
     const slots = [0, 1] as const;
-    for (const slot of slots) playback.attachDeck(slot, decks[slot][0].current, decks[slot][1].current);
+    for (const slot of slots) playback.attachDeck(slot, decks[slot][0].current, ...decks[slot].slice(1).map((ref) => ref.current));
     return () => {
       for (const slot of slots) playback.attachDeck(slot, null);
     };
@@ -740,7 +740,7 @@ function stageItems(
       label: "Hook",
       shows: [{ start: hook.start, end: hook.end, area: hook.area }],
       size: { now: plan.hook_style.size, ...HOOK_SIZES },
-      centreY: [plan.safe_area.y + hook.area.height / 2, plan.safe_area.y + plan.safe_area.height - hook.area.height / 2],
+      centreY: [plan.safe_area.y + hook.area.height / 2, hookBottom(plan) - hook.area.height / 2],
       onPlace: (area, size, group) => controls.onPlace("hook", { x: middle(area).x, y: Math.round(area.y), size }, group),
       onEdit:
         edit &&
@@ -1252,27 +1252,52 @@ function Hook({
   };
   const outline = style.outline > 0 ? { stroke: style.outline_colour, strokeWidth: 2 * style.outline } : {};
   const strips = hook.boxes.length > 1;
+  const border = hookBorder(style);
   const kicker = hook.kicker;
   const quote = hook.quote;
+  const panel = hook.panel;
   return (
     <g transform={moving}>
+      {/* Only fading, from the hook's start, as the renderer draws it. */}
+      {panel && (
+        <g opacity={looks[0][0]}>
+          <rect x={panel.x} y={panel.y} width={panel.width} height={panel.height} fill={style.box_colour} fillOpacity={style.box_opacity} />
+          {border > 0 && <rect x={panel.x} y={panel.y} width={panel.width} height={border} fill={style.border_colour} />}
+        </g>
+      )}
       {style.box_opacity > 0 &&
-        hook.boxes.map((box, i) =>
-          moved(
-            strips ? first + i : first,
-            <rect
-              x={box.x}
-              y={box.y}
-              width={box.width}
-              height={box.height}
-              rx={Math.min(style.radius, Math.floor(box.height / 2))}
-              fill={style.box_colour}
-              fillOpacity={style.box_opacity}
-              style={grown(strips ? first + i : first)}
-            />,
+        hook.boxes.map((box, i) => {
+          const rank = strips ? first + i : first;
+          const radius = Math.min(style.radius, Math.floor(box.height / 2));
+          // Filled inside its border, and the border a ring round that, as the renderer draws them.
+          return moved(
+            rank,
+            <g style={grown(rank)}>
+              <rect
+                x={box.x + border}
+                y={box.y + border}
+                width={box.width - 2 * border}
+                height={box.height - 2 * border}
+                rx={Math.max(radius - border, 0)}
+                fill={style.box_colour}
+                fillOpacity={style.box_opacity}
+              />
+              {border > 0 && (
+                <rect
+                  x={box.x + border / 2}
+                  y={box.y + border / 2}
+                  width={box.width - border}
+                  height={box.height - border}
+                  rx={Math.max(radius - border / 2, 0)}
+                  fill="none"
+                  stroke={style.border_colour}
+                  strokeWidth={border}
+                />
+              )}
+            </g>,
             i,
-          ),
-        )}
+          );
+        })}
       {kicker &&
         moved(
           0,

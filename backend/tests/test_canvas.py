@@ -32,6 +32,7 @@ def test_the_canvases_are_the_ones_the_frontend_reads_too() -> None:
     assert shared == {
         "reference": {"width": REFERENCE[0], "height": REFERENCE[1]},
         "caption_height": CAPTION_HEIGHT,
+        "hook_bottoms": {aspect.value: canvas.hook_bottom for aspect, canvas in CANVASES.items()},
         "canvases": {
             aspect.value: {"width": canvas.width, "height": canvas.height, "safe_area": asdict(canvas.safe_area)}
             for aspect, canvas in CANVASES.items()
@@ -60,7 +61,28 @@ def test_portrait_caption_places_are_todays() -> None:
     assert PORTRAIT.seam_captions == Box(130, 860, 820, 200)
     assert PORTRAIT.lower_captions == Box(130, 1296, 820, 200)
     assert PORTRAIT.top_captions == Box(130, 430, 820, 200)
-    assert PORTRAIT.split_panels[0].height == 960
+    assert PORTRAIT.split_panels(2)[0].height == 960
+
+
+@pytest.mark.parametrize(
+    ("aspect", "panels"),
+    [
+        (Aspect.PORTRAIT, (Box(0, 0, 1080, 640), Box(0, 640, 1080, 640), Box(0, 1280, 1080, 640))),
+        (Aspect.FEED, (Box(0, 0, 1080, 450), Box(0, 450, 1080, 450), Box(0, 900, 1080, 450))),
+        (Aspect.SQUARE, (Box(0, 0, 360, 1080), Box(360, 0, 360, 1080), Box(720, 0, 360, 1080))),
+        (Aspect.LANDSCAPE, (Box(0, 0, 640, 1080), Box(640, 0, 640, 1080), Box(1280, 0, 640, 1080))),
+    ],
+)
+def test_split_has_three_panels_in_thirds_of_the_canvas(aspect, panels) -> None:
+    assert canvas_for(aspect).split_panels(3) == panels
+
+
+def test_split_captions_sit_on_the_lowest_seam_between_its_stacked_panels() -> None:
+    # Two panels: the frame's middle, which is also the Middle place.
+    assert PORTRAIT.split_captions(2) == PORTRAIT.seam_captions == Box(130, 860, 820, 200)
+    # Three: between the second and the third, y 1280 on 9:16 and 900 on 4:5.
+    assert PORTRAIT.split_captions(3) == Box(130, 1180, 820, 200)
+    assert canvas_for(Aspect.FEED).split_captions(3) == Box(130, 800, 820, 200)
 
 
 def test_a_place_in_the_reference_space_maps_in_proportion() -> None:
@@ -164,6 +186,24 @@ def test_split_stacks_on_9_16_and_4_5_and_sets_its_panels_side_by_side_on_1_1_an
     assert second.path[0].x + crop[0] / 2 == pytest.approx(1220, abs=2)
 
 
+# Three speakers, detected right, left, middle: their faces' centres at x 1520, 400 and 960, y 600.
+TRIO = [FrameFaces(round(k * 0.12, 3), [Face(1370, 450, 300, 300, 0.95), Face(250, 450, 300, 300, 0.9), Face(810, 450, 300, 300, 0.9)]) for k in range(40)]
+
+
+@pytest.mark.parametrize(
+    ("aspect", "crop"),
+    [(Aspect.PORTRAIT, (640, 380)), (Aspect.FEED, (640, 266)), (Aspect.SQUARE, (360, 1080)), (Aspect.LANDSCAPE, (640, 1080))],
+)
+def test_split_of_three_faces_gives_each_a_panel_from_the_leftmost_on_top_or_on_the_left(aspect, crop):
+    canvas = canvas_for(aspect)
+    [scene] = plan_render(100, 105, WIDE, faces=TRIO, canvas=canvas).scenes
+    assert scene.layout is SceneLayout.SPLIT
+    assert tuple(panel.area for panel in scene.panels) == canvas.split_panels(3)
+    # Each crop a third of the Source's width (or its full height), of its panel's shape, on its face.
+    assert {(panel.crop_width, panel.crop_height) for panel in scene.panels} == {crop}
+    assert [panel.path[0].x + crop[0] / 2 for panel in scene.panels] == [pytest.approx(x, abs=2) for x in (400, 960, 1520)]
+
+
 def test_the_face_rises_above_the_middle_only_of_a_stacked_panel():
     # A 4:3 Source leaves Split's crops room to move up and down on 16:9 as well as on 4:5.
     four_three = SourceMetadata(duration=3600, fps=25, width=1440, height=1080, codec="h264")
@@ -180,7 +220,7 @@ def test_split_with_fewer_than_two_faces_shows_the_sources_halves_in_the_same_pa
     canvas = canvas_for(aspect)
     [scene] = plan_render(100, 105, WIDE, faces=GLIDE, layout=Layout.SPLIT, canvas=canvas).scenes
     first, second = scene.panels
-    assert (first.area, second.area) == canvas.split_panels
+    assert (first.area, second.area) == canvas.split_panels(2)
     assert first.path[0].x + first.crop_width / 2 == 480 and second.path[0].x + second.crop_width / 2 == 1440
 
 
@@ -232,10 +272,21 @@ def test_captions_on_auto_sit_on_the_seam_of_a_stacked_split(aspect):
     assert cue.area == canvas.seam_captions and cue.area.y + cue.area.height / 2 == canvas.height / 2
 
 
-@pytest.mark.parametrize("aspect", [Aspect.SQUARE, Aspect.LANDSCAPE])
-def test_captions_on_auto_sit_in_the_lower_third_of_a_side_by_side_split(aspect):
+@pytest.mark.parametrize("aspect", [Aspect.PORTRAIT, Aspect.FEED])
+def test_captions_on_auto_sit_on_the_seam_between_the_second_and_third_panels_of_a_stacked_split(aspect):
     canvas = canvas_for(aspect)
-    [cue] = plan_render(100, 105, WIDE, faces=PAIR, layout=Layout.SPLIT, words=WORDS, canvas=canvas).captions
+    [cue] = plan_render(100, 105, WIDE, faces=TRIO, words=WORDS, canvas=canvas).captions
+    assert cue.area == canvas.split_captions(3) and cue.area.y + cue.area.height / 2 == canvas.height * 2 / 3
+    # Middle stays the frame's middle, whatever the Layout.
+    [cue] = plan_render(100, 105, WIDE, faces=TRIO, words=WORDS, caption_style=CaptionStyle(position=CaptionPosition.MIDDLE), canvas=canvas).captions
+    assert cue.area == canvas.seam_captions
+
+
+@pytest.mark.parametrize("aspect", [Aspect.SQUARE, Aspect.LANDSCAPE])
+@pytest.mark.parametrize("faces", [PAIR, TRIO])
+def test_captions_on_auto_sit_in_the_lower_third_of_a_side_by_side_split(aspect, faces):
+    canvas = canvas_for(aspect)
+    [cue] = plan_render(100, 105, WIDE, faces=faces, layout=Layout.SPLIT, words=WORDS, canvas=canvas).captions
     assert cue.area == canvas.lower_captions
 
 

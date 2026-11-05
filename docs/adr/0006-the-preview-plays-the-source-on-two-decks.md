@@ -38,3 +38,7 @@ The preview plays a cut Clip by seeking the Source video at each join (ADR 0002)
 - **The page holds four Source videos instead of two.** Up to six are held during a Transition, whose ghost keeps its own pair, plus a video for each media Segment and Overlay. The walkthrough on an iPhone checks memory. If the iPhone struggles, a phone may get a single deck later.
 - **The clip editor gets seamless joins too,** since it shares the preview and `Playback`.
 - **`Playback` grows from one video to decks.** Its tests drive it with fake video elements and a fake clock.
+
+## Amendment (2026-11-06): three panels
+
+Split may show three panels (.scratch/split-three/spec.md), so a deck is a master and two followers, `PANEL_SLOTS` videos, as is a Transition's ghost and a Source Segment played from a Retimed copy. The page holds six Source videos on the decks, up to nine during a Transition. A Scene with fewer panels hides the videos it doesn't use; they still play in step.

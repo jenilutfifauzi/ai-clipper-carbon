@@ -145,7 +145,7 @@ from typing import Literal, NamedTuple
 
 import numpy as np
 
-from app.ass import ass_alpha, ass_filter, ass_text, filter_value, ass_time, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
+from app.ass import ass_alpha, ass_filter, ass_text, filter_value, ass_time, moved_drawing, reversed_drawing, rounded_box, shadow_tags, spacing, style_colour, tag_colour, tracked
 from app.audio_effects import MEASURED_GAIN, NORMALIZE, effect_chain, normalize_gain
 from app.canvas import unscaled
 from app.config import FONTS_DIR, RenderTuning
@@ -168,6 +168,7 @@ from app.planner import (
     Box,
     Cue,
     HookEvent,
+    hook_border,
     Panel,
     PictureLayout,
     RenderPlan,
@@ -2421,13 +2422,26 @@ def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
         # The text's outline and shadow are the style's; a box has neither.
         bare = "\\bord0\\shad0" if style.outline or _plain_shadow(style.shadow) else ""
         tags = f"\\p1{bare}\\c{tag_colour(style.box_colour)}\\alpha{alpha}"
+        border = hook_border(style)
+        ring_tags = f"\\p1\\bord0\\shad0\\c{tag_colour(style.border_colour)}\\alpha&H00&"
         for i, box in enumerate(hook.boxes):
-            drawing = f"{rounded_box(box.width, box.height, min(style.radius, box.height // 2))}{{\\p0}}"
+            radius = min(style.radius, box.height // 2)
+            outer = rounded_box(box.width, box.height, radius)
             step = first + i if strips else first
-            if Animation.POP in (style.animation_in, style.animation_out):
-                elements.append(_Element(1, 5, box.x + box.width / 2, box.y + box.height / 2, "g", alpha, tags, drawing, step))
+            pop = Animation.POP in (style.animation_in, style.animation_out)
+            # Its fill inside its border, and the border a ring round it, both placed by the box's
+            # corner (or centre): the fill's drawing is moved in by the border.
+            x, y, align = (box.x + box.width / 2, box.y + box.height / 2, 5) if pop else (box.x, box.y, 7)
+            if border:
+                inside = rounded_box(box.width - 2 * border, box.height - 2 * border, max(radius - border, 0))
+                inner = moved_drawing(inside, border, border)
+                # By its corner, a drawing is placed by its origin; centred (5), by its points' bounds.
+                fill = inside if pop else inner
+                elements.append(_Element(1, align, x, y, "g", alpha, tags, f"{fill}{{\\p0}}", step))
+                ring = f"{outer} {reversed_drawing(inner)}{{\\p0}}"
+                elements.append(_Element(1, align, x, y, "g", None, ring_tags, ring, step))
             else:
-                elements.append(_Element(1, 7, box.x, box.y, "g", alpha, tags, drawing, step))
+                elements.append(_Element(1, align, x, y, "g", alpha, tags, f"{outer}{{\\p0}}", step))
     if hook.kicker is not None:
         kicker = hook.kicker
         box = kicker.box
@@ -2465,7 +2479,7 @@ def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
 
     step = _stagger(hook, style, first + len(hook.lines) - 1)
     # By part of the hook's time, then by element, as the parts are in time.
-    events = []
+    events = [(-1, i, event) for i, event in enumerate(_panel_events(hook, style))]
     for order, (layer, align, x, y, y_format, alpha, tags, body, rank, alpha_tag) in enumerate(elements):
         for part, (begin, finish, phase) in enumerate(_hook_phases(hook, style, rank * step)):
             start, end = ass_time(begin), ass_time(finish)
@@ -2480,6 +2494,24 @@ def _hook_events(hook: HookEvent, style: HookStyle) -> list[str]:
                 text = f"{{\\an{align}{place}{motion}{tags}}}{body}"
             events.append((part, order, f"Dialogue: {layer},{start},{end},Hook,,0,0,0,,{text}"))
     return [event for _, _, event in sorted(events)]
+
+
+def _panel_events(hook: HookEvent, style: HookStyle) -> list[str]:
+    """The Hook Panel's Dialogue events, under everything else of the hook on its layer 1: its fill in
+    the box's colour and its border along its top, on for the hook's whole time. It only fades, in
+    and out as the hook comes on and goes off (_hook_ends), however they do."""
+    panel = hook.panel
+    if panel is None:
+        return []
+    on, off = _hook_ends(hook, style)
+    tags = f"\\an7\\pos({panel.x},{panel.y})\\p1\\bord0\\shad0" + (f"\\fad({round(on * 1000)},{round(off * 1000)})" if on or off else "")
+    start, end = ass_time(hook.start), ass_time(hook.end)
+    fill = f"{{{tags}\\c{tag_colour(style.box_colour)}\\alpha{ass_alpha(style.box_opacity)}}}{rounded_box(panel.width, panel.height, 0)}{{\\p0}}"
+    events = [f"Dialogue: 1,{start},{end},Hook,,0,0,0,,{fill}"]
+    if border := hook_border(style):
+        line = f"{{{tags}\\c{tag_colour(style.border_colour)}\\alpha&H00&}}{rounded_box(panel.width, border, 0)}{{\\p0}}"
+        events.append(f"Dialogue: 1,{start},{end},Hook,,0,0,0,,{line}")
+    return events
 
 
 def _emphasised(line: str, spans: list[tuple[int, int]], style: HookStyle) -> str:

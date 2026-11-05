@@ -90,6 +90,7 @@ const LAYOUTS = [
   { value: "auto", label: "Auto" },
   { value: "track", label: "Track" },
   { value: "split", label: "Split" },
+  { value: "split3", label: "Split 3" },
   { value: "blur", label: "Blur" },
   { value: "manual", label: "Manual" },
 ] as const;
@@ -97,7 +98,8 @@ const LAYOUTS = [
 const LAYOUT_HINTS: Record<Layout, string> = {
   auto: "Chosen per scene from the faces in it.",
   track: "A crop of the frame's shape following the speaker, in every scene.",
-  split: "Two panels, left person on top (on the left on 1:1 and 16:9), in every scene.",
+  split: "A panel per person, two or three, the leftmost on top (on the left on 1:1 and 16:9), in every scene.",
+  split3: "Always three panels, for a shot of three: a face each, or the frame's thirds where faces go unseen (in profile), in every scene.",
   blur: "The wide shot over a blurred background, in every scene.",
   manual: "Framed by hand, in every scene: drag the picture on the preview to pan it, its corners to zoom.",
 };

@@ -134,6 +134,7 @@ const CHOICES = [
   { value: "auto", label: "Auto" },
   { value: "track", label: "Track" },
   { value: "split", label: "Split" },
+  { value: "split3", label: "Split 3" },
   { value: "blur", label: "Blur" },
   { value: "manual", label: "Manual" },
 ] as const;

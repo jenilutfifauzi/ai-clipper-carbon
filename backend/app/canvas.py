@@ -39,6 +39,9 @@ REFERENCE = (1080, 1920)
 PORTRAIT_SAFE_AREA = Box(0, 232, 950, 1304)
 # On the other aspects (feeds and players), this share of each edge is kept clear.
 SAFE_MARGIN = 0.05
+# A hook placed by hand may reach this share of the way from the Safe Area's bottom to the frame's:
+# on 9:16 down to y 1690, into the caption and name the platforms show but above their buttons.
+HOOK_INTO_MARGIN = 0.4
 # Captions and the hook are at most as wide as on 9:16, centred in the frame as there (x 130–950),
 # however wide the Safe Area: their font sizes are in pixels, so a wider area would only make longer lines.
 CAPTION_WIDEST = 2 * (PORTRAIT_SAFE_AREA.x + PORTRAIT_SAFE_AREA.width) - REFERENCE[0]
@@ -47,6 +50,8 @@ CAPTION_WIDEST = 2 * (PORTRAIT_SAFE_AREA.x + PORTRAIT_SAFE_AREA.width) - REFEREN
 CAPTION_HEIGHT = 200
 LOWER_CAPTIONS_ABOVE = 240
 TOP_CAPTIONS_BELOW = 198
+# Split shows at most this many panels, one for each of the faces seen most in its Scene.
+SPLIT_MOST = 3
 # Under Blur's band, a caption area starts at least this far below it: on 9:16 with a 16:9 Source,
 # the band ends at 1264 and the lower third's starts at 1296.
 CAPTIONS_BELOW_BAND = 32
@@ -69,20 +74,20 @@ class Canvas:
 
     @property
     def stacked(self) -> bool:
-        """Whether Split's two panels are stacked (on a Canvas taller than it is wide), or else side
-        by side."""
+        """Whether Split's panels are stacked (on a Canvas taller than it is wide), or else side by
+        side."""
         return self.height > self.width
 
-    @property
-    def split_panels(self) -> tuple[Box, Box]:
-        """Split's two panels, the left face's first: stacked, each of the full width and half the
-        height (1080×960 on 9:16, 1080×675 on 4:5), or side by side, each of half the width and the
-        full height (540×1080 on 1:1, 960×1080 on 16:9)."""
+    def split_panels(self, count: int) -> tuple[Box, ...]:
+        """Split's `count` panels (two, or SPLIT_MOST), the leftmost face's first: stacked, each of the
+        full width and a `count`th of the height (two of 1080×960 or three of 1080×640 on 9:16, 1080×675
+        or 1080×450 on 4:5), or side by side, each of a `count`th of the width and the full height (540
+        or 360×1080 on 1:1, 960 or 640×1080 on 16:9)."""
         if self.stacked:
-            half = self.height // 2
-            return Box(0, 0, self.width, half), Box(0, half, self.width, half)
-        half = self.width // 2
-        return Box(0, 0, half, self.height), Box(half, 0, half, self.height)
+            share = self.height // count
+            return tuple(Box(0, i * share, self.width, share) for i in range(count))
+        share = self.width // count
+        return tuple(Box(i * share, 0, share, self.height) for i in range(count))
 
     @property
     def caption_x(self) -> int:
@@ -97,8 +102,14 @@ class Canvas:
 
     @property
     def seam_captions(self) -> Box:
-        """On the seam between Split's stacked panels, clear of the faces (at 40% of each panel)."""
-        seam = self.split_panels[0].height
+        """In the middle of the frame, on the seam between a stacked Split's two panels: there on
+        Auto, and the Middle position's place in every Layout."""
+        return self.split_captions(2)
+
+    def split_captions(self, count: int) -> Box:
+        """On Auto in a stacked Split of `count` panels: on the seam above the last panel (between the
+        second and third of three, y 1280 on 9:16), clear of the faces (at 40% of each panel)."""
+        seam = self.split_panels(count)[-1].y
         return Box(self.caption_x, seam - CAPTION_HEIGHT // 2, self.caption_width, CAPTION_HEIGHT)
 
     @property
@@ -107,6 +118,12 @@ class Canvas:
         the bottom of the Safe Area."""
         bottom = self.safe_area.y + self.safe_area.height
         return Box(self.caption_x, bottom - LOWER_CAPTIONS_ABOVE, self.caption_width, CAPTION_HEIGHT)
+
+    @property
+    def hook_bottom(self) -> int:
+        """How low a custom-placed hook may reach: HOOK_INTO_MARGIN past the Safe Area's bottom."""
+        bottom = self.safe_area.y + self.safe_area.height
+        return bottom + round(HOOK_INTO_MARGIN * (self.height - bottom))
 
     def captions_below(self, band: Box) -> Box | None:
         """Under Blur's `band` (the Source fitted over its blur): in the lower third, or lower to keep

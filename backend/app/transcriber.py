@@ -3,6 +3,7 @@
 import logging
 import multiprocessing
 import threading
+from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
@@ -10,7 +11,7 @@ from multiprocessing.process import BaseProcess
 from pathlib import Path
 from typing import Protocol
 
-from app import whisper_worker
+from app import whisper_model, whisper_worker
 from app.config import SILERO_VAD_MODEL, Settings, TranscriptionTuning
 from app.transcript import Transcript
 
@@ -28,6 +29,12 @@ class Transcriber(Protocol):
 
         Words and Segments are on the media's timeline: the range's offset is already applied.
         """
+        ...
+
+    def prepare(self, downloading: Callable[[int, int | None], None]) -> None:
+        """Have at hand what transcribing needs (Whisper's model, downloaded on first use), calling
+        `downloading` with the bytes arrived and the total (None when unknown) while it downloads.
+        Raises whisper_model.ModelDownloadFailed when it can't be had."""
         ...
 
     def stop(self) -> None:
@@ -113,6 +120,9 @@ class WhisperTranscriber:
         self._lock = threading.Lock()
         self._worker: _Worker | None = None
 
+    def prepare(self, downloading: Callable[[int, int | None], None]) -> None:
+        whisper_model.fetch(self.settings.whisper_model, downloading)
+
     def transcribe(self, media: Path, language: str, start: float = 0.0, end: float | None = None) -> Transcript:
         worker = self._running_worker()
         try:
@@ -156,9 +166,9 @@ class WhisperTranscriber:
             if self._worker is None or not self._worker.process.is_alive():
                 context = multiprocessing.get_context("spawn")
                 connection, child = context.Pipe()
-                options = whisper_worker.Options(
-                    self.settings.whisper_model, str(self.settings.ffmpeg_bin), str(SILERO_VAD_MODEL)
-                )
+                # From its folder when it is all here, so that the worker doesn't ask the Hub again.
+                model = whisper_model.cached(self.settings.whisper_model) or self.settings.whisper_model
+                options = whisper_worker.Options(str(model), str(self.settings.ffmpeg_bin), str(SILERO_VAD_MODEL))
                 process = context.Process(
                     target=whisper_worker.serve, args=(child, options), name="whisper", daemon=True
                 )

@@ -6,17 +6,22 @@ Each Scene of a landscape Source gets its own Layout, from its number of faces i
 its sampled frames (scenes shorter than MIN_SCENE_SECS are first merged into a neighbour, so that the
 layout doesn't flicker). The Candidate's layout override, unless Auto, replaces the choice in every Scene.
 - One face: Track, a full-height 9:16 crop that follows the speaker's face.
-- Two faces: Split, two panels, each with its own camera following its face: stacked on 9:16 and 4:5
-  (1080×960 and 1080×675), the left face's on top, and side by side on 1:1 and 16:9 (540×1080 and
-  960×1080), the left face's on the left. Forced with fewer than two faces, Split shows the frame's
-  left and right halves in the same panels.
-- None, or three or more: Blur, the whole shot as wide as the output, centred over a blurred copy
+- Two or three faces: Split, a panel for each, each with its own camera following its face: stacked
+  on 9:16 and 4:5 (two of 1080×960 and 1080×675, three of 1080×640 and 1080×450), the leftmost face's
+  on top, and side by side on 1:1 and 16:9 (two of 540×1080 and 960×1080, three of 360×1080 and
+  640×1080), the leftmost face's on the left. Forced on more faces, Split shows the three seen most;
+  forced with fewer than two, the frame's left and right halves in two panels. Split 3, which only
+  the owner chooses, is a Split Scene of three panels whatever its faces: the three seen most when
+  three are told apart, or else the frame's thirds, each following the faces detected in it (a face
+  in profile, seen now and then, still steers it) and, where none ever is, still at the height of the
+  Scene's other faces.
+- None, or four or more: Blur, the whole shot as wide as the output, centred over a blurred copy
   of itself that fills it.
 
 The cameras:
 - the Speaker Tracker gives each face an identity across the Scene's sampled frames; Track follows
   the largest and most often seen, sticking with it unless another clearly takes over, and Split
-  the two seen most;
+  the two or three seen most;
 - the Smooth Camera moves a crop towards its face like a critically damped spring, once the face
   leaves its dead-zone, ignoring a detection that jumps away until others confirm it, and holds
   still while the face is lost.
@@ -34,7 +39,8 @@ A portrait Source is passed through whole, or on a Canvas wider than it, shown a
 Captions come from the Clip's own Words (transcribed for it, on the Clip's timeline). They are
 Cues of one short line, broken by the Caption Style's limits (by default UPPERCASE, at most 16
 characters or 1.4 s long), each Word highlighted while it is spoken. With the style's Auto
-position a line sits on the seam between the panels in a stacked Split Scene, under the shot in a
+position a line sits on the seam above the last panel in a stacked Split Scene (the middle of the
+frame with two, between the second and third with three), under the shot in a
 Blur Scene when there is room for it below it in the Safe Area, and in the lower third otherwise, and moves when the Layout changes under it; the other positions put every line in one
 place.
 
@@ -150,7 +156,7 @@ from app.candidates import (
     WordEdit,
 )
 from app.audio_effects import AudioEffect, enabled_effects
-from app.canvas import Aspect, Box, Canvas
+from app.canvas import SPLIT_MOST, Aspect, Box, Canvas
 from app.video_effects import VideoEffect, enabled_video_effects, scaled_effects
 from app.config import CameraTuning, DuckTuning
 from app.ducking import Span, duck_at, ducked_stretches, heard_words, speech_spans, touching
@@ -169,6 +175,7 @@ from app.styles import (
     HookPosition,
     HookShape,
     HookStyle,
+    QuotePlace,
     WatermarkKind,
     WatermarkPosition,
     WatermarkStyle,
@@ -222,8 +229,11 @@ KICKER_GAP = 0.25
 # The Quote Mark's badge is a square this many hook sizes wide over the top-left corner of the first
 # line's box, reaching into it by QUOTE_INSET of the box's padding (so never over the text); with no
 # box, just above and left of the first line's text.
+# Centred on the box's top edge (QuotePlace.TOP), the box's padding above the first line is at
+# least half the badge and QUOTE_CLEARANCE hook sizes, so that it is clear of the text.
 QUOTE_SCALE = 0.9
 QUOTE_INSET = 0.75
+QUOTE_CLEARANCE = 0.2
 # A Text Layer is at most as wide as the frame less this many pixels either side.
 TEXT_MARGIN = 48
 # A Text Layer's picture holds its box and this many of its sizes round it, plus its stroke: room
@@ -528,6 +538,8 @@ class HookEvent:
     emphasis: list[list[tuple[int, int]]]
     # Above the lines; None without one.
     kicker: HookKicker | None = None
+    # The Hook Panel, across the frame and down to its bottom; None without one.
+    panel: Box | None = None
     # The Quote Mark's badge; None without one.
     quote: Box | None = None
 
@@ -1377,8 +1389,10 @@ def _framed(
         chosen = _choose(wanted, count)
         if chosen is SceneLayout.TRACK:
             panels = [_track(a, b, seen, source, camera, canvas)]
+        elif wanted is Layout.SPLIT3:
+            panels = _split_three(a, b, seen, source, camera, canvas)
         elif chosen is SceneLayout.SPLIT:
-            panels = _split(a, b, seen if count and count >= 2 else None, source, camera, canvas)
+            panels = _split(a, b, seen if count and count >= 2 else None, source, camera, canvas, count or 0)
         else:
             panels = _blur(a, source, canvas)
         plans.append(ScenePlan(a, b, chosen, panels, framing=_first_framing(chosen, panels, source, canvas)))
@@ -1558,7 +1572,7 @@ def _passed_through(start: float, end: float, source: SourceMetadata, canvas: Ca
 def _first_framing(layout: SceneLayout, panels: list[Panel], source: SourceMetadata, canvas: Canvas) -> Framing:
     """The Framing that draws the first frame of a Scene in `layout` of `source`, whose `panels` are
     planned: Track's first crop; Blur's whole frame fitted over its blur; and, for Split, which shows
-    two pictures, a centred cover of the frame."""
+    two or three pictures, a centred cover of the frame."""
     if layout is SceneLayout.TRACK:
         [panel] = panels
         start = panel.path[0]
@@ -2316,7 +2330,7 @@ def fit_hook(text: str, style: HookStyle = HookStyle(), *, canvas: Canvas) -> tu
     metrics = font_metrics(style.font)
     tracking = style.tracking
     own = style.padding_x is not None and style.shape != HookShape.NONE
-    room, padding = (kicker_widest(canvas), 2 * style.padding_x) if own else (hook_width(canvas), 0.0)
+    room, padding = (kicker_widest(canvas), 2 * (style.padding_x + hook_border(style))) if own else (hook_width(canvas), 0.0)
 
     def widest(lines: list[str]) -> float:
         return max(metrics.width(line, style.size, tracking) for line in lines)
@@ -2329,20 +2343,26 @@ def fit_hook(text: str, style: HookStyle = HookStyle(), *, canvas: Canvas) -> tu
     return lines, max(math.floor(size * 10) / 10, MIN_SIZE)
 
 
+def hook_border(style: HookStyle) -> int:
+    """How wide the hook's box's border is drawn, in output pixels: the style's, or 0 with no box."""
+    return style.border if style.shape != HookShape.NONE and style.box_opacity > 0 else 0
+
+
 def _hook_padding(style: HookStyle, size: float) -> tuple[float, float]:
     """The hook's box padding across and down, in output pixels, set at `size`: the style's (given at
     its size), or its Shape's own: HOOK_PAD_X and HOOK_PAD_Y round a block (and round lines with no
-    box, which the style's don't change), STRIP_PAD_X and STRIP_PAD_Y of the size round a strip."""
+    box, which the style's don't change), STRIP_PAD_X and STRIP_PAD_Y of the size round a strip;
+    either way with its border (hook_border) more."""
     if style.shape == HookShape.STRIPS:
         own = STRIP_PAD_X * size, STRIP_PAD_Y * size
     else:
         own = HOOK_PAD_X, HOOK_PAD_Y
     if style.shape == HookShape.NONE:
         return own
-    scale = size / style.size
+    scale, border = size / style.size, hook_border(style)
     return (
-        own[0] if style.padding_x is None else style.padding_x * scale,
-        own[1] if style.padding_y is None else style.padding_y * scale,
+        (own[0] if style.padding_x is None else style.padding_x * scale) + border,
+        (own[1] if style.padding_y is None else style.padding_y * scale) + border,
     )
 
 
@@ -2438,8 +2458,10 @@ def _hook(
 
     The `kicker`, if any, goes above them in a pill (`_kicker_pill`), centred over them or starting where
     they do, KICKER_GAP of the hook's size away. A Quote Mark (QUOTE_SCALE) is on the first line's
-    corner: the lines move down by what of it sticks out above them, but not sideways, so they stay
-    centred."""
+    corner, or centred on its box's top edge (its padding there then QUOTE_CLEARANCE clear of the
+    badge) or above its text: the lines move down by what of it sticks out above them, but not
+    sideways, so they stay centred. A Hook Panel goes across the whole frame from the middle of
+    the boxes to the bottom, wherever they are."""
     lines, size = fit_hook(text, style, canvas=canvas)
     start = round(max(start, 0.0), 3)
     if not lines or start >= duration:
@@ -2453,6 +2475,10 @@ def _hook(
     widths = [metrics.width(line, size, style.tracking) for line in lines]
     left = style.align == HookAlign.LEFT
     pad_x, pad_y = _hook_padding(style, size)
+    badge = round(QUOTE_SCALE * size) if style.quote else 0
+    on_top = badge and style.quote_place == QuotePlace.TOP
+    if on_top and style.shape != HookShape.NONE:
+        pad_y = max(pad_y, badge / 2 + QUOTE_CLEARANCE * size)
     # Boxes from the hook's top-left corner, and anchors from where it is.
     if style.shape == HookShape.STRIPS:
         strip_height = math.ceil(metrics.letters_height(size) + 2 * pad_y)
@@ -2494,12 +2520,12 @@ def _hook(
             full_width = max(width, pill.width)
             pill_x, lines_x = (full_width - pill.width) // 2, (full_width - width) // 2
         width = full_width
-    badge = round(QUOTE_SCALE * size) if style.quote else 0
     # How far it reaches into the first line's box: into its padding.
     box_pad_x, box_pad_y = (0, 0) if style.shape == HookShape.NONE else (pad_x, pad_y)
     inset_x, inset_y = math.floor(QUOTE_INSET * box_pad_x), math.floor(QUOTE_INSET * box_pad_y)
     if badge:
-        lines_y += badge - inset_y
+        # Up to its middle above the box's top, or as in its corner.
+        lines_y += badge // 2 if on_top and boxes else badge - inset_y
     height = lines_y + lines_height
     safe = canvas.safe_area
     bottom = safe.y + safe.height - height
@@ -2507,7 +2533,8 @@ def _hook(
         HookPosition.TOP: safe.y,
         HookPosition.MIDDLE: (canvas.height - height) // 2,
         HookPosition.BOTTOM: bottom,
-        HookPosition.CUSTOM: min(max(canvas.y_from_reference(style.y), safe.y), bottom),
+        # By hand, it may go lower than Bottom puts it.
+        HookPosition.CUSTOM: min(max(canvas.y_from_reference(style.y), safe.y), canvas.hook_bottom - height),
     }[style.position]
     area = Box((canvas.width - width) // 2, top, width, height)
     placed = None
@@ -2519,14 +2546,26 @@ def _hook(
     placed_boxes = [Box(area.x + lines_x + box.x, area.y + lines_y + box.y, box.width, box.height) for box in boxes]
     quote = None
     if badge:
-        if placed_boxes:
-            corner_x, corner_y = placed_boxes[0].x, placed_boxes[0].y
-        else:
+        if on_top and placed_boxes:
+            first_box = placed_boxes[0]
+            quote = Box(first_box.x + (first_box.width - badge) // 2, first_box.y - badge // 2, badge, badge)
+        elif on_top:
             x, baseline = placed_anchors[0]
-            corner_x, corner_y = x - widths[0] / 2, baseline - metrics.cap_height / metrics.units * size
-        quote = Box(math.floor(corner_x) + inset_x - badge, math.floor(corner_y) + inset_y - badge, badge, badge)
+            caps = baseline - metrics.cap_height / metrics.units * size
+            quote = Box(math.floor(x - badge / 2), math.floor(caps) - badge, badge, badge)
+        else:
+            if placed_boxes:
+                corner_x, corner_y = placed_boxes[0].x, placed_boxes[0].y
+            else:
+                x, baseline = placed_anchors[0]
+                corner_x, corner_y = x - widths[0] / 2, baseline - metrics.cap_height / metrics.units * size
+            quote = Box(math.floor(corner_x) + inset_x - badge, math.floor(corner_y) + inset_y - badge, badge, badge)
         left_edge, right_edge = min(area.x, quote.x), max(area.x + area.width, quote.x + quote.width)
         area = Box(left_edge, area.y, right_edge - left_edge, area.height)
+    panel = None
+    if style.panel and placed_boxes and style.box_opacity > 0:
+        top = (placed_boxes[0].y + placed_boxes[-1].y + placed_boxes[-1].height) // 2
+        panel = Box(0, top, canvas.width, canvas.height - top)
     # With its middle at the style's x, or as near as keeps it in the frame.
     dx = 0 if style.x is None else min(max((2 * canvas.x_from_reference(style.x) - area.width) // 2, 0), canvas.width - area.width) - area.x
     if dx and placed is not None:
@@ -2542,6 +2581,7 @@ def _hook(
         emphasis=emphasis,
         kicker=placed,
         quote=quote and _shifted(quote, dx),
+        panel=panel,
     )
 
 
@@ -2991,12 +3031,13 @@ def _caption_placed(text: str, area: Box, size: float, style: CaptionStyle, x: f
 
 def _caption_area(style: CaptionStyle, scene: ScenePlan, canvas: Canvas) -> Box:
     """Where a caption line is centred on `canvas` in `scene` (its places are the Canvas's). On Auto:
-    on the seam of a stacked Split, under Blur's shot when there is room below it in the Safe Area,
-    and otherwise in the lower third."""
+    on the seam above the last panel of a stacked Split (between the second and third of three),
+    under Blur's shot when there is room below it in the Safe Area, and otherwise in the lower third.
+    Middle is the frame's middle in every Layout."""
     match style.position:
         case CaptionPosition.AUTO:
             if scene.layout is SceneLayout.SPLIT and canvas.stacked:
-                return canvas.seam_captions
+                return canvas.split_captions(len(scene.panels))
             if scene.layout is SceneLayout.BLUR and (below := canvas.captions_below(scene.panels[-1].area)) is not None:
                 return below
             return canvas.lower_captions
@@ -3077,12 +3118,15 @@ def _face_count(frames: list[FrameFaces]) -> int:
 
 
 def _choose(layout: Layout, count: int | None) -> SceneLayout:
-    """The Scene's Layout: the override, or by its face count (Track when it wasn't analysed)."""
+    """The Scene's Layout: the override, or by its face count (Track when it wasn't analysed): Track
+    for one, Split for two up to SPLIT_MOST, and Blur for none or more. Split 3 is planned as Split."""
+    if layout is Layout.SPLIT3:
+        return SceneLayout.SPLIT
     if layout is not Layout.AUTO:
         return SceneLayout(layout.value)
     if count is None or count == 1:
         return SceneLayout.TRACK
-    return SceneLayout.SPLIT if count == 2 else SceneLayout.BLUR
+    return SceneLayout.SPLIT if 2 <= count <= SPLIT_MOST else SceneLayout.BLUR
 
 
 def _track(
@@ -3099,43 +3143,135 @@ def _track(
 
 
 def _split(
+    start: float,
+    end: float,
+    faces: list[FrameFaces] | None,
+    source: SourceMetadata,
+    camera: CameraTuning,
+    canvas: Canvas,
+    count: int = 2,
+) -> list[Panel]:
+    """A crop for each of the Canvas's panels (`Canvas.split_panels`: stacked, or side by side on 1:1
+    and 16:9), two in a Scene showing `count` two faces and three in one showing three or more, each
+    about as wide as the frame's share (a half or a third) and of its panel's shape (9:8 or 27:16 on
+    9:16): the faces seen most in the Scene's sampled frames `faces`, each followed by its own camera,
+    the leftmost one's on top or on the left. Without `faces` (or with fewer than two of them
+    tracked), the frame's left half in the first of two panels and its right half in the other; with
+    fewer tracked than `count`, a panel for each."""
+    tracked = _track_faces(faces, source.width, source.height, camera) if faces else []
+    wanted = min(max(count, 2), SPLIT_MOST, len(_identities(tracked)))
+    if wanted < 2:
+        return _split_crops(start, source, canvas, 2)
+    return _split_faces(start, end, tracked, source, camera, canvas, wanted)
+
+
+def _split_three(
     start: float, end: float, faces: list[FrameFaces] | None, source: SourceMetadata, camera: CameraTuning, canvas: Canvas
 ) -> list[Panel]:
-    """Two crops, each about half as wide as the frame and of its panel's shape (9:8 on 9:16), for the
-    Canvas's two panels (`Canvas.split_panels`: stacked, or side by side on 1:1 and 16:9): the two faces
-    seen most in the Scene's sampled frames `faces`, each followed by its own camera, the left one's on
-    top or on the left. Without `faces`, the frame's left half there and its right half in the other."""
-    width, height = source.width, source.height
-    boxes = canvas.split_panels
-    panel_width, panel_height = boxes[0].width, boxes[0].height
-    crop_width = _even_floor(width / 2)
-    crop_height = _even(crop_width * panel_height / panel_width)
-    if crop_height > _even_floor(height):
-        crop_height = _even_floor(height)
-        crop_width = _even(crop_height * panel_width / panel_height)
-    y = _centred(height, crop_height)
-    halves = [
-        Panel(box, crop_width, crop_height, [CropPoint(start, min(max(_even(centre - crop_width / 2), 0), _even_floor(width - crop_width)), y)])
-        for box, centre in zip(boxes, (width / 4, width * 3 / 4))
-    ]
-    if not faces:
-        return halves
-    tracked = _track_faces(faces, width, height, camera)
+    """Split 3's three panels, whatever the Scene's face count: a panel for each of the three faces
+    seen most in its sampled frames `faces`, as `_split` gives a Scene of three, when at least three
+    are tracked; else the frame's thirds (`_split_thirds`), as when a wide shot of three shows the
+    detector only the one facing it."""
+    tracked = _track_faces(faces, source.width, source.height, camera) if faces else []
+    if len(_identities(tracked)) >= SPLIT_MOST:
+        return _split_faces(start, end, tracked, source, camera, canvas, SPLIT_MOST)
+    return _split_thirds(start, end, faces or [], source, camera, canvas)
+
+
+def _identities(tracked: list["_TrackedFrame"]) -> set[int]:
+    """The faces told apart in a Scene's `tracked` frames."""
+    return {id for frame in tracked for id in frame.faces}
+
+
+def _split_rise(crop_height: int, canvas: Canvas) -> float:
+    """How far below its face a Split crop of `crop_height` is centred, so that the face sits at
+    SPLIT_FACE_AT of a stacked panel's height; side by side, a panel is tall enough for the face to
+    sit in its middle."""
+    return (0.5 - SPLIT_FACE_AT) * crop_height if canvas.stacked else 0.0
+
+
+def _split_faces(
+    start: float, end: float, tracked: list["_TrackedFrame"], source: SourceMetadata, camera: CameraTuning, canvas: Canvas, count: int
+) -> list[Panel]:
+    """Split's `count` panels for the `count` faces seen most in the Scene's `tracked` frames (the
+    larger first among those seen as often), each followed by its own camera, the leftmost one's on
+    top or on the left."""
+    crops = _split_crops(start, source, canvas, count)
     seen = Counter(id for frame in tracked for id in frame.faces)
     area = Counter()
     for frame in tracked:
         for id, face in frame.faces.items():
             area[id] += face.width * face.height
-    pair = sorted(seen, key=lambda id: (-seen[id], -area[id]))[:2]
-    if len(pair) < 2:
-        return halves
-    centre = {id: sum(f.faces[id].centre_x for f in tracked if id in f.faces) / seen[id] for id in pair}
-    pair.sort(key=centre.__getitem__)
-    # Side by side, a panel is tall enough for the face to sit in its middle.
-    rise = (0.5 - SPLIT_FACE_AT) * crop_height if canvas.stacked else 0.0
+    shown = sorted(seen, key=lambda id: (-seen[id], -area[id]))[:count]
+    centre = {id: sum(f.faces[id].centre_x for f in tracked if id in f.faces) / seen[id] for id in shown}
+    shown.sort(key=centre.__getitem__)
+    rise = _split_rise(crops[0].crop_height, canvas)
     return [
         _follow(panel, [(frame.at, frame.faces.get(id)) for frame in tracked], start, end, source, camera, rise)
-        for panel, id in zip(halves, pair)
+        for panel, id in zip(crops, shown)
+    ]
+
+
+def _split_thirds(
+    start: float, end: float, faces: list[FrameFaces], source: SourceMetadata, camera: CameraTuning, canvas: Canvas
+) -> list[Panel]:
+    """Split 3's panels when fewer than three faces are told apart in the Scene's sampled frames
+    `faces`: the frame's left, middle and right thirds (`_split_crops`). Each third's crop follows the
+    largest face detected in that third at each frame, with no identity needed, so that a face in
+    profile seen now and then still steers it. One where no face is ever detected stays on its third,
+    at the height of the faces detected elsewhere in the Scene (`_faces_level`, centred without any),
+    so as not to cut off heads a detector missed."""
+    width = source.width
+    crops = _split_crops(start, source, canvas, SPLIT_MOST)
+    rise = _split_rise(crops[0].crop_height, canvas)
+    level = _faces_level(faces)
+    panels = []
+    for i, crop in enumerate(crops):
+        low, high = width * i / SPLIT_MOST, width * (i + 1) / SPLIT_MOST
+        targets = [(frame.at, _largest_within(frame.faces, low, high)) for frame in faces]
+        if any(face is not None for _, face in targets):
+            panels.append(_follow(crop, targets, start, end, source, camera, rise))
+        elif level is not None:
+            panels.append(_held_at(crop, level + rise, source))
+        else:
+            panels.append(crop)
+    return panels
+
+
+def _largest_within(faces: list[Face], low: float, high: float) -> Face | None:
+    """The largest of `faces` whose centre is from `low` up to `high` across the frame, if any."""
+    inside = [face for face in faces if low <= face.centre_x < high]
+    return max(inside, key=lambda face: face.width * face.height, default=None)
+
+
+def _faces_level(frames: list[FrameFaces]) -> float | None:
+    """The average height of the centres of the faces detected in `frames`; None without any."""
+    heights = [face.centre_y for frame in frames for face in frame.faces]
+    return sum(heights) / len(heights) if heights else None
+
+
+def _held_at(panel: Panel, centre_y: float, source: SourceMetadata) -> Panel:
+    """`panel`, unmoved, with its crop's centre at `centre_y` (kept on the frame) instead."""
+    [first] = panel.path
+    y = min(max(_even(centre_y - panel.crop_height / 2), 0), _even_floor(source.height - panel.crop_height))
+    return replace(panel, path=[replace(first, y=y)])
+
+
+def _split_crops(start: float, source: SourceMetadata, canvas: Canvas, count: int) -> list[Panel]:
+    """Split's `count` panels, unmoved: each crop about a `count`th of the frame's width, of its panel's
+    shape and centred in height, on the frame's `count` equal shares from the left."""
+    width, height = source.width, source.height
+    boxes = canvas.split_panels(count)
+    panel_width, panel_height = boxes[0].width, boxes[0].height
+    crop_width = _even_floor(width / count)
+    crop_height = _even(crop_width * panel_height / panel_width)
+    if crop_height > _even_floor(height):
+        crop_height = _even_floor(height)
+        crop_width = _even(crop_height * panel_width / panel_height)
+    y = _centred(height, crop_height)
+    return [
+        Panel(box, crop_width, crop_height, [CropPoint(start, min(max(_even(centre - crop_width / 2), 0), _even_floor(width - crop_width)), y)])
+        for box, centre in zip(boxes, (width * (2 * i + 1) / (2 * count) for i in range(count)))
     ]
 
 

@@ -193,7 +193,7 @@ export interface Transcript {
 }
 
 // Auto chooses per Scene by its faces (never Manual); Manual frames the Source by hand with a Framing.
-export type Layout = "auto" | "track" | "split" | "blur" | "manual";
+export type Layout = "auto" | "track" | "split" | "split3" | "blur" | "manual";
 
 // A Candidate's Canvas Aspect, width to height (docs/adr/0022): its Canvas is 1080 on the short side.
 export type Aspect = "9:16" | "4:5" | "1:1" | "16:9";
@@ -294,6 +294,7 @@ export interface CaptionStyle {
 // One box behind all the lines, a strip behind each, or none.
 export type HookShape = "block" | "strips" | "none";
 export type HookAlign = "center" | "left";
+export type QuotePlace = "corner" | "top";
 
 export interface HookStyle {
   shape: HookShape;
@@ -321,9 +322,15 @@ export interface HookStyle {
   radius: number;
   padding_x: number | null;
   padding_y: number | null;
-  // A badge with quote marks on the corner of the first line's box.
+  // A line this wide just inside the box's edge (its padding as much wider), in output pixels; 0: none.
+  border: number;
+  border_colour: string;
+  // A Hook Panel: the box's colour from the middle of the box down to the bottom of the frame.
+  panel: boolean;
+  // A badge with quote marks on the first line's box: over its corner, or centred on its top edge.
   quote: boolean;
   quote_colour: string;
+  quote_place: QuotePlace;
   // The Kicker's text, and its pill.
   kicker_colour: string;
   kicker_box_colour: string;
@@ -639,6 +646,8 @@ export interface HookEvent {
   kicker: HookKicker | null;
   // The Quote Mark's badge; null without one.
   quote: Box | null;
+  // The Hook Panel, across the frame from the boxes' middle to its bottom; null without one.
+  panel: Box | null;
 }
 
 // The Kicker's text at font `size` on its pill, placed by its anchor (the middle of its text and its baseline).
