@@ -83,3 +83,7 @@ Each choice had genuine alternatives:
 - The rescale happens only once, so changing to 16:9 and back may not restore every position exactly. Undo does restore them.
 - The bitrate's pixel scaling in `encoding.py` already counts pixels, so 16:9 1080p gets the same budget as 9:16 1080p.
 - Templates (roadmap #21) will need to say what happens to a Template's positions on a Candidate of another aspect. The rescale function is the natural answer.
+
+## Amendment (2026-11-06): Split in three
+
+Split has three panels in a Scene of three or more faces (.scratch/split-three/spec.md): stacked thirds on 9:16 and 4:5 (1080×640, 1080×450), side-by-side thirds on 1:1 and 16:9 (360×1080, 640×1080), from `Canvas.split_panels(count)`. On Auto its captions sit on the seam above the last panel (`Canvas.split_captions`); Middle stays the frame's middle.

@@ -30,7 +30,7 @@ import { cx, formatPrecise } from "../../../format";
 import { usePlayback, useShown, type Playback } from "./playback";
 import { DeckTransport, LoopButton, RateMenu } from "./DeckTransport";
 import { CanvasContext, CAPTION_HEIGHT, fittedStage, hookBottom, useCanvas, useCanvasOf } from "./canvas";
-import { BLUR_BRIGHTNESS, BLUR_SIGMA, filledStyle, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
+import { BLUR_BRIGHTNESS, BLUR_SIGMA, filledStyle, hasKeyedPictures, isKeyed, overlaysAt, PANEL_SLOTS, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewEffected } from "./PreviewEffected";
 import { PreviewMusic } from "./PreviewMusic";
 import { BehindOverlays, coversFrame, PreviewOverlays } from "./PreviewOverlays";
@@ -83,7 +83,7 @@ const percent = (value: number) => `${value * 100}%`;
  * crop of the video, following its path), with the plan's caption lines and hook drawn over it
  * where, when and how large the render will draw them. Drawn in the pixels of the plan's Canvas (the
  * 9:16 one until a plan comes), at its aspect, and scaled to fit. The Source plays on two decks (docs/adr/0006-the-preview-plays-the-source-on-two-decks.md),
- * each two videos in step, one per panel (Split's two, or Blur's background and shot): the first is
+ * each PANEL_SLOTS videos in step, one per panel (Split's two or three, or Blur's background and shot): the first is
  * the master, which `playback` drives and which is heard while its deck is live. The panels show
  * the live deck; the other waits, hidden, for the next join.
  * With `onWatermarkMove`, the Watermark can be dragged (or nudged with the arrow keys) to a new
@@ -148,8 +148,8 @@ export function ClipPreview({
   const room = useRef<HTMLDivElement>(null);
   // The Segments' picture, which a Transition's look styles as its incoming side.
   const incoming = useRef<HTMLDivElement>(null);
-  // Each deck's videos, its master then its follower; and the masters, whose sound PreviewMusic sets.
-  const decks = useMemo(() => [0, 1].map(() => [createRef<HTMLVideoElement>(), createRef<HTMLVideoElement>()]), []);
+  // Each deck's videos, its master then its followers; and the masters, whose sound PreviewMusic sets.
+  const decks = useMemo(() => [0, 1].map(() => Array.from({ length: PANEL_SLOTS }, () => createRef<HTMLVideoElement>())), []);
   const masters = useMemo(() => decks.map(([master]) => master), [decks]);
   const [scale, setScale] = useState(1 / 3);
   const plan = preview?.plan ?? null;
@@ -158,7 +158,7 @@ export function ClipPreview({
 
   useEffect(() => {
     const slots = [0, 1] as const;
-    for (const slot of slots) playback.attachDeck(slot, decks[slot][0].current, decks[slot][1].current);
+    for (const slot of slots) playback.attachDeck(slot, decks[slot][0].current, ...decks[slot].slice(1).map((ref) => ref.current));
     return () => {
       for (const slot of slots) playback.attachDeck(slot, null);
     };

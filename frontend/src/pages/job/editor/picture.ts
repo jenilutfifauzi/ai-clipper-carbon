@@ -208,6 +208,12 @@ export function panelStyle(panel: Panel, [across, down]: [number, number], frame
   };
 }
 
+/**
+ * The most panels a Scene of the Source shows (a Split's three; Blur's two, Track's one): a deck holds
+ * a video for each, its master and its followers (docs/adr/0006).
+ */
+export const PANEL_SLOTS = 3;
+
 export interface SlotView {
   panel: Panel | null;
   picture: Picture | null;

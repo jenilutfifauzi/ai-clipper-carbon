@@ -65,10 +65,11 @@ export class FakeVideo extends EventTarget {
   }
 }
 
-/** A deck as the test sees it: its master and its follower. */
+/** A deck as the test sees it: its master and its followers (the second panel's, and a Split's third). */
 export interface FakeDeck {
   master: FakeVideo;
   follower: FakeVideo;
+  third: FakeVideo;
 }
 
 /**
@@ -98,10 +99,10 @@ export function harness() {
     // Two decks, registered on `playback`: the first live, the second parked.
     decks(playback: Playback): [FakeDeck, FakeDeck] {
       const made: [FakeDeck, FakeDeck] = [
-        { master: video(), follower: video() },
-        { master: video(), follower: video() },
+        { master: video(), follower: video(), third: video() },
+        { master: video(), follower: video(), third: video() },
       ];
-      made.forEach((deck, slot) => playback.attachDeck(slot as DeckSlot, deck.master.element, deck.follower.element));
+      made.forEach((deck, slot) => playback.attachDeck(slot as DeckSlot, deck.master.element, deck.follower.element, deck.third.element));
       return made;
     },
     // `secs` go by, a frame at a time: the playing videos play on, then the frame's callbacks run.

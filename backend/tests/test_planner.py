@@ -327,6 +327,9 @@ def test_a_tracked_plan_is_saved_and_read_back_as_json():
 # frame's width at 9:8 (960x854), and Blur shows the whole frame 1080x608 over its blurred centre crop.
 SPLIT_CROP = (960, 854)
 TOP, BOTTOM = Box(0, 0, 1080, 960), Box(0, 960, 1080, 960)
+# With three faces, three panels of 1080x640, each crop a third of the frame's width at 27:16 (640x380).
+THIRD_CROP = (640, 380)
+THIRDS = (Box(0, 0, 1080, 640), Box(0, 640, 1080, 640), Box(0, 1280, 1080, 640))
 
 
 def people(count: int) -> list[Face]:
@@ -340,7 +343,7 @@ def layouts(plan: RenderPlan) -> list[tuple[float, float, SceneLayout]]:
 
 @pytest.mark.parametrize(
     ("count", "layout"),
-    [(0, SceneLayout.BLUR), (1, SceneLayout.TRACK), (2, SceneLayout.SPLIT), (3, SceneLayout.BLUR), (5, SceneLayout.BLUR)],
+    [(0, SceneLayout.BLUR), (1, SceneLayout.TRACK), (2, SceneLayout.SPLIT), (3, SceneLayout.SPLIT), (4, SceneLayout.BLUR), (5, SceneLayout.BLUR)],
 )
 def test_each_scene_is_laid_out_by_its_number_of_faces(count, layout):
     [scene] = tracked(sampled((3, people(count))), 3).scenes
@@ -348,8 +351,11 @@ def test_each_scene_is_laid_out_by_its_number_of_faces(count, layout):
     if layout is SceneLayout.TRACK:
         [panel] = scene.panels
         assert (panel.area, panel.crop_width, panel.crop_height) == (Box(0, 0, 1080, 1920), 608, 1080)
-    elif layout is SceneLayout.SPLIT:
+    elif layout is SceneLayout.SPLIT and count == 2:
         assert [(p.area, p.crop_width, p.crop_height) for p in scene.panels] == [(TOP, *SPLIT_CROP), (BOTTOM, *SPLIT_CROP)]
+    elif layout is SceneLayout.SPLIT:
+        # Three faces, a panel each: a third of the frame high, a crop a third of the Source wide.
+        assert [(p.area, p.crop_width, p.crop_height) for p in scene.panels] == [(third, *THIRD_CROP) for third in THIRDS]
     else:
         # The blurred centre crop fills the frame; the whole shot, as wide as the frame, is centred on it.
         background, shot = scene.panels
@@ -434,6 +440,31 @@ def test_split_puts_the_left_face_on_top_and_follows_each_face_with_its_own_came
         y = panel.path[0].y
         assert (seen.centre_y - y) / panel.crop_height == pytest.approx(0.4, abs=0.01)
         assert all(point.y == y for point in panel.path)
+
+
+def test_split_gives_three_faces_a_panel_each_from_the_leftmost_on_top():
+    # Detected right, left, middle: the faces' centres at x 1520, 400 and 960, y 450.
+    trio = [face(1520), face(400), face(960)]
+    [scene] = tracked(sampled((3, trio)), 3).scenes
+    assert scene.layout is SceneLayout.SPLIT
+    assert [panel.area for panel in scene.panels] == list(THIRDS)
+    for panel, x in zip(scene.panels, (400, 960, 1520)):
+        [start] = panel.path
+        assert start.x + panel.crop_width / 2 == pytest.approx(x, abs=2)
+        # Each face a little above the middle of its panel, as with two.
+        assert (450 - start.y) / panel.crop_height == pytest.approx(0.4, abs=0.01)
+
+
+def test_a_forced_split_of_four_faces_shows_the_three_seen_most():
+    # The fourth, on the right, is seen in only half of the frames: Auto would take it for four
+    # faces some of the time; forced, Split leaves it out.
+    a, b, c, d = face(320), face(800), face(1300), face(1760)
+    faces = sampled((1.5, [d, a, b, c]), (1.5, [a, b, c]))
+    [scene] = tracked(faces, 3, layout=Layout.SPLIT).scenes
+    assert [panel.area for panel in scene.panels] == list(THIRDS)
+    assert [panel.path[0].x + panel.crop_width / 2 for panel in scene.panels] == [320, 800, 1300]
+    # Four faces all through: Auto shows them all, over the blur.
+    assert tracked(sampled((3, [a, b, c, d])), 3).scenes[0].layout is SceneLayout.BLUR
 
 
 def test_a_portrait_source_is_passed_through_whatever_its_faces_or_automatic_layout():

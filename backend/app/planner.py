@@ -6,17 +6,18 @@ Each Scene of a landscape Source gets its own Layout, from its number of faces i
 its sampled frames (scenes shorter than MIN_SCENE_SECS are first merged into a neighbour, so that the
 layout doesn't flicker). The Candidate's layout override, unless Auto, replaces the choice in every Scene.
 - One face: Track, a full-height 9:16 crop that follows the speaker's face.
-- Two faces: Split, two panels, each with its own camera following its face: stacked on 9:16 and 4:5
-  (1080×960 and 1080×675), the left face's on top, and side by side on 1:1 and 16:9 (540×1080 and
-  960×1080), the left face's on the left. Forced with fewer than two faces, Split shows the frame's
-  left and right halves in the same panels.
-- None, or three or more: Blur, the whole shot as wide as the output, centred over a blurred copy
+- Two or three faces: Split, a panel for each, each with its own camera following its face: stacked
+  on 9:16 and 4:5 (two of 1080×960 and 1080×675, three of 1080×640 and 1080×450), the leftmost face's
+  on top, and side by side on 1:1 and 16:9 (two of 540×1080 and 960×1080, three of 360×1080 and
+  640×1080), the leftmost face's on the left. Forced on more faces, Split shows the three seen most;
+  forced with fewer than two, the frame's left and right halves in two panels.
+- None, or four or more: Blur, the whole shot as wide as the output, centred over a blurred copy
   of itself that fills it.
 
 The cameras:
 - the Speaker Tracker gives each face an identity across the Scene's sampled frames; Track follows
   the largest and most often seen, sticking with it unless another clearly takes over, and Split
-  the two seen most;
+  the two or three seen most;
 - the Smooth Camera moves a crop towards its face like a critically damped spring, once the face
   leaves its dead-zone, ignoring a detection that jumps away until others confirm it, and holds
   still while the face is lost.
@@ -34,7 +35,8 @@ A portrait Source is passed through whole, or on a Canvas wider than it, shown a
 Captions come from the Clip's own Words (transcribed for it, on the Clip's timeline). They are
 Cues of one short line, broken by the Caption Style's limits (by default UPPERCASE, at most 16
 characters or 1.4 s long), each Word highlighted while it is spoken. With the style's Auto
-position a line sits on the seam between the panels in a stacked Split Scene, under the shot in a
+position a line sits on the seam above the last panel in a stacked Split Scene (the middle of the
+frame with two, between the second and third with three), under the shot in a
 Blur Scene when there is room for it below it in the Safe Area, and in the lower third otherwise, and moves when the Layout changes under it; the other positions put every line in one
 place.
 
@@ -149,7 +151,7 @@ from app.candidates import (
     WordEdit,
 )
 from app.audio_effects import AudioEffect, enabled_effects
-from app.canvas import Aspect, Box, Canvas
+from app.canvas import SPLIT_MOST, Aspect, Box, Canvas
 from app.video_effects import VideoEffect, enabled_video_effects, scaled_effects
 from app.config import CameraTuning, DuckTuning
 from app.ducking import Span, duck_at, ducked_stretches, heard_words, speech_spans, touching
@@ -1383,7 +1385,7 @@ def _framed(
         if chosen is SceneLayout.TRACK:
             panels = [_track(a, b, seen, source, camera, canvas)]
         elif chosen is SceneLayout.SPLIT:
-            panels = _split(a, b, seen if count and count >= 2 else None, source, camera, canvas)
+            panels = _split(a, b, seen if count and count >= 2 else None, source, camera, canvas, count or 0)
         else:
             panels = _blur(a, source, canvas)
         plans.append(ScenePlan(a, b, chosen, panels, framing=_first_framing(chosen, panels, source, canvas)))
@@ -1563,7 +1565,7 @@ def _passed_through(start: float, end: float, source: SourceMetadata, canvas: Ca
 def _first_framing(layout: SceneLayout, panels: list[Panel], source: SourceMetadata, canvas: Canvas) -> Framing:
     """The Framing that draws the first frame of a Scene in `layout` of `source`, whose `panels` are
     planned: Track's first crop; Blur's whole frame fitted over its blur; and, for Split, which shows
-    two pictures, a centred cover of the frame."""
+    two or three pictures, a centred cover of the frame."""
     if layout is SceneLayout.TRACK:
         [panel] = panels
         start = panel.path[0]
@@ -3017,12 +3019,13 @@ def _caption_placed(text: str, area: Box, size: float, style: CaptionStyle, x: f
 
 def _caption_area(style: CaptionStyle, scene: ScenePlan, canvas: Canvas) -> Box:
     """Where a caption line is centred on `canvas` in `scene` (its places are the Canvas's). On Auto:
-    on the seam of a stacked Split, under Blur's shot when there is room below it in the Safe Area,
-    and otherwise in the lower third."""
+    on the seam above the last panel of a stacked Split (between the second and third of three),
+    under Blur's shot when there is room below it in the Safe Area, and otherwise in the lower third.
+    Middle is the frame's middle in every Layout."""
     match style.position:
         case CaptionPosition.AUTO:
             if scene.layout is SceneLayout.SPLIT and canvas.stacked:
-                return canvas.seam_captions
+                return canvas.split_captions(len(scene.panels))
             if scene.layout is SceneLayout.BLUR and (below := canvas.captions_below(scene.panels[-1].area)) is not None:
                 return below
             return canvas.lower_captions
@@ -3103,12 +3106,13 @@ def _face_count(frames: list[FrameFaces]) -> int:
 
 
 def _choose(layout: Layout, count: int | None) -> SceneLayout:
-    """The Scene's Layout: the override, or by its face count (Track when it wasn't analysed)."""
+    """The Scene's Layout: the override, or by its face count (Track when it wasn't analysed): Track
+    for one, Split for two up to SPLIT_MOST, and Blur for none or more."""
     if layout is not Layout.AUTO:
         return SceneLayout(layout.value)
     if count is None or count == 1:
         return SceneLayout.TRACK
-    return SceneLayout.SPLIT if count == 2 else SceneLayout.BLUR
+    return SceneLayout.SPLIT if 2 <= count <= SPLIT_MOST else SceneLayout.BLUR
 
 
 def _track(
@@ -3125,43 +3129,58 @@ def _track(
 
 
 def _split(
-    start: float, end: float, faces: list[FrameFaces] | None, source: SourceMetadata, camera: CameraTuning, canvas: Canvas
+    start: float,
+    end: float,
+    faces: list[FrameFaces] | None,
+    source: SourceMetadata,
+    camera: CameraTuning,
+    canvas: Canvas,
+    count: int = 2,
 ) -> list[Panel]:
-    """Two crops, each about half as wide as the frame and of its panel's shape (9:8 on 9:16), for the
-    Canvas's two panels (`Canvas.split_panels`: stacked, or side by side on 1:1 and 16:9): the two faces
-    seen most in the Scene's sampled frames `faces`, each followed by its own camera, the left one's on
-    top or on the left. Without `faces`, the frame's left half there and its right half in the other."""
+    """A crop for each of the Canvas's panels (`Canvas.split_panels`: stacked, or side by side on 1:1
+    and 16:9), two in a Scene showing `count` two faces and three in one showing three or more, each
+    about as wide as the frame's share (a half or a third) and of its panel's shape (9:8 or 27:16 on
+    9:16): the faces seen most in the Scene's sampled frames `faces`, each followed by its own camera,
+    the leftmost one's on top or on the left. Without `faces` (or with fewer than two of them
+    tracked), the frame's left half in the first of two panels and its right half in the other; with
+    fewer tracked than `count`, a panel for each."""
     width, height = source.width, source.height
-    boxes = canvas.split_panels
+    tracked = _track_faces(faces, width, height, camera) if faces else []
+    seen = Counter(id for frame in tracked for id in frame.faces)
+    wanted = min(max(count, 2), SPLIT_MOST, len(seen))
+    if wanted < 2:
+        return _split_crops(start, source, canvas, 2)
+    crops = _split_crops(start, source, canvas, wanted)
+    area = Counter()
+    for frame in tracked:
+        for id, face in frame.faces.items():
+            area[id] += face.width * face.height
+    shown = sorted(seen, key=lambda id: (-seen[id], -area[id]))[:wanted]
+    centre = {id: sum(f.faces[id].centre_x for f in tracked if id in f.faces) / seen[id] for id in shown}
+    shown.sort(key=centre.__getitem__)
+    # Side by side, a panel is tall enough for the face to sit in its middle.
+    rise = (0.5 - SPLIT_FACE_AT) * crops[0].crop_height if canvas.stacked else 0.0
+    return [
+        _follow(panel, [(frame.at, frame.faces.get(id)) for frame in tracked], start, end, source, camera, rise)
+        for panel, id in zip(crops, shown)
+    ]
+
+
+def _split_crops(start: float, source: SourceMetadata, canvas: Canvas, count: int) -> list[Panel]:
+    """Split's `count` panels, unmoved: each crop about a `count`th of the frame's width, of its panel's
+    shape and centred in height, on the frame's `count` equal shares from the left."""
+    width, height = source.width, source.height
+    boxes = canvas.split_panels(count)
     panel_width, panel_height = boxes[0].width, boxes[0].height
-    crop_width = _even_floor(width / 2)
+    crop_width = _even_floor(width / count)
     crop_height = _even(crop_width * panel_height / panel_width)
     if crop_height > _even_floor(height):
         crop_height = _even_floor(height)
         crop_width = _even(crop_height * panel_width / panel_height)
     y = _centred(height, crop_height)
-    halves = [
-        Panel(box, crop_width, crop_height, [CropPoint(start, min(max(_even(centre - crop_width / 2), 0), _even_floor(width - crop_width)), y)])
-        for box, centre in zip(boxes, (width / 4, width * 3 / 4))
-    ]
-    if not faces:
-        return halves
-    tracked = _track_faces(faces, width, height, camera)
-    seen = Counter(id for frame in tracked for id in frame.faces)
-    area = Counter()
-    for frame in tracked:
-        for id, face in frame.faces.items():
-            area[id] += face.width * face.height
-    pair = sorted(seen, key=lambda id: (-seen[id], -area[id]))[:2]
-    if len(pair) < 2:
-        return halves
-    centre = {id: sum(f.faces[id].centre_x for f in tracked if id in f.faces) / seen[id] for id in pair}
-    pair.sort(key=centre.__getitem__)
-    # Side by side, a panel is tall enough for the face to sit in its middle.
-    rise = (0.5 - SPLIT_FACE_AT) * crop_height if canvas.stacked else 0.0
     return [
-        _follow(panel, [(frame.at, frame.faces.get(id)) for frame in tracked], start, end, source, camera, rise)
-        for panel, id in zip(halves, pair)
+        Panel(box, crop_width, crop_height, [CropPoint(start, min(max(_even(centre - crop_width / 2), 0), _even_floor(width - crop_width)), y)])
+        for box, centre in zip(boxes, (width * (2 * i + 1) / (2 * count) for i in range(count)))
     ]
 
 

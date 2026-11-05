@@ -1,11 +1,11 @@
-import { useContext, useEffect, useMemo, useRef, type RefObject } from "react";
+import { createRef, useContext, useEffect, useMemo, useRef, type RefObject } from "react";
 import type { MattePiece, RenderPlan, TransitionEvent } from "../../../api";
 import { PanelView } from "./ClipPreview";
 import { DecksGraded } from "./GradeFilters";
 import { backdropView, MaskBackdrop, MaskGroup, DeckMatte, PreviewMattes } from "./MatteMask";
 import { BehindOverlays, coversFrame } from "./PreviewOverlays";
 import { MAX_DRIFT_SECS } from "./follow";
-import { slotView } from "./picture";
+import { PANEL_SLOTS, slotView } from "./picture";
 import { onOwnVideos, Playback, usePlayback, useShown } from "./playback";
 import { loudness, segmentSound } from "./loudness";
 import { setVolume } from "./PreviewMusic";
@@ -90,8 +90,9 @@ function Ghost({
 }) {
   const layer = useRef<HTMLDivElement>(null);
   const veil = useRef<HTMLDivElement>(null);
-  const master = useRef<HTMLVideoElement>(null);
-  const follower = useRef<HTMLVideoElement>(null);
+  // The ghost's videos, one per panel: the master, then the followers.
+  const videos = useMemo(() => Array.from({ length: PANEL_SLOTS }, () => createRef<HTMLVideoElement>()), []);
+  const [master] = videos;
   const segment = plan.segments[index];
   const ghost = useMemo(() => new Playback(), []);
   ghost.setSegments([{ ...segment, media: segment.media ?? null }]);
@@ -109,7 +110,7 @@ function Ghost({
   // A cut-out Segment's Matte, following the ghost's master.
   const removal = own ? null : segment.background_removal;
   const matte = useMemo(() => new DeckMatte(), []);
-  const masters = useMemo(() => [master], []);
+  const masters = useMemo(() => [master], [master]);
   useEffect(() => matte.setPieces(removal ? mattes : []), [matte, removal, mattes]);
   useEffect(() => {
     matte.attachMaster(master.current);
@@ -146,8 +147,9 @@ function Ghost({
       if (Math.abs(ghost.time - time) > MAX_DRIFT_SECS) ghost.seek(time);
       if (playback.playing && !ghost.playing) ghost.play();
       if (!playback.playing && ghost.playing) ghost.pause();
-      const other = follower.current;
-      if (video && other) {
+      for (const follower of videos.slice(1)) {
+        const other = follower.current;
+        if (!video || !other) continue;
         if (other.playbackRate !== video.playbackRate) other.playbackRate = video.playbackRate;
         if (other.preservesPitch !== video.preservesPitch) other.preservesPitch = video.preservesPitch;
         if (Math.abs(other.currentTime - video.currentTime) > MAX_DRIFT_SECS) other.currentTime = video.currentTime;
@@ -165,10 +167,11 @@ function Ghost({
       // The Segments' picture as it is again once the Transition is gone.
       if (picture) showLook({}, picture);
     };
-  }, [playback, ghost, transition, segment, own, plan.source_volume, incoming]);
+  }, [playback, ghost, transition, segment, own, plan.source_volume, incoming, videos]);
 
   const ghostPanel = (ref: RefObject<HTMLVideoElement>, slot: number) => (
     <PanelView
+      key={slot}
       videoRef={ref}
       src={src}
       plan={plan}
@@ -218,7 +221,7 @@ function Ghost({
               {scene?.layout === "manual" && !coversFrame(scene.picture, plan) && (
                 <BehindOverlays plan={plan} playback={playback} className="group-data-[masked]/mask:invisible" />
               )}
-              {ghostPanel(follower, 1)}
+              {videos.slice(1).map((ref, slot) => ghostPanel(ref, slot + 1))}
             </DecksGraded>
           </MaskGroup>
         )}

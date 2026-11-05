@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef } from "react";
+import { createRef, useEffect, useMemo, useRef } from "react";
 import type { MatteCopy, MattePiece, RenderPlan, RetimedCopy, RetimedRange, ScenePlan, SegmentPlan, TransitionEvent } from "../../../api";
 import { useCanvas } from "./canvas";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA, PanelView } from "./ClipPreview";
 import { follow } from "./follow";
 import { GradeVignette, useFrameFilter } from "./GradeFilters";
-import { filledStyle, panelStyle, slotView } from "./picture";
+import { filledStyle, PANEL_SLOTS, panelStyle, slotView } from "./picture";
 import { PicturePanel } from "./PicturePanel";
 import { BehindOverlays, coversFrame } from "./PreviewOverlays";
 import { onOwnVideos, playable, useShown, type Playback } from "./playback";
@@ -188,8 +188,8 @@ export function MediaSegment({
 /**
  * Segment `index` of `plan`, of the Source played from a Retimed copy (`segmentCopy`: reversed, or at
  * a Speed a browser won't play), shown until `end`, or within a Transition when `end` is its own, its
- * sound brought in by `into` and taken away by `fade`, as MediaSegment's: its Scenes' panels (a Split's two, a Blur's background and
- * shot, a Manual Scene's picture) drawn as the decks draw them, from a master and a follower of its
+ * sound brought in by `into` and taken away by `fade`, as MediaSegment's: its Scenes' panels (a Split's two or three, a Blur's background and
+ * shot, a Manual Scene's picture) drawn as the decks draw them, from a master and followers of its
  * own playing the copy (`sourcePlay`), at the Clip's own volume times its own (or its Keyframes'),
  * through its fades. Outside its span they wait at its start. Until the copy is made they hold the
  * Source's `src` at the frame the copy shows first, with its progress. Cut out (ADR 0015), its pictures
@@ -222,8 +222,9 @@ export function CopiedSourceSegment({
 }) {
   const segment = plan.segments[index];
   const box = useRef<HTMLDivElement>(null);
-  const master = useRef<HTMLVideoElement>(null);
-  const follower = useRef<HTMLVideoElement>(null);
+  // Its videos, one per panel: the master, then the followers.
+  const videos = useMemo(() => Array.from({ length: PANEL_SLOTS }, () => createRef<HTMLVideoElement>()), []);
+  const [master] = videos;
   // It plays from a copy: that is why it is drawn here.
   const range = useMemo(() => segmentCopy(segment)!, [segment]);
   const [copy] = useRetimedCopies([{ job: jobId, range }]);
@@ -234,7 +235,7 @@ export function CopiedSourceSegment({
   // Its Matte (ADR 0015), following its master through the copy it plays.
   const removal = segment.background_removal;
   const matte = useMemo(() => new DeckMatte(), []);
-  const masters = useMemo(() => [master], []);
+  const masters = useMemo(() => [master], [master]);
   const copyAt = copy?.url ? copy.at : null;
   const matteCopy = matteCopyOf(matteCopies, rangeOf(segment));
   useEffect(() => {
@@ -253,7 +254,7 @@ export function CopiedSourceSegment({
     const crossed = crossedBy(into);
     const sync = () => {
       const inside = master.current ? follow(master.current, playback, span, true) : false;
-      if (follower.current) follow(follower.current, playback, span, true);
+      for (const follower of videos.slice(1)) if (follower.current) follow(follower.current, playback, span, true);
       if (master.current && silencedForCopy({ kind: "segment", id: segment.id }, playback)) setVolume(master.current, 0);
       else if (master.current && changing(sound)) followCurve(master.current, playback, sound, crossed);
       else if (master.current) setVolume(master.current, loudness(sound, playback.shownTime, crossed));
@@ -261,7 +262,7 @@ export function CopiedSourceSegment({
     };
     sync();
     return playback.subscribe(sync);
-  }, [playback, segment, fade, into, span, plan.source_volume]);
+  }, [playback, segment, fade, into, span, plan.source_volume, videos, master]);
 
   const filter = useFrameFilter(segment.grade, segment.video_effects, segment.start);
   return (
@@ -281,7 +282,7 @@ export function CopiedSourceSegment({
         {removal && <BehindOverlays plan={plan} playback={playback} className="invisible group-data-[masked]/mask:visible" />}
         {/* Its Grade and Video Effects over its whole frame (ADR 0013, 0014), its vignette over it. */}
         <div className="absolute inset-0 bg-black group-data-[masked]/mask:!bg-transparent" style={{ filter }}>
-          {[master, follower].map((ref, slot) => (
+          {videos.map((ref, slot) => (
             <PanelView
               key={slot}
               videoRef={ref}

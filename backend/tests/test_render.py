@@ -94,6 +94,27 @@ def two_faces(tmp_path_factory) -> Path:
 
 
 @pytest.fixture(scope="session")
+def three_faces(tmp_path_factory) -> Path:
+    """A 1920x1080 wide shot of three people side by side (the portrait's head three times, still): in
+    colour on the left, in grey in the middle and in colour again on the right. With a tone, 6 s long."""
+    path = tmp_path_factory.mktemp("three") / "three.mp4"
+    command = [
+        str(load_settings().ffmpeg_bin), "-v", "error",
+        "-f", "lavfi", "-i", "color=c=0x4a5560:size=1920x1080:rate=25",
+        "-loop", "1", "-framerate", "25", "-i", str(FIXTURES / "portrait.jpg"),
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+        "-filter_complex",
+        f"[1:v]{HEAD},split=3[left][middle][right];[middle]hue=s=0[grey];"
+        "[0:v][left]overlay=x=160:y=290:shortest=1[one];[one][grey]overlay=x=760:y=290[two];"
+        "[two][right]overlay=x=1360:y=290,format=yuv420p[v]",
+        "-map", "[v]", "-map", "2:a", "-t", str(SOURCE_SECS),
+        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(path),
+    ]
+    subprocess.run(command, check=True)
+    return path
+
+
+@pytest.fixture(scope="session")
 def face_then_two(tmp_path_factory) -> Path:
     """3 s of a close-up (the portrait's head in the middle), then a cut to 3 s of the two people of
     `two_faces` over another background. With a tone throughout, 6 s long."""
@@ -529,6 +550,37 @@ def test_two_faces_side_by_side_are_split_with_the_left_face_on_top(client, sett
 
     for at in (0.5, 5.5):
         check_split(output_frame(settings, job_dir / clip["output"]["video"], at), BACKGROUND)
+
+
+def test_three_faces_side_by_side_are_split_in_three_from_the_leftmost_on_top(client, settings, video_source, three_faces):
+    video_source.video = three_faces
+    job = reviewed(client)
+    candidate = add(client, job, "halo", "ya")
+    render(client, job)
+    [clip] = rendered(client, job, timeout=60)["clips"]
+    job_dir = settings.data_dir / "jobs" / job["id"]
+    check_clip(settings, job_dir, clip, candidate)
+
+    plan = json.loads((job_dir / clip["output"]["plan"]).read_text())
+    [scene] = plan["scenes"]
+    assert scene["layout"] == "split"
+    assert [panel["area"] for panel in scene["panels"]] == [{"x": 0, "y": y, "width": 1080, "height": 640} for y in (0, 640, 1280)]
+    # Each face inside its own panel's crop, from the leftmost in the top panel's.
+    [analysis_file] = (job_dir / "analysis").iterdir()
+    frames = json.loads(analysis_file.read_text())["frames"]
+    all_three = [frame for frame in frames if len(frame["faces"]) == 3]
+    assert len(all_three) >= 0.9 * len(frames)
+    for frame in all_three:
+        for panel, face in zip(scene["panels"], sorted(frame["faces"], key=lambda face: face["x"])):
+            at = [point for point in panel["path"] if point["at"] <= frame["at"] + 1e-6][-1]
+            assert at["x"] <= face["x"] and face["x"] + face["width"] <= at["x"] + panel["crop_width"]
+            assert at["y"] <= face["y"] and face["y"] + face["height"] <= at["y"] + panel["crop_height"]
+
+    # The 54x96 frame: a head in the middle of each third, the grey one in the middle.
+    frame = output_frame(settings, job_dir / clip["output"]["video"], 0.5)
+    top, middle, bottom = frame[4:28, 15:39], frame[36:60, 15:39], frame[68:92, 15:39]
+    assert all(shows_head(panel, BACKGROUND, share=0.75) for panel in (top, middle, bottom))
+    assert colourful(top) > 40 and colourful(middle) < 8 and colourful(bottom) > 40
 
 
 def test_the_layout_switches_at_a_cut_within_one_clip(client, settings, video_source, face_then_two):

@@ -90,6 +90,9 @@ export const onOwnVideos = (segment: PlayedRange & { media?: string | null }) =>
 // Freeze frame, whose frame waits paused for its hold.
 const clocked = (segment: PlayedSegment) => onOwnVideos(segment) || segment.hold != null;
 
+// A deck's videos: its master, then its followers.
+const videosOf = (deck: Deck) => [deck.master, ...deck.followers];
+
 /** The rates the preview plays at: a viewing aid, not a Clip's speed. */
 export const RATES = [0.5, 1, 1.5, 2] as const;
 
@@ -98,11 +101,12 @@ export type DeckSlot = 0 | 1;
 
 /**
  * A full set of the Source's panel videos: the master, read for time and heard while its deck is
- * live, and the follower for the second panel of a Split or Blur Scene, always muted.
+ * live, and the followers for a Scene's other panels (a Split's second and third, Blur's shot),
+ * always muted.
  */
 interface Deck {
   master: HTMLVideoElement;
-  follower: HTMLVideoElement | null;
+  followers: HTMLVideoElement[];
   // Where in the Source it was last parked, until it is live again.
   parked: number | null;
   // The Segment it plays or waits for, whose Speed it plays at (null: the time's).
@@ -120,7 +124,7 @@ interface Deck {
  * paused and muted, where the next Source Segment starts, and at the join the two swap, so that the
  * join doesn't wait for a seek. When the parked deck isn't ready there (its seek hasn't landed),
  * the live deck seeks instead. Through a Segment of a Media Library video, or one of the Source played
- * from a Retimed copy (`onOwnVideos`, ADR 0009: on a master and follower of its own, so that every
+ * from a Retimed copy (`onOwnVideos`, ADR 0009: on a master and followers of its own, so that every
  * panel of its Scenes draws from the copy), the decks wait at the next Segment they play and the time runs on a
  * clock of its own, which those videos follow. Through a Freeze frame
  * (ADR 0009) the time runs on the clock too, for its hold, while its frame waits paused: a deck
@@ -255,15 +259,22 @@ export class Playback {
   }
 
   /**
-   * Registers deck `slot`'s videos, or lets go of them with no master. The live deck (the first, to
-   * begin with) is heard; the other is parked as soon as it comes. A preview with one deck (a
-   * Transition's ghost) seeks at every join.
+   * Registers deck `slot`'s videos (its master, then a follower for each other panel), or lets go of
+   * them with no master. The live deck (the first, to begin with) is heard; the other is parked as
+   * soon as it comes. A preview with one deck (a Transition's ghost) seeks at every join.
    */
-  attachDeck(slot: DeckSlot, master: HTMLVideoElement | null, follower: HTMLVideoElement | null = null) {
+  attachDeck(slot: DeckSlot, master: HTMLVideoElement | null, ...followers: (HTMLVideoElement | null)[]) {
     this.decks[slot]?.detach();
     this.decks[slot] = null;
     if (!master) return;
-    const deck: Deck = { master, follower, parked: null, shows: null, landing: new Set(), detach: () => {} };
+    const deck: Deck = {
+      master,
+      followers: followers.filter((video): video is HTMLVideoElement => !!video),
+      parked: null,
+      shows: null,
+      landing: new Set(),
+      detach: () => {},
+    };
     const live = () => this.decks[this.live] === deck;
     const onPlay = () => {
       if (!live()) return;
@@ -293,7 +304,7 @@ export class Playback {
       deck.parked = null;
       this.park();
     };
-    const videos = follower ? [master, follower] : [master];
+    const videos = videosOf(deck);
     for (const video of videos) {
       video.addEventListener("seeked", onSeeked);
       video.addEventListener("loadedmetadata", onLoaded);
@@ -312,7 +323,7 @@ export class Playback {
     this.decks[slot] = deck;
     this.paced(deck);
     master.muted = !live();
-    if (follower) follower.muted = true;
+    for (const follower of deck.followers) follower.muted = true;
     if (!live()) this.park();
   }
 
@@ -348,7 +359,7 @@ export class Playback {
   private cue(deck: Deck, source: number, segment: PlayedSegment) {
     deck.shows = segment;
     this.paced(deck);
-    for (const video of deck.follower ? [deck.master, deck.follower] : [deck.master]) {
+    for (const video of videosOf(deck)) {
       video.currentTime = source;
       deck.landing.add(video);
     }
@@ -358,7 +369,7 @@ export class Playback {
   private paced(deck: Deck) {
     const segment = deck.shows ?? this.segment;
     const rate = this.pace * previewSpeed(segment.speed);
-    for (const video of deck.follower ? [deck.master, deck.follower] : [deck.master]) {
+    for (const video of videosOf(deck)) {
       if (video.playbackRate !== rate) video.playbackRate = rate;
       if (video.preservesPitch === !!segment.pitch) video.preservesPitch = !segment.pitch;
     }
@@ -371,7 +382,7 @@ export class Playback {
     void deck.master.play().catch(() => {
       if (this.playing && !this.clock && this.decks[this.live] === deck && deck.master.paused) this.stop();
     });
-    if (deck.follower) void deck.follower.play().catch(() => {});
+    for (const follower of deck.followers) void follower.play().catch(() => {});
   }
 
   // The parked deck's videos played and paused at once, muted, inside the owner's own Play: iOS
@@ -379,7 +390,7 @@ export class Playback {
   private unlock() {
     const deck = this.decks[this.parkedSlot];
     if (!deck) return;
-    for (const video of deck.follower ? [deck.master, deck.follower] : [deck.master]) {
+    for (const video of videosOf(deck)) {
       if (!video.paused || !video.muted) continue;
       void video.play().catch(() => {});
       video.pause();
@@ -387,8 +398,7 @@ export class Playback {
   }
 
   private halt(deck: Deck) {
-    deck.master.pause();
-    deck.follower?.pause();
+    for (const video of videosOf(deck)) video.pause();
   }
 
   // Where the parked deck waits, in the Source, and for which Segment: In when the Loop Region wraps
@@ -424,16 +434,17 @@ export class Playback {
     this.cue(deck, target.source, target.segment);
   }
 
-  // The live deck's follower plays, pauses and keeps step with its master.
+  // The live deck's followers play, pause and keep step with its master.
   private align() {
     const deck = this.decks[this.live];
-    const follower = deck?.follower;
-    if (!deck || !follower) return;
+    if (!deck) return;
     const master = deck.master;
-    if (Math.abs(follower.currentTime - master.currentTime) > MAX_DRIFT_SECS) follower.currentTime = master.currentTime;
-    if (master.paused !== follower.paused) {
-      if (master.paused) follower.pause();
-      else void follower.play().catch(() => {});
+    for (const follower of deck.followers) {
+      if (Math.abs(follower.currentTime - master.currentTime) > MAX_DRIFT_SECS) follower.currentTime = master.currentTime;
+      if (master.paused !== follower.paused) {
+        if (master.paused) follower.pause();
+        else void follower.play().catch(() => {});
+      }
     }
   }
 

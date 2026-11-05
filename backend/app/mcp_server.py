@@ -386,6 +386,7 @@ Edits:
   default) times a ramp up over `fade_in` and down over `fade_out` seconds (each at most half its
   secs). Overlapping ones apply in list order; one past the Clip's end is cut there. They don't
   follow cuts by themselves (as Text Layers). The dry run lists them (`adjustment_layers`).
+- Layout auto, per Scene: track for one face, split for 2-3 (a panel each), blur for none or 4+.
 - Layout manual frames the episode by hand with a framing, as a video Segment's: a Layout Override
   with "manual" needs its own framing, and the Candidate's layout "manual" needs `framing` (one for
   every Scene without an override); no other Layout has one. A Manual Scene stays still: no face

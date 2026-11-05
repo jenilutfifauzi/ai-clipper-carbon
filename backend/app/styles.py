@@ -76,7 +76,9 @@ class Highlight(StrEnum):
 
 
 class CaptionPosition(StrEnum):
-    """Where caption lines go. Auto: on the seam between Split's panels, in the lower third otherwise."""
+    """Where caption lines go. Auto: on the seam above a stacked Split's last panel (the frame's middle
+    with two, between the second and third with three), in the lower third otherwise. Middle: the
+    frame's middle, in every Layout."""
 
     AUTO = "auto"
     TOP = "top"
