@@ -2524,7 +2524,8 @@ def _hook(
         HookPosition.TOP: safe.y,
         HookPosition.MIDDLE: (canvas.height - height) // 2,
         HookPosition.BOTTOM: bottom,
-        HookPosition.CUSTOM: min(max(canvas.y_from_reference(style.y), safe.y), bottom),
+        # By hand, it may go lower than Bottom puts it.
+        HookPosition.CUSTOM: min(max(canvas.y_from_reference(style.y), safe.y), canvas.hook_bottom - height),
     }[style.position]
     area = Box((canvas.width - width) // 2, top, width, height)
     placed = None

@@ -32,6 +32,7 @@ def test_the_canvases_are_the_ones_the_frontend_reads_too() -> None:
     assert shared == {
         "reference": {"width": REFERENCE[0], "height": REFERENCE[1]},
         "caption_height": CAPTION_HEIGHT,
+        "hook_bottoms": {aspect.value: canvas.hook_bottom for aspect, canvas in CANVASES.items()},
         "canvases": {
             aspect.value: {"width": canvas.width, "height": canvas.height, "safe_area": asdict(canvas.safe_area)}
             for aspect, canvas in CANVASES.items()

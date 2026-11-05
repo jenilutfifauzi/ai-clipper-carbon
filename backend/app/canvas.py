@@ -39,6 +39,9 @@ REFERENCE = (1080, 1920)
 PORTRAIT_SAFE_AREA = Box(0, 232, 950, 1304)
 # On the other aspects (feeds and players), this share of each edge is kept clear.
 SAFE_MARGIN = 0.05
+# A hook placed by hand may reach this share of the way from the Safe Area's bottom to the frame's:
+# on 9:16 down to y 1690, into the caption and name the platforms show but above their buttons.
+HOOK_INTO_MARGIN = 0.4
 # Captions and the hook are at most as wide as on 9:16, centred in the frame as there (x 130–950),
 # however wide the Safe Area: their font sizes are in pixels, so a wider area would only make longer lines.
 CAPTION_WIDEST = 2 * (PORTRAIT_SAFE_AREA.x + PORTRAIT_SAFE_AREA.width) - REFERENCE[0]
@@ -107,6 +110,12 @@ class Canvas:
         the bottom of the Safe Area."""
         bottom = self.safe_area.y + self.safe_area.height
         return Box(self.caption_x, bottom - LOWER_CAPTIONS_ABOVE, self.caption_width, CAPTION_HEIGHT)
+
+    @property
+    def hook_bottom(self) -> int:
+        """How low a custom-placed hook may reach: HOOK_INTO_MARGIN past the Safe Area's bottom."""
+        bottom = self.safe_area.y + self.safe_area.height
+        return bottom + round(HOOK_INTO_MARGIN * (self.height - bottom))
 
     def captions_below(self, band: Box) -> Box | None:
         """Under Blur's `band` (the Source fitted over its blur): in the lower third, or lower to keep

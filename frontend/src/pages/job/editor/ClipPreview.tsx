@@ -29,7 +29,7 @@ import { useLooks } from "../../../looks";
 import { cx, formatPrecise } from "../../../format";
 import { usePlayback, useShown, type Playback } from "./playback";
 import { DeckTransport, LoopButton, RateMenu } from "./DeckTransport";
-import { CanvasContext, CAPTION_HEIGHT, fittedStage, useCanvas, useCanvasOf } from "./canvas";
+import { CanvasContext, CAPTION_HEIGHT, fittedStage, hookBottom, useCanvas, useCanvasOf } from "./canvas";
 import { BLUR_BRIGHTNESS, BLUR_SIGMA, filledStyle, hasKeyedPictures, isKeyed, overlaysAt, pictureAt, pictureLayers, pictureStyle, scenesAt, slotView } from "./picture";
 import { PreviewEffected } from "./PreviewEffected";
 import { PreviewMusic } from "./PreviewMusic";
@@ -740,7 +740,7 @@ function stageItems(
       label: "Hook",
       shows: [{ start: hook.start, end: hook.end, area: hook.area }],
       size: { now: plan.hook_style.size, ...HOOK_SIZES },
-      centreY: [plan.safe_area.y + hook.area.height / 2, plan.safe_area.y + plan.safe_area.height - hook.area.height / 2],
+      centreY: [plan.safe_area.y + hook.area.height / 2, hookBottom(plan) - hook.area.height / 2],
       onPlace: (area, size, group) => controls.onPlace("hook", { x: middle(area).x, y: Math.round(area.y), size }, group),
       onEdit:
         edit &&

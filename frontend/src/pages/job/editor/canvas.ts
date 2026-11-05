@@ -23,6 +23,16 @@ export const REFERENCE = { width: 1080, height: 1920 } as const;
 // How tall a caption area is (canvas.py's CAPTION_HEIGHT): a line's middle stays half of it inside a Safe Area.
 export const CAPTION_HEIGHT = 200;
 
+// A hook placed by hand may reach this share of the way from the Safe Area's bottom to the frame's
+// (canvas.py's HOOK_INTO_MARGIN): on 9:16 down to y 1690.
+const HOOK_INTO_MARGIN = 0.4;
+
+/** How low a custom-placed hook may reach on `canvas`, in its pixels (canvas.py's hook_bottom). */
+export function hookBottom(canvas: Canvas): number {
+  const bottom = canvas.safe_area.y + canvas.safe_area.height;
+  return bottom + Math.round(HOOK_INTO_MARGIN * (canvas.height - bottom));
+}
+
 // A place in the Reference Space is kept to this many decimals: enough that it maps back onto the
 // Canvas pixel it came from on every aspect.
 const REFERENCE_DECIMALS = 100;

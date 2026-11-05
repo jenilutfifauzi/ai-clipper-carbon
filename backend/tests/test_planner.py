@@ -753,8 +753,9 @@ def test_the_hook_goes_where_its_style_puts_it_at_its_size():
     bottom = hooked(HOOK, hook_style=HookStyle(position=HookPosition.BOTTOM)).area
     assert bottom.y + bottom.height == PORTRAIT.safe_area.y + PORTRAIT.safe_area.height
     assert hooked(HOOK, hook_style=HookStyle(position=HookPosition.CUSTOM, y=700)).area.y == 700
+    # By hand, below the Safe Area as far as its hook_bottom (y 1690 on 9:16).
     clamped = hooked(HOOK, hook_style=HookStyle(position=HookPosition.CUSTOM, y=1900)).area
-    assert clamped.y + clamped.height == PORTRAIT.safe_area.y + PORTRAIT.safe_area.height
+    assert clamped.y + clamped.height == PORTRAIT.hook_bottom == 1690
     # A smaller size: the same lines in a smaller box, and the text fits at that size.
     small = hooked(HOOK, hook_style=HookStyle(size=60))
     assert small.size == 60 and small.area.width < top.area.width and small.area.height < top.area.height

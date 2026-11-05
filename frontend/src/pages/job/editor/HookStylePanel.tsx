@@ -5,7 +5,7 @@ import { Segmented } from "../../../components/Segmented";
 import { Select } from "../../../components/Select";
 import { Slider } from "../../../components/Slider";
 import { Switch } from "../../../components/Switch";
-import { type Canvas, PORTRAIT, REFERENCE, referenceSafeArea } from "./canvas";
+import { type Canvas, hookBottom, PORTRAIT, REFERENCE, referenceSafeArea, toReference } from "./canvas";
 import { HookShapePicker } from "./HookShapePicker";
 import { FacePicker } from "./FacePicker";
 import { ShadowFields } from "./ShadowFields";
@@ -130,7 +130,7 @@ export function HookPosition({ style, canvas = PORTRAIT }: { style: StyleControl
             label="Height of the hook's top"
             value={hook.y}
             min={safe.y}
-            max={safe.y + safe.height}
+            max={toReference(canvas, { x: 0, y: hookBottom(canvas) }).y}
             format={(v) => `${Math.round(v)} px`}
             onChange={(v) => set("y", v)}
             marker={marker("y", "hook height")}

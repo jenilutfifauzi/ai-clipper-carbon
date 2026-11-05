@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import shared from "../../../../../backend/tests/fixtures/canvases.json";
 import type { RenderPlan } from "../../../api";
-import { aspectParts, aspectRatio, CANVASES, CAPTION_HEIGHT, captionCentres, canvasOf, fittedStage, fromReference, PORTRAIT, REFERENCE, referenceSafeArea, tallestAspect, toReference } from "./canvas";
+import { aspectParts, aspectRatio, CANVASES, CAPTION_HEIGHT, captionCentres, canvasOf, fittedStage, fromReference, hookBottom, PORTRAIT, REFERENCE, referenceSafeArea, tallestAspect, toReference } from "./canvas";
 import { placedFields, watermarkPlaced } from "./placing";
 
 const LANDSCAPE = { width: 1920, height: 1080, safe_area: { x: 96, y: 54, width: 1728, height: 972 } };
@@ -15,6 +15,7 @@ describe("the Canvas", () => {
     expect(PORTRAIT).toBe(CANVASES["9:16"]);
     expect(REFERENCE).toEqual(shared.reference);
     expect(CAPTION_HEIGHT).toBe(shared.caption_height);
+    for (const [aspect, canvas] of Object.entries(CANVASES)) expect(hookBottom(canvas)).toBe(shared.hook_bottoms[aspect as keyof typeof shared.hook_bottoms]);
   });
 
   test("is the plan's width, height and Safe Area", () => {
