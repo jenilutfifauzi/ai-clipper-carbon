@@ -7,6 +7,7 @@ const CHOICES = [
   { value: "auto", label: "Auto" },
   { value: "track", label: "Track" },
   { value: "split", label: "Split" },
+  { value: "split3", label: "Split 3" },
   { value: "blur", label: "Blur" },
   { value: "manual", label: "Manual" },
 ] as const;
@@ -44,6 +45,7 @@ describe("the Layout shown as chosen", () => {
   test("is As shot (Auto) on a portrait Source for every automatic Layout, which all show it as shot", () => {
     expect(shownLayout("track", true)).toBe("auto");
     expect(shownLayout("split", true)).toBe("auto");
+    expect(shownLayout("split3", true)).toBe("auto");
     expect(shownLayout("blur", true)).toBe("auto");
     expect(shownLayout("manual", true)).toBe("manual");
     expect(shownLayout("default", true)).toBe("default");

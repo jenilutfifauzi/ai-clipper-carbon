@@ -20,11 +20,12 @@ const LAYOUTS: readonly { value: Layout; label: string }[] = [
   { value: "auto", label: "Auto" },
   { value: "track", label: "Track" },
   { value: "split", label: "Split" },
+  { value: "split3", label: "Split 3" },
   { value: "blur", label: "Blur" },
   { value: "manual", label: "Manual" },
 ];
 
-const NAMES: Record<Layout, string> = { auto: "Auto", track: "Track", split: "Split", blur: "Blur", manual: "Manual" };
+const NAMES: Record<Layout, string> = { auto: "Auto", track: "Track", split: "Split", split3: "Split 3", blur: "Blur", manual: "Manual" };
 
 /**
  * How the Scene under the playhead, in the picked Source Segment `index` (of a Main Track of

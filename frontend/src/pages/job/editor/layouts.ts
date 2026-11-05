@@ -21,8 +21,8 @@ export function offeredLayouts<T extends { value: string; label: string }>(optio
 
 /**
  * The choice to show as made for a saved Layout (or the clip's, "default"): on a portrait Source,
- * Track, Split and Blur all show it as shot, so they show as Auto ("As shot"), which is offered.
+ * Track, Split, Split 3 and Blur all show it as shot, so they show as Auto ("As shot"), which is offered.
  */
 export function shownLayout<T extends string>(layout: T, portrait: boolean): T | "auto" {
-  return portrait && (layout === "track" || layout === "split" || layout === "blur") ? "auto" : layout;
+  return portrait && (layout === "track" || layout === "split" || layout === "split3" || layout === "blur") ? "auto" : layout;
 }

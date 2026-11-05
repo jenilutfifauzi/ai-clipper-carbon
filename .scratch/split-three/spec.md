@@ -53,3 +53,18 @@ A podcast shot with three people talking in one frame gets Blur today: Auto choo
 
 - Four or more panels.
 - Choosing which three faces by hand.
+
+## Addendum: Split 3, three panels on demand
+
+Status: ready-for-agent
+Created: 2026-11-06
+
+**Problem.** A podcast wide shot of three, two of them often in profile: BlazeFace sees one face in most sampled frames (in the case that prompted it, 133 frames one face, 25 two, one three), so the Scene's face count is one. Forced Split then falls back to the frame's halves in two panels, and nobody gets a panel of their own.
+
+**Solution.** A Layout of its own, **Split 3** (stored `split3`), beside Split: as the Candidate's Layout and as a Scene's Layout Override. Auto never chooses it, and plain Split keeps adapting as above.
+- It always plans three panels, in a Scene whose layout is `split` (the plan has no new Scene Layout): stacked thirds on 9:16 and 4:5, columns on 1:1 and 16:9, as `split_panels(3)` gives.
+- When at least three faces are told apart in the Scene (`_track_faces`), the three seen most, left to right, each followed by its own Smooth Camera, as Split gives a Scene of three.
+- Otherwise the frame's left, middle and right thirds (`_split_thirds`), each crop a third of the Source wide, of its panel's shape. A third's crop follows the largest face detected in that third at each sampled frame, without identities, so a face in profile seen now and then still steers it (`_follow`, with Split's rise). A third where no face is ever detected stays still on its third, its crop centred at the average height of the faces detected in the Scene (`_faces_level`), so as not to cut heads off (a 9:16 third's crop is 380 px tall on a 1080 px Source); centred without any face.
+- Captions on Auto sit on the lower seam, as in any three-panel Split.
+
+**Testing.** Planner: three tracked faces give the same Scene as Split's three; one face mostly gives the thirds, the face's third following it, the empty one still at the faces' height; no faces (or no analysis) give still, centred thirds; a Layout Override of Split 3 on a two-face Scene gives three panels and lower-seam captions. A real frame (job e373122d79d2, the 8.5–24.6 s Scene) composed from the plan's crops and looked at.

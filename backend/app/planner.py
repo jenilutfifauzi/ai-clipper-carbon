@@ -10,7 +10,11 @@ layout doesn't flicker). The Candidate's layout override, unless Auto, replaces 
   on 9:16 and 4:5 (two of 1080×960 and 1080×675, three of 1080×640 and 1080×450), the leftmost face's
   on top, and side by side on 1:1 and 16:9 (two of 540×1080 and 960×1080, three of 360×1080 and
   640×1080), the leftmost face's on the left. Forced on more faces, Split shows the three seen most;
-  forced with fewer than two, the frame's left and right halves in two panels.
+  forced with fewer than two, the frame's left and right halves in two panels. Split 3, which only
+  the owner chooses, is a Split Scene of three panels whatever its faces: the three seen most when
+  three are told apart, or else the frame's thirds, each following the faces detected in it (a face
+  in profile, seen now and then, still steers it) and, where none ever is, still at the height of the
+  Scene's other faces.
 - None, or four or more: Blur, the whole shot as wide as the output, centred over a blurred copy
   of itself that fills it.
 
@@ -1384,6 +1388,8 @@ def _framed(
         chosen = _choose(wanted, count)
         if chosen is SceneLayout.TRACK:
             panels = [_track(a, b, seen, source, camera, canvas)]
+        elif wanted is Layout.SPLIT3:
+            panels = _split_three(a, b, seen, source, camera, canvas)
         elif chosen is SceneLayout.SPLIT:
             panels = _split(a, b, seen if count and count >= 2 else None, source, camera, canvas, count or 0)
         else:
@@ -3107,7 +3113,9 @@ def _face_count(frames: list[FrameFaces]) -> int:
 
 def _choose(layout: Layout, count: int | None) -> SceneLayout:
     """The Scene's Layout: the override, or by its face count (Track when it wasn't analysed): Track
-    for one, Split for two up to SPLIT_MOST, and Blur for none or more."""
+    for one, Split for two up to SPLIT_MOST, and Blur for none or more. Split 3 is planned as Split."""
+    if layout is Layout.SPLIT3:
+        return SceneLayout.SPLIT
     if layout is not Layout.AUTO:
         return SceneLayout(layout.value)
     if count is None or count == 1:
@@ -3144,26 +3152,103 @@ def _split(
     the leftmost one's on top or on the left. Without `faces` (or with fewer than two of them
     tracked), the frame's left half in the first of two panels and its right half in the other; with
     fewer tracked than `count`, a panel for each."""
-    width, height = source.width, source.height
-    tracked = _track_faces(faces, width, height, camera) if faces else []
-    seen = Counter(id for frame in tracked for id in frame.faces)
-    wanted = min(max(count, 2), SPLIT_MOST, len(seen))
+    tracked = _track_faces(faces, source.width, source.height, camera) if faces else []
+    wanted = min(max(count, 2), SPLIT_MOST, len(_identities(tracked)))
     if wanted < 2:
         return _split_crops(start, source, canvas, 2)
-    crops = _split_crops(start, source, canvas, wanted)
+    return _split_faces(start, end, tracked, source, camera, canvas, wanted)
+
+
+def _split_three(
+    start: float, end: float, faces: list[FrameFaces] | None, source: SourceMetadata, camera: CameraTuning, canvas: Canvas
+) -> list[Panel]:
+    """Split 3's three panels, whatever the Scene's face count: a panel for each of the three faces
+    seen most in its sampled frames `faces`, as `_split` gives a Scene of three, when at least three
+    are tracked; else the frame's thirds (`_split_thirds`), as when a wide shot of three shows the
+    detector only the one facing it."""
+    tracked = _track_faces(faces, source.width, source.height, camera) if faces else []
+    if len(_identities(tracked)) >= SPLIT_MOST:
+        return _split_faces(start, end, tracked, source, camera, canvas, SPLIT_MOST)
+    return _split_thirds(start, end, faces or [], source, camera, canvas)
+
+
+def _identities(tracked: list["_TrackedFrame"]) -> set[int]:
+    """The faces told apart in a Scene's `tracked` frames."""
+    return {id for frame in tracked for id in frame.faces}
+
+
+def _split_rise(crop_height: int, canvas: Canvas) -> float:
+    """How far below its face a Split crop of `crop_height` is centred, so that the face sits at
+    SPLIT_FACE_AT of a stacked panel's height; side by side, a panel is tall enough for the face to
+    sit in its middle."""
+    return (0.5 - SPLIT_FACE_AT) * crop_height if canvas.stacked else 0.0
+
+
+def _split_faces(
+    start: float, end: float, tracked: list["_TrackedFrame"], source: SourceMetadata, camera: CameraTuning, canvas: Canvas, count: int
+) -> list[Panel]:
+    """Split's `count` panels for the `count` faces seen most in the Scene's `tracked` frames (the
+    larger first among those seen as often), each followed by its own camera, the leftmost one's on
+    top or on the left."""
+    crops = _split_crops(start, source, canvas, count)
+    seen = Counter(id for frame in tracked for id in frame.faces)
     area = Counter()
     for frame in tracked:
         for id, face in frame.faces.items():
             area[id] += face.width * face.height
-    shown = sorted(seen, key=lambda id: (-seen[id], -area[id]))[:wanted]
+    shown = sorted(seen, key=lambda id: (-seen[id], -area[id]))[:count]
     centre = {id: sum(f.faces[id].centre_x for f in tracked if id in f.faces) / seen[id] for id in shown}
     shown.sort(key=centre.__getitem__)
-    # Side by side, a panel is tall enough for the face to sit in its middle.
-    rise = (0.5 - SPLIT_FACE_AT) * crops[0].crop_height if canvas.stacked else 0.0
+    rise = _split_rise(crops[0].crop_height, canvas)
     return [
         _follow(panel, [(frame.at, frame.faces.get(id)) for frame in tracked], start, end, source, camera, rise)
         for panel, id in zip(crops, shown)
     ]
+
+
+def _split_thirds(
+    start: float, end: float, faces: list[FrameFaces], source: SourceMetadata, camera: CameraTuning, canvas: Canvas
+) -> list[Panel]:
+    """Split 3's panels when fewer than three faces are told apart in the Scene's sampled frames
+    `faces`: the frame's left, middle and right thirds (`_split_crops`). Each third's crop follows the
+    largest face detected in that third at each frame, with no identity needed, so that a face in
+    profile seen now and then still steers it. One where no face is ever detected stays on its third,
+    at the height of the faces detected elsewhere in the Scene (`_faces_level`, centred without any),
+    so as not to cut off heads a detector missed."""
+    width = source.width
+    crops = _split_crops(start, source, canvas, SPLIT_MOST)
+    rise = _split_rise(crops[0].crop_height, canvas)
+    level = _faces_level(faces)
+    panels = []
+    for i, crop in enumerate(crops):
+        low, high = width * i / SPLIT_MOST, width * (i + 1) / SPLIT_MOST
+        targets = [(frame.at, _largest_within(frame.faces, low, high)) for frame in faces]
+        if any(face is not None for _, face in targets):
+            panels.append(_follow(crop, targets, start, end, source, camera, rise))
+        elif level is not None:
+            panels.append(_held_at(crop, level + rise, source))
+        else:
+            panels.append(crop)
+    return panels
+
+
+def _largest_within(faces: list[Face], low: float, high: float) -> Face | None:
+    """The largest of `faces` whose centre is from `low` up to `high` across the frame, if any."""
+    inside = [face for face in faces if low <= face.centre_x < high]
+    return max(inside, key=lambda face: face.width * face.height, default=None)
+
+
+def _faces_level(frames: list[FrameFaces]) -> float | None:
+    """The average height of the centres of the faces detected in `frames`; None without any."""
+    heights = [face.centre_y for frame in frames for face in frame.faces]
+    return sum(heights) / len(heights) if heights else None
+
+
+def _held_at(panel: Panel, centre_y: float, source: SourceMetadata) -> Panel:
+    """`panel`, unmoved, with its crop's centre at `centre_y` (kept on the frame) instead."""
+    [first] = panel.path
+    y = min(max(_even(centre_y - panel.crop_height / 2), 0), _even_floor(source.height - panel.crop_height))
+    return replace(panel, path=[replace(first, y=y)])
 
 
 def _split_crops(start: float, source: SourceMetadata, canvas: Canvas, count: int) -> list[Panel]:

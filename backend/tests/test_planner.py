@@ -467,6 +467,48 @@ def test_a_forced_split_of_four_faces_shows_the_three_seen_most():
     assert tracked(sampled((3, [a, b, c, d])), 3).scenes[0].layout is SceneLayout.BLUR
 
 
+# Split 3: always three panels, of the three faces tracked or else of the frame's thirds.
+
+
+def test_split_three_with_three_tracked_faces_is_split_of_three():
+    trio = [face(1520), face(400), face(960)]
+    forced = tracked(sampled((3, trio)), 3, layout=Layout.SPLIT3).scenes
+    assert forced == tracked(sampled((3, trio)), 3).scenes
+    assert forced[0].layout is SceneLayout.SPLIT
+
+
+def test_split_three_shows_the_frames_thirds_each_following_the_faces_seen_in_it():
+    # A wide shot of three where the detector mostly sees only the one facing it, in the middle
+    # (centre y 340); the one on the right, in profile, is seen now and then. Auto takes it for Track.
+    middle, right = face(900, 80), face(1450, 100)
+    faces = sampled((0.5, [middle]), (0.2, [middle, right]), (1.3, [middle]), (0.2, [middle, right]), (0.8, [middle]))
+    assert tracked(faces, 3).scenes[0].layout is SceneLayout.TRACK
+    [scene] = tracked(faces, 3, layout=Layout.SPLIT3).scenes
+    assert scene.layout is SceneLayout.SPLIT
+    assert [(p.area, p.crop_width, p.crop_height) for p in scene.panels] == [(third, *THIRD_CROP) for third in THIRDS]
+    left_third, middle_third, right_third = scene.panels
+    # The middle and right thirds follow their faces, each a little above its panel's middle.
+    for panel, seen in ((middle_third, middle), (right_third, right)):
+        assert crop_at(panel.path, 2.9) + panel.crop_width / 2 == pytest.approx(seen.centre_x, abs=2)
+        assert (seen.centre_y - panel.path[0].y) / panel.crop_height == pytest.approx(0.4, abs=0.01)
+    # The left third sees no one: still on its share of the frame, at the faces' height (not centred,
+    # y 350, which would cut the heads off).
+    level = (sum(f.centre_y for frame in faces for f in frame.faces) / sum(len(frame.faces) for frame in faces))
+    [still] = left_third.path
+    assert still.x == 0
+    assert (level - still.y) / left_third.crop_height == pytest.approx(0.4, abs=0.01)
+
+
+def test_split_three_without_faces_shows_the_frames_thirds_still_and_centred():
+    [scene] = tracked(sampled((3, None)), 3, layout=Layout.SPLIT3).scenes
+    assert scene.layout is SceneLayout.SPLIT
+    assert [(p.area, p.crop_width, p.crop_height) for p in scene.panels] == [(third, *THIRD_CROP) for third in THIRDS]
+    assert [p.path for p in scene.panels] == [[CropPoint(0.0, x, 350)] for x in (0, 640, 1280)]
+    # Not analysed: the same.
+    [unseen] = tracked(None, 3, layout=Layout.SPLIT3).scenes
+    assert unseen.panels == scene.panels
+
+
 def test_a_portrait_source_is_passed_through_whatever_its_faces_or_automatic_layout():
     faces = sampled((2, people(2)), (2, people(1)))
     # (Manual frames it by hand: test_manual_layout.py.)
@@ -685,8 +727,11 @@ def test_the_hook_sits_just_below_the_top_safe_zone_and_never_over_the_captions(
         for text in ("Kenapa gagal?", HOOK, LONG_HOOK, "W" * 30)
     ]
     plans.append(plan_render(100, 106, source(1080, 1920, fps=FPS), words=words, hook=HOOK, canvas=PORTRAIT))
-    # Every Layout's captions are there: the seam's band (Split) and the lower third.
-    assert {e.area for plan in plans for e in plan.captions} == {PORTRAIT.seam_captions, PORTRAIT.lower_captions}
+    # Every Layout's captions are there: the seam's band (Split), the lower seam's (Split 3) and the
+    # lower third.
+    assert {e.area for plan in plans for e in plan.captions} == {
+        PORTRAIT.seam_captions, PORTRAIT.split_captions(3), PORTRAIT.lower_captions
+    }
     for plan in plans:
         hook, area = plan.hook, plan.hook.area
         # Inside the safe zones, at the top just below the top one, centred like the captions.
@@ -950,6 +995,13 @@ def test_a_layout_override_changes_only_the_scene_holding_it():
     assert [s.layout for s in overridden([LayoutOverride(4.0, Layout.TRACK)]).scenes] == ["blur", "track", "track"]
     two = [LayoutOverride(0.5, Layout.SPLIT), LayoutOverride(1.5, Layout.TRACK)]
     assert [s.layout for s in overridden(two).scenes] == ["track", "track", "split"]
+    # Split 3 on the two-face Scene: three panels where Split has two, its Auto captions on the lower seam.
+    words = said("lima enam", 4.5)
+    split, split_three = (overridden(given, words=words) for given in ([], [LayoutOverride(5.0, Layout.SPLIT3)]))
+    assert [len(s.panels) for s in split.scenes] == [2, 1, 2]
+    assert [s.layout for s in split_three.scenes] == ["blur", "track", "split"]
+    assert [len(s.panels) for s in split_three.scenes] == [2, 1, 3]
+    assert {cue.area for cue in split_three.captions} == {PORTRAIT.split_captions(3)}
     # Outside the Clip: nothing.
     assert [s.layout for s in overridden([LayoutOverride(-1, Layout.TRACK), LayoutOverride(9, Layout.TRACK)]).scenes] == [
         "blur", "track", "split"

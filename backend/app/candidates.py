@@ -61,14 +61,17 @@ class Origin(StrEnum):
     MANUAL = "manual"
 
 
+# Auto lets the Render Planner choose per Scene, by its faces (never Manual or Split 3); the others
+# replace its choice in every Scene. Split 3 is Split always in three panels: a Scene planned in it is
+# a Split one. Manual frames the Source by hand with a Framing (docs/adr/0007), still for the whole
+# Scene. (The docstring, short, is the MCP tools' description of it, twice: they have a byte budget.)
 class Layout(StrEnum):
-    """How the clip is framed. Auto lets the Render Planner choose per scene (never Manual); the
-    others replace its choice for every scene. Manual frames the Source by hand with a Framing
-    (docs/adr/0007), still for the whole Scene."""
+    """How the clip is framed: Auto chooses per Scene by its faces, never Manual or Split 3."""
 
     AUTO = "auto"
     TRACK = "track"
     SPLIT = "split"
+    SPLIT3 = "split3"
     BLUR = "blur"
     MANUAL = "manual"
 

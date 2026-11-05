@@ -193,7 +193,7 @@ export interface Transcript {
 }
 
 // Auto chooses per Scene by its faces (never Manual); Manual frames the Source by hand with a Framing.
-export type Layout = "auto" | "track" | "split" | "blur" | "manual";
+export type Layout = "auto" | "track" | "split" | "split3" | "blur" | "manual";
 
 // A Candidate's Canvas Aspect, width to height (docs/adr/0022): its Canvas is 1080 on the short side.
 export type Aspect = "9:16" | "4:5" | "1:1" | "16:9";
