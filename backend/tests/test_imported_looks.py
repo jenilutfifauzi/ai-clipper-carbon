@@ -144,15 +144,17 @@ def test_an_imported_look_is_listed_used_in_a_grade_and_folded(client):
     listed = client.get("/api/looks").json()
     assert listed[-1] == look and not any(entry["has_table"] for entry in listed[:-1])
     assert all(entry["fit"] is None for entry in listed[:-1])
-    folded = fold(Grade(look=look["id"], intensity=40))
+    with client.app.state.default_workspace.activate():
+        folded = fold(Grade(look=look["id"], intensity=40))
+        filters = grade_filters(Grade(Adjust(exposure=0.5, sharpen=30, vignette=20), look=look["id"]))
+        alpha_filters = grade_filters(Grade(look=look["id"]), alpha="g")
     assert folded is not None and folded.tables is None and folded.matrix is None
     assert folded.lut is not None and folded.lut.intensity == 40
     # Drawn after the tables and matrix, before sharpen and vignette.
-    filters = grade_filters(Grade(Adjust(exposure=0.5, sharpen=30, vignette=20), look=look["id"]))
     order = [filters.index(name) for name in ("curves", "lut3d", "unsharp", "vignette")]
     assert order == sorted(order), filters
     # An Overlay's picture keeps its alpha: the table is drawn on RGBA.
-    assert "format=rgba,lut3d" in grade_filters(Grade(look=look["id"]), alpha="g")
+    assert "format=rgba,lut3d" in alpha_filters
 
     job = reviewed(client)
     candidate = add(client, job, "halo", "ya")

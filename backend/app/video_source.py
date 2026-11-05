@@ -103,7 +103,9 @@ class YtDlpVideoSource:
             "noprogress": True,
             "logger": logger,
         }
-        if self.settings.ytdlp_cookies_from_browser:
+        if self.settings.ytdlp_cookies_file and self.settings.ytdlp_cookies_file.is_file():
+            options["cookiefile"] = str(self.settings.ytdlp_cookies_file)
+        elif self.settings.ytdlp_cookies_from_browser:
             options["cookiesfrombrowser"] = (self.settings.ytdlp_cookies_from_browser,)
         return options
 

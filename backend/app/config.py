@@ -302,7 +302,7 @@ class LlmChoice:
         return f"{self.provider} {self.model}{thinking}"
 
 
-@dataclass(frozen=True)
+@dataclass
 class Settings:
     # "gemini", or "openai" for an OpenAI-compatible Chat Completions API at llm_base_url.
     llm_provider: str
@@ -317,6 +317,8 @@ class Settings:
     data_dir: Path
     ytdlp_cookies_from_browser: str | None
     selection_audio_signal: bool
+    # Uploaded YouTube cookies from the Settings screen, kept under DATA_DIR.
+    ytdlp_cookies_file: Path | None = None
     # Gemini TTS's model, offered for Narrations whenever gemini_api_key is set, whatever llm_provider
     # says (docs/adr/0019).
     tts_gemini_model: str = DEFAULT_TTS_GEMINI_MODEL

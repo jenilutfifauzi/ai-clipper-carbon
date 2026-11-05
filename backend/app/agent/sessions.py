@@ -94,8 +94,9 @@ def acp_command(provider: AcpProvider) -> list[str]:
 class AgentSessionManager:
     """On app.state.agent_sessions, made in the lifespan; `close` ends every session."""
 
-    def __init__(self, app: FastAPI, http_transport: httpx.AsyncBaseTransport | None = None) -> None:
+    def __init__(self, app: FastAPI, workspace, http_transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._app = app
+        self._workspace = workspace
         self._http_transport = http_transport
         self._sessions: dict[SessionKey, AgentSession] = {}
         # Sign-ins under way: each waits for the owner to finish in the browser.
@@ -104,7 +105,7 @@ class AgentSessionManager:
 
     @property
     def _store(self) -> JobStore:
-        return self._app.state.store
+        return self._workspace.store
 
     @property
     def _scopes(self) -> ScopeRegistry:
@@ -175,7 +176,7 @@ class AgentSessionManager:
         command = launch_command(provider)
         if command is None:
             raise ValueError(f"{provider.label} isn't installed: {provider.install_hint}")
-        sandbox = self._app.state.settings.data_dir / SANDBOX_DIR / f"login-{secrets.token_hex(6)}"
+        sandbox = self._workspace.settings.data_dir / SANDBOX_DIR / f"login-{secrets.token_hex(6)}"
         task = await start_login(command, sandbox, provider.label)
         self._logins.add(task)
         task.add_done_callback(self._logins.discard)
@@ -206,7 +207,9 @@ class AgentSessionManager:
         if (session := self._sessions.get(key)) is not None:
             return session
         session_id = secrets.token_hex(6)
-        token = self._scopes.issue(AgentScope(job_id=job_id, candidate_id=candidate_id, session_id=session_id))
+        token = self._scopes.issue(
+            AgentScope(user_id=self._workspace.user_id, job_id=job_id, candidate_id=candidate_id, session_id=session_id)
+        )
         session = AgentSession(job_id, candidate_id, tab, provider, model, credential, token)
         self._sessions[key] = session
         return session
@@ -219,7 +222,7 @@ class AgentSessionManager:
         if session.acp is not None:
             await session.acp.close()
         scope = self._scopes.resolve(session.token)
-        sandbox = self._app.state.settings.data_dir / SANDBOX_DIR / scope.session_id
+        sandbox = self._workspace.settings.data_dir / SANDBOX_DIR / scope.session_id
         session.acp = AcpAgent(provider, command, sandbox)
         return session.acp
 
@@ -301,7 +304,7 @@ class AgentSessionManager:
             history=history,
             prompt=prompt,
             images=images,
-            tools=ScopedEndpoint(self._app, session.token, self._app.state.settings.backend_origin),
+            tools=ScopedEndpoint(self._app, session.token, self._workspace.settings.backend_origin),
             http_transport=self._http_transport,
         )
 

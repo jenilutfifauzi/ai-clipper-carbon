@@ -21,6 +21,9 @@ near, not exact.
 import json
 import math
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from functools import cache
@@ -121,7 +124,7 @@ def _builtins() -> tuple[Look, ...]:
 
 def all_looks() -> list[Look]:
     """Every Look: the built-in ones by their order, then the Imported ones as they were imported."""
-    return [*_builtins(), *_store.all()]
+    return [*_builtins(), *imported_looks().all()]
 
 
 def get_look(look_id: str) -> Look:
@@ -129,12 +132,22 @@ def get_look(look_id: str) -> Look:
     for look in _builtins():
         if look.id == look_id:
             return look
-    return _store.get(look_id)
+    return imported_looks().get(look_id)
 
 
 def imported_looks() -> "ImportedLooks":
-    """The Imported Looks of this process."""
-    return _store
+    """The active workspace's Imported Looks, or the process default outside an app request."""
+    return _active_store.get() or _store
+
+
+@contextmanager
+def using_store(store: "ImportedLooks") -> Iterator[None]:
+    """Temporarily use one account's imported-look store in this request or worker task."""
+    token = _active_store.set(store)
+    try:
+        yield
+    finally:
+        _active_store.reset(token)
 
 
 def use(folder: Path | None) -> "ImportedLooks":
@@ -252,6 +265,7 @@ class ImportedLooks:
 
 
 _store = ImportedLooks(None)
+_active_store: ContextVar[ImportedLooks | None] = ContextVar("active_imported_look_store", default=None)
 
 
 def parse_cube(text: str) -> tuple[str | None, np.ndarray]:

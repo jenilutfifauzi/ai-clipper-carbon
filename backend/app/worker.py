@@ -10,6 +10,8 @@ merge, Whisper, Selection's requests or an ffmpeg encode) runs at a time, which 
 
 import logging
 import threading
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime
 from queue import Queue
 
@@ -19,16 +21,26 @@ from app.renderer import RenderStopped
 from app.rendering import Renders
 
 logger = logging.getLogger(__name__)
+# Each account has its own queue and stores, but expensive transcription/render work is
+# serialized across accounts to preserve the app's original single-worker resource bound.
+_PROCESS_WORK_LOCK = threading.Lock()
 
 # The statuses of a Job a process left unfinished, which the worker takes back.
 _RESUMED = frozenset({JobStatus.QUEUED, JobStatus.WAITING_QUOTA, JobStatus.RENDERING, *RUNNING})
 
 
 class Worker:
-    def __init__(self, store: JobStore, pipeline: Pipeline, renders: Renders) -> None:
+    def __init__(
+        self,
+        store: JobStore,
+        pipeline: Pipeline,
+        renders: Renders,
+        workspace_context: Callable[[], AbstractContextManager[None]] | None = None,
+    ) -> None:
         self._store = store
         self._pipeline = pipeline
         self._renders = renders
+        self._workspace_context = workspace_context
         self._queue: Queue[str | None] = Queue()
         self._stopping = threading.Event()
         self._working = threading.Event()
@@ -129,13 +141,15 @@ class Worker:
         while (job_id := self._queue.get()) is not None and not self._stopping.is_set():
             self._working.set()
             try:
-                status = self._store.get(job_id).status
-                if status is JobStatus.RENDERING:
-                    self._renders.run(job_id)
-                    continue
-                if status is not JobStatus.QUEUED:
-                    continue
-                job = self._pipeline.run(job_id)
+                context = self._workspace_context() if self._workspace_context else nullcontext()
+                with context, _PROCESS_WORK_LOCK:
+                    status = self._store.get(job_id).status
+                    if status is JobStatus.RENDERING:
+                        self._renders.run(job_id)
+                        continue
+                    if status is not JobStatus.QUEUED:
+                        continue
+                    job = self._pipeline.run(job_id)
             except JobNotFound:
                 logger.info("Job %s was deleted while queued", job_id)
             except JobConflict as exc:

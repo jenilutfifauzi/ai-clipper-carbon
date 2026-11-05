@@ -38,6 +38,7 @@ from app.api import AfterSave, AppSettings, EditBy, ExistingJob, Logos, Media, P
 from app.candidates import Candidate
 from app.config import Settings
 from app.jobs import JobNotFound
+from app.workspace import workspace_for_request
 
 router = APIRouter(prefix="/api/agent")
 candidate_router = APIRouter(prefix="/api/jobs/{job_id}/candidates/{candidate_id}/agent")
@@ -162,7 +163,8 @@ async def send_turn(job_id: str, candidate_id: str, request: TurnRequest, http: 
         raise HTTPException(400, f"{provider.label} can't see images: send them to an Agent Provider that can, or remove them")
     thread = await _thread(http, job_id, candidate_id, request.thread)
     try:
-        attached = await asyncio.to_thread(resolve, http.app.state.store, http.app.state.profiles, job_id, candidate_id, request.attachments)
+        workspace = workspace_for_request(http)
+        attached = await asyncio.to_thread(resolve, workspace.store, workspace.profiles, job_id, candidate_id, request.attachments)
     except UnknownCandidate as error:
         raise HTTPException(404, str(error)) from error
     except BadAttachments as error:
@@ -300,7 +302,7 @@ async def stream_agent_events(job_id: str, candidate_id: str, http: Request) -> 
 
 
 async def _existing_candidate(request: Request, job_id: str, candidate_id: str) -> None:
-    store = request.app.state.store
+    store = workspace_for_request(request).store
     try:
         await asyncio.to_thread(store.get, job_id)
     except JobNotFound as error:
@@ -321,7 +323,7 @@ async def _thread(request: Request, job_id: str, candidate_id: str, thread: str 
 
 
 def _job_dir(request: Request, job_id: str) -> Path:
-    return request.app.state.store.job_dir(job_id)
+    return workspace_for_request(request).store.job_dir(job_id)
 
 
 def _turn_revisions(request: Request, job_id: str, candidate_id: str, turn: str) -> tuple[int, int]:
@@ -335,7 +337,7 @@ def _turn_revisions(request: Request, job_id: str, candidate_id: str, turn: str)
 
 
 def _sessions(request: Request) -> AgentSessionManager:
-    return request.app.state.agent_sessions
+    return workspace_for_request(request).agent_sessions
 
 
 def _api_provider(provider_id: str) -> ApiProvider:
@@ -348,12 +350,9 @@ def _api_provider(provider_id: str) -> ApiProvider:
 
 
 def _settings(request: Request) -> Settings:
-    return request.app.state.settings
+    return workspace_for_request(request).settings
 
 
 def _detection(request: Request) -> DetectionCache:
-    """One per app, made on first use."""
-    state = request.app.state
-    if getattr(state, "agent_detection", None) is None:
-        state.agent_detection = DetectionCache()
-    return state.agent_detection
+    """One per account workspace, made when that workspace is created."""
+    return workspace_for_request(request).agent_detection

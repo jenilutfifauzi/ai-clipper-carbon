@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import time
@@ -10,6 +11,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
+
+# Only pytest opts into the unauthenticated single-workspace factory used by unit tests.
+os.environ["AI_CLIPPER_TEST_MODE"] = "1"
 
 from app import emoji
 from app.config import QuotaTuning, SelectionTuning, Settings, TranscriptionTuning, load_settings

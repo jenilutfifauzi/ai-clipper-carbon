@@ -1870,6 +1870,13 @@ export class ApiError extends Error {
   }
 }
 
+type ClerkTokenProvider = () => Promise<string | null>;
+let clerkTokenProvider: ClerkTokenProvider | null = null;
+
+export function setClerkTokenProvider(provider: ClerkTokenProvider | null): void {
+  clerkTokenProvider = provider;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await send(path, init);
   return (response.status === 204 ? undefined : await response.json()) as T;
@@ -1877,13 +1884,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 // The API's answer to a request, or an ApiError with its reason for refusing it.
 async function send(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (typeof init?.body === "string" && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const token = await clerkTokenProvider?.();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
   const response = await fetch(`/api${path}`, {
     ...init,
-    headers: {
-      // A FormData body sets its own multipart type, with its boundary.
-      ...(typeof init?.body === "string" ? { "Content-Type": "application/json" } : {}),
-      ...(init?.headers as Record<string, string> | undefined),
-    },
+    headers,
   });
   if (!response.ok) {
     const [message, detail] = await errorMessage(response);
@@ -1917,7 +1925,33 @@ function detailMessage(detail: unknown): string | null {
   return null;
 }
 
+export type SettingsProvider = "gemini" | "openai-compatible";
+export interface AppSettings {
+  provider: SettingsProvider;
+  model: string;
+  base_url: string | null;
+  thinking: boolean;
+  api_key_configured: boolean;
+  youtube_cookies_uploaded: boolean;
+}
+export interface AppSettingsUpdate {
+  provider: SettingsProvider;
+  model: string;
+  base_url?: string;
+  api_key?: string;
+  thinking: boolean;
+}
+
 export const api = {
+  getSettings: () => request<AppSettings>("/settings"),
+  saveSettings: (settings: AppSettingsUpdate) =>
+    request<AppSettings>("/settings", { method: "PUT", body: JSON.stringify(settings) }),
+  uploadYoutubeCookies: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request<AppSettings>("/settings/youtube-cookies", { method: "POST", body });
+  },
+  deleteYoutubeCookies: () => request<void>("/settings/youtube-cookies", { method: "DELETE" }),
   // Newest first: a page of `limit`, the one before the Job created at `before` (the last listed).
   listJobs: (page: { limit: number; before?: string }) => {
     const query = new URLSearchParams({ limit: String(page.limit) });
@@ -2004,15 +2038,10 @@ export const api = {
   // Save sound as WAV: the sound of the Candidate's item of `kind`, alone as heard in the Clip, from an
   // unsaved draft of its edits; the WAV, and the Content-Disposition that names the file.
   saveSound: async (jobId: string, id: string, kind: SoundKind, item: string, draft: CandidateChange) => {
-    const response = await fetch(`/api/jobs/${jobId}/candidates/${id}/sound/${kind}/${encodeURIComponent(item)}`, {
+    const response = await send(`/jobs/${jobId}/candidates/${id}/sound/${kind}/${encodeURIComponent(item)}`, {
       method: "POST",
       body: JSON.stringify(draft),
-      headers: { "Content-Type": "application/json" },
     });
-    if (!response.ok) {
-      const [message, detail] = await errorMessage(response);
-      throw new ApiError(response.status, message, detail);
-    }
     return { wav: await response.blob(), disposition: response.headers.get("Content-Disposition") };
   },
   // The Effected copy of the Candidate's item of `kind` as an unsaved draft of its edits has it: made
