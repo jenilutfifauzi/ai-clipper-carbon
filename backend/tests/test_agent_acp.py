@@ -11,6 +11,7 @@ from unittest.mock import ANY
 
 import pytest
 
+from app.agent.acp_client import session_models
 from test_agent_api_loop import agent_events, agent_url, chat, job, served, until_finished  # noqa: F401  (fixtures)
 
 FAKE_AGENT = Path(__file__).with_name("fake_acp_agent.py")
@@ -343,6 +344,7 @@ def test_gemini_cli_runs_a_turn_launched_with_the_flag_its_help_lists(served, jo
     assert started["args"] == ["--acp"]
     [new] = fake_agent.received("session/new")
     assert new["params"]["mcpServers"][0]["type"] == "http"
+    assert [header["name"] for header in new["params"]["mcpServers"][0]["headers"]] == ["Authorization"]
     # Claude Code's options are Claude Code's alone.
     assert "_meta" not in new["params"]
 
@@ -375,12 +377,44 @@ def test_an_agent_without_mcp_over_http_ends_the_turn_with_a_readable_error(serv
     stream = agent_events(served, job, candidate)
     next(stream)
 
-    send(served, job, candidate, "Hi", provider="antigravity")
+    send(served, job, candidate, "Hi", provider="codex")
     received = until_finished(stream)
 
     assert [name for name, _ in received] == ["turn_started", "error", "turn_finished"]
     assert "MCP servers over HTTP" in received[1][1]["message"]
     assert fake_agent.received("session/new") == []
+
+
+def test_antigravity_is_given_the_scoped_server_over_http_though_it_doesnt_say_it_reaches_it(served, job, fake_agent, monkeypatch):
+    candidate = job["candidates"][0]
+    fake_agent.turns([[
+        # Antigravity names the scoped server's tools `mcp_ai-clipper_<tool>`, and asks with the call's id alone.
+        {"update": {"sessionUpdate": "tool_call", "toolCallId": "a1", "name": "mcp_ai-clipper_get_candidate",
+                    "title": "Run mcp_ai-clipper_get_candidate", "status": "in_progress"}},
+        {"permission": {"toolCall": {"toolCallId": "a1"}, "options": [{"optionId": "yes", "name": "Allow", "kind": "allow_once"}]}},
+        {"update": {"sessionUpdate": "tool_call_update", "toolCallId": "a1", "status": "completed"}},
+        says("Antigravity here."),
+    ]])
+    monkeypatch.setenv("FAKE_ACP_NO_HTTP", "1")
+    stream = agent_events(served, job, candidate)
+    next(stream)
+
+    send(served, job, candidate, "Hi", provider="antigravity")
+    received = until_finished(stream)
+
+    assert [name for name, _ in received] == ["turn_started", "tool_started", "tool_finished", "text", "turn_finished"]
+    assert received[1][1]["tool"] == "get_candidate"
+    assert received[-1][1]["stop"] == "end_turn"
+    [new] = fake_agent.received("session/new")
+    assert new["params"]["mcpServers"][0]["type"] == "http"
+    # It asks for the tools without their fields' descriptions: in full, it leaves edit_candidate out.
+    assert {"name": "X-Agent-Tools", "value": "compact"} in new["params"]["mcpServers"][0]["headers"]
+    # Told to read a long output's file with its file tools, not run_command, which is refused.
+    [prompt] = fake_agent.received("session/prompt")
+    first = prompt["params"]["prompt"][0]["text"]
+    assert "grep_search" in first and first.endswith("\n\nHi")
+    answers = [message["result"] for message in fake_agent.received() if "result" in message]
+    assert answers == [{"outcome": {"outcome": "selected", "optionId": "yes"}}]
 
 
 # .scratch/agent-attachments/issues/04: images, to an agent that says it sees them.
@@ -427,3 +461,62 @@ def test_images_to_an_agent_that_cant_see_them_end_the_turn_before_it_is_prompte
     received = until_finished(stream)
     assert received[1][1]["delta"] == "Words only."
     assert len(fake_agent.received("initialize")) == 1
+
+
+def test_a_turn_switches_the_session_to_the_model_chosen_when_it_offers_it(served, job, fake_agent):
+    candidate = job["candidates"][0]
+    fake_agent.turns([[says("One.")], [says("Two.")], [says("Three.")]])
+    stream = agent_events(served, job, candidate)
+    next(stream)
+
+    for model in ("smart", "smart", "not-offered"):
+        body = {"provider": "antigravity", "model": model, "prompt": "Hi", "tab": "tab-a"}
+        assert served.post(f"{agent_url(job, candidate)}/turns", json=body).status_code == 202
+        until_finished(stream)
+
+    # Once, before the first prompt: the session runs it after, and it offers no other.
+    [switched] = fake_agent.received("session/set_model")
+    assert switched["params"] == {"sessionId": "fake-session", "modelId": "smart"}
+    methods = [message.get("method") for message in fake_agent.received() if message.get("method", "").startswith("session/")]
+    assert methods.index("session/set_model") < methods.index("session/prompt")
+
+
+def test_an_acp_agents_models_are_listed_from_a_session_opened_unprompted(served, fake_agent):
+    listed = served.get("/api/agent/providers/antigravity/models")
+
+    assert listed.status_code == 200
+    assert listed.json() == {"models": [{"id": "fast", "name": "Fast"}, {"id": "smart", "name": "Smart"}], "current": "fast"}
+    [new] = fake_agent.received("session/new")
+    assert new["params"]["mcpServers"] == []
+    assert fake_agent.received("session/prompt") == []
+    # Kept: asked again, no agent is started.
+    assert served.get("/api/agent/providers/antigravity/models").json()["current"] == "fast"
+    assert len(fake_agent.received("initialize")) == 1
+
+
+def test_models_are_refused_for_an_api_provider_and_an_agent_that_wont_open_a_session(served, fake_agent, monkeypatch):
+    assert served.get("/api/agent/providers/deepseek/models").status_code == 400
+    monkeypatch.setenv("FAKE_ACP_REFUSE_SESSION", "Authentication required")
+
+    refused = served.get("/api/agent/providers/codex/models")
+
+    assert refused.status_code == 502
+    assert "Authentication required" in refused.json()["detail"]
+
+
+def test_a_model_config_option_lists_the_models_in_its_groups_too():
+    opened = {
+        "configOptions": [
+            {"id": "mode", "category": "mode", "type": "select", "currentValue": "ask", "options": [{"value": "ask", "name": "Ask"}]},
+            {"id": "model", "category": "model", "type": "select", "currentValue": "b", "options": [
+                {"value": "a", "name": "A"},
+                {"group": "more", "name": "More", "options": [{"value": "b", "name": "B"}]},
+            ]},
+        ]
+    }
+
+    models = session_models(opened)
+
+    assert [(model.id, model.name) for model in models.models] == [("a", "A"), ("b", "B")]
+    assert (models.current, models.config) == ("b", "model")
+    assert session_models({"sessionId": "s"}).models == []

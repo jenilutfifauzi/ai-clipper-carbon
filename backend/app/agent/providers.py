@@ -39,8 +39,9 @@ class AcpProvider(BaseModel):
     label: str
     # Its adapter's or CLI's command, tried first.
     command: list[str]
-    # Where else `command[0]` may be: another name on PATH, or a path (`~` is the home folder).
-    locations: list[str] = []
+    # The other commands it may be launched with, tried in order when `command` isn't installed: each
+    # with its own arguments, its first word another name on PATH or a path (`~` is the home folder).
+    locations: list[list[str]] = []
     # The ACP flags it may take, newest first: the first that `<command> --help` lists is added to
     # `command`, the last when it lists none (an older CLI's help may not show it).
     acp_flags: list[str] = []
@@ -55,6 +56,13 @@ class AcpProvider(BaseModel):
     warning: str | None = None
     # What to do before its first turn, shown in its setup and when it refuses to open a session.
     setup_note: str | None = None
+    # Whether it reaches the scoped server over HTTP though its `initialize` answer doesn't say so.
+    http_mcp: bool = Field(default=False, exclude=True)
+    # Whether it asks for the scoped server's tools without their fields' descriptions: past its budget
+    # for all of them in full, it leaves the largest out.
+    compact_tools: bool = Field(default=False, exclude=True)
+    # Told it after the system prompt, in its session's first message.
+    prompt_note: str | None = Field(default=None, exclude=True)
     # Sent as `session/new`'s `_meta`: Claude Code's adapter reads its Agent SDK options there.
     session_meta: dict[str, Any] | None = Field(default=None, exclude=True)
 
@@ -146,12 +154,28 @@ PROVIDERS: list[AcpProvider | ApiProvider] = [
     AcpProvider(
         id="antigravity",
         label="Antigravity",
-        command=["agy_acp_server"],
-        # The ACP registry's macOS build is `agy_acp_server.par`, in a zip unpacked wherever the owner puts it.
-        locations=["agy_acp_server.par", "~/.local/bin/agy_acp_server.par", "~/.local/bin/agy_acp_server"],
-        install_hint="Download agy_acp_server from the ACP registry and put it on PATH or in ~/.local/bin",
+        # The Antigravity CLI's `acp` subcommand; its installer puts `agy` in ~/.local/bin.
+        command=["agy", "acp"],
+        # Or the ACP registry's server: its macOS build is `agy_acp_server.par`, in a zip unpacked wherever the owner puts it.
+        locations=[
+            ["~/.local/bin/agy", "acp"],
+            ["agy_acp_server"],
+            ["agy_acp_server.par"],
+            ["~/.local/bin/agy_acp_server.par"],
+            ["~/.local/bin/agy_acp_server"],
+        ],
+        install_hint="Install the Antigravity CLI (agy), or download agy_acp_server from the ACP registry and put it on PATH or in ~/.local/bin",
         login="acp",
         docs_url="https://antigravity.google/docs/ide/extensions",
+        # `agy` connects to HTTP MCP servers (`agy mcp add --type http`) but its ACP server doesn't advertise it.
+        http_mcp=True,
+        # Its tools all in full are past its budget, and it leaves edit_candidate out.
+        compact_tools=True,
+        # A tool's output past 10 KB it keeps in a file, which it reaches for with run_command, refused here.
+        prompt_note=(
+            "A tool output too long to show you is saved to a file: read it with read_file or search it with "
+            "grep_search. Never use run_command: it is refused, and the turn ends there."
+        ),
         warning=(
             "Google's terms may not allow a personal Antigravity login to be used from other apps. "
             "Use it at your own risk, or use Gemini CLI or a Gemini API key."
@@ -208,24 +232,25 @@ def launch_command(provider: AcpProvider, which: Callable[[str], str | None] = s
     """The command `provider` is started with: its own when installed (on PATH or at one of its
     `locations`, with its ACP flag), else `npx -y <package>` when npx is, else None. Blocking the
     first time an `acp_flags` CLI is seen: its `--help` is read."""
-    if binary := _installed(provider, which):
+    if installed := _installed(provider, which):
+        binary = installed[0]
         flag = _acp_flag(which(binary) or binary, tuple(provider.acp_flags)) if provider.acp_flags else None
-        return [binary, *provider.command[1:], *([flag] if flag else [])]
+        return [*installed, *([flag] if flag else [])]
     if provider.npx_package and which("npx"):
         return ["npx", "-y", provider.npx_package]
     return None
 
 
-def _installed(provider: AcpProvider, which: Callable[[str], str | None]) -> str | None:
-    """`command[0]` when on PATH, else the first of its `locations` there is: a name as is, a path in full."""
-    for name in [provider.command[0], *provider.locations]:
+def _installed(provider: AcpProvider, which: Callable[[str], str | None]) -> list[str] | None:
+    """`command` when on PATH, else the first of its `locations` there is: a name as is, a path in full."""
+    for name, *args in [provider.command, *provider.locations]:
         if "/" not in name:
             if which(name):
-                return name
+                return [name, *args]
             continue
         path = Path(name).expanduser()
         if path.is_file() and os.access(path, os.X_OK):
-            return str(path)
+            return [str(path), *args]
     return None
 
 

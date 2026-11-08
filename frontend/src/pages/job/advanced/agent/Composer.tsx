@@ -259,8 +259,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </Pill>
           <span className="ml-auto" />
           {models.length > 0 && model && (
-            <Pill title="Model" text={model} muted>
-              <Select label="Model" value={model} options={models.map((name) => ({ value: name, label: name }))} onChange={(name) => onChoose(listing.provider.id, name)} />
+            <Pill title="Model" text={models.find((option) => option.value === model)?.label ?? model} muted>
+              <Select label="Model" value={model} options={models} onChange={(name) => onChoose(listing.provider.id, name)} />
             </Pill>
           )}
           {listing.status.ready && (
@@ -295,13 +295,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   );
 });
 
+/** A model the pill offers: its id, sent with a turn, and the name it shows. */
+export type ModelOption = { value: string; label: string };
+
 /** What the chat calls on the composer: `send`, its message and attachments as Send sends them. */
 export type ComposerHandle = { send: () => void };
 
 type ComposerProps = {
   providers: AgentProviderListing[];
   listing: AgentProviderListing;
-  models: string[];
+  models: ModelOption[];
   model: string | null;
   onChoose: (provider: string, model: string | null) => void;
   setup: boolean;

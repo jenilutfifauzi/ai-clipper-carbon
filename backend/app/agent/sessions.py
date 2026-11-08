@@ -5,6 +5,7 @@ words into its Agent Thread when it ends."""
 import asyncio
 import logging
 import secrets
+import shutil
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -13,7 +14,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI
 
-from app.agent.acp_client import AcpAgent, start_login
+from app.agent.acp_client import MODELS_TIMEOUT_SECS, AcpAgent, AgentModels, probe_models, start_login
 from app.agent.api_anthropic import run_anthropic_turn
 from app.agent.api_chat import run_chat_turn
 from app.agent.api_gemini import run_gemini_turn
@@ -101,6 +102,8 @@ class AgentSessionManager:
         self._sessions: dict[SessionKey, AgentSession] = {}
         # Sign-ins under way: each waits for the owner to finish in the browser.
         self._logins: set[asyncio.Task] = set()
+        # Each ACP agent's models, by provider, as its last session opened listed them.
+        self._models: dict[str, AgentModels] = {}
         self.feed = AgentFeed()
 
     @property
@@ -169,6 +172,24 @@ class AgentSessionManager:
         with suppress(asyncio.CancelledError):
             await session.task
         return True
+
+    async def models(self, provider: AcpProvider) -> AgentModels:
+        """The models `provider` offers: as its last session opened listed them, else as a session
+        opened now for the purpose lists them. Raises ValueError when it isn't installed; acp_client's
+        errors, or TimeoutError, when it won't open a session."""
+        if (known := self._models.get(provider.id)) is not None:
+            return known
+        command = await asyncio.to_thread(launch_command, provider)
+        if command is None:
+            raise ValueError(f"{provider.label} isn't installed: {provider.install_hint}")
+        sandbox = self._workspace.settings.data_dir / SANDBOX_DIR / f"models-{secrets.token_hex(6)}"
+        try:
+            models = await asyncio.wait_for(probe_models(command, sandbox, provider.label), MODELS_TIMEOUT_SECS)
+        finally:
+            await asyncio.to_thread(shutil.rmtree, sandbox, True)
+        if models.models:
+            self._models[provider.id] = models
+        return models
 
     async def login(self, provider: AcpProvider) -> None:
         """Start signing in to `provider` through ACP's `authenticate`: the browser opens on this Mac.
@@ -270,6 +291,8 @@ class AgentSessionManager:
             stop = "error"
         finally:
             self._scopes.set_turn(session.token, None)
+            if session.acp is not None and session.acp.models.models:
+                self._models[session.acp.provider_id] = session.acp.models
         first, last = (revisions[0], revisions[-1]) if revisions else (None, None)
         record = TranscriptTurn(
             id=turn, provider=session.provider.id, model=model, prompt=prompt, attachments=attached.sent,
