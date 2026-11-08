@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field, StringConstraints
 
-from app.agent.acp_client import AcpError, AcpExited
+from app.agent.acp_client import AcpError, AcpExited, AgentModels
 from app.agent.attachments import Attachments, BadAttachments, ImageAttachment, UnknownCandidate, forget_images, image_path, resolve
 from app.agent.credentials import SavedCredential, credential_for, delete_credential, save_credential
 from app.agent.events import agent_events, topic
@@ -101,6 +101,23 @@ async def login_provider(provider_id: str, request: Request) -> LoginStarted:
     return LoginStarted(
         provider=provider.id, login="acp", command=None, message=f"Finish signing in to {provider.label} in the browser that opened."
     )
+
+
+@router.get("/providers/{provider_id}/models")
+async def provider_models(provider_id: str, request: Request) -> AgentModels:
+    """The models an ACP agent offers to switch between, and the one it runs. A session is opened for
+    it (unprompted) the first time; one that isn't signed in answers 502."""
+    provider = provider_by_id(provider_id)
+    if provider is None:
+        raise HTTPException(404, f"No Agent Provider {provider_id!r}")
+    if not isinstance(provider, AcpProvider):
+        raise HTTPException(400, f"{provider.label}'s models are listed with it")
+    try:
+        return await _sessions(request).models(provider)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    except (AcpError, AcpExited, TimeoutError, OSError) as error:
+        raise HTTPException(502, f"{provider.label} didn't list its models: {error}") from error
 
 
 @router.put("/credentials/{provider_id}")

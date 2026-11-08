@@ -12,9 +12,10 @@ from test_jobs_api import create_job
 MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json", "Host": "127.0.0.1:8000"}
 
 
-def rpc(client, method: str, params: dict, token: str | None = None) -> dict:
-    """The JSON-RPC result (or error) of one request to /mcp/agent, sent with `token` as its bearer."""
-    headers = MCP_HEADERS | ({"Authorization": f"Bearer {token}"} if token else {})
+def rpc(client, method: str, params: dict, token: str | None = None, extra: dict[str, str] | None = None) -> dict:
+    """The JSON-RPC result (or error) of one request to /mcp/agent, sent with `token` as its bearer
+    and the `extra` headers."""
+    headers = MCP_HEADERS | ({"Authorization": f"Bearer {token}"} if token else {}) | (extra or {})
     response = client.post("/mcp/agent", json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params}, headers=headers)
     assert response.status_code == 200, response.text
     [data] = [line.removeprefix("data: ") for line in response.text.splitlines() if line.startswith("data: ")]
@@ -66,6 +67,18 @@ def test_the_scoped_server_lists_only_the_allowed_tools(client, token):
 
     assert listed == set(ALLOWED_TOOLS)
     assert not listed & {"create_job_from_url", "render_clips", "delete_job"}
+
+
+def test_an_agent_that_asks_gets_the_tools_without_their_fields_descriptions(client, token):
+    full = {tool["name"]: tool for tool in rpc(client, "tools/list", {}, token)["result"]["tools"]}
+    compact = {tool["name"]: tool for tool in rpc(client, "tools/list", {}, token, {"X-Agent-Tools": "compact"})["result"]["tools"]}
+
+    assert compact.keys() == full.keys()
+    edit = json.dumps(compact["edit_candidate"]["inputSchema"])
+    assert len(edit) < len(json.dumps(full["edit_candidate"]["inputSchema"])) * 0.75
+    assert '"description": "' not in edit
+    # The tool's own description stays.
+    assert compact["edit_candidate"]["description"] == full["edit_candidate"]["description"]
 
 
 def test_a_call_without_a_token_or_with_a_revoked_one_is_refused(client, scope, token):

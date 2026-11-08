@@ -12,7 +12,7 @@ turn of the JSON file FAKE_ACP_SCRIPT, a list of turns, each a list of actions:
 Turns are counted across processes from the log, so a restarted agent goes on with the next one.
 FAKE_ACP_REFUSE_SESSION, when set, is the error `session/new` is answered with; FAKE_ACP_NO_HTTP, when
 set, leaves MCP over HTTP out of its capabilities; FAKE_ACP_NO_IMAGE, when set, says its prompts take no
-images."""
+images. Its sessions offer the models of MODELS, and `session/set_model` switches to one of them."""
 
 import itertools
 import json
@@ -26,6 +26,7 @@ AUTH_METHODS = [
     {"id": "api-key", "name": "API Key", "_meta": {"api-key": {"provider": "openai"}}},
     {"id": "chat-gpt", "name": "ChatGPT", "description": "Sign in in the browser"},
 ]
+MODELS = {"availableModels": [{"modelId": "fast", "name": "Fast"}, {"modelId": "smart", "name": "Smart"}], "currentModelId": "fast"}
 ids = itertools.count(1000)
 
 
@@ -93,7 +94,9 @@ def main() -> None:
         elif method == "session/new" and refusal:
             write({"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32000, "message": refusal}})
         elif method == "session/new":
-            write({"jsonrpc": "2.0", "id": message["id"], "result": {"sessionId": SESSION}})
+            write({"jsonrpc": "2.0", "id": message["id"], "result": {"sessionId": SESSION, "models": MODELS}})
+        elif method == "session/set_model":
+            write({"jsonrpc": "2.0", "id": message["id"], "result": {}})
         elif method == "authenticate":
             write({"jsonrpc": "2.0", "id": message["id"], "result": {}})
         elif method == "session/prompt":

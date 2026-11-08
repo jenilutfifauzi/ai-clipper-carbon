@@ -61,6 +61,16 @@ def _clerk_options() -> AuthenticateRequestOptions | None:
     )
 
 
+def _session_cookies(request: Request) -> list[str]:
+    """The Clerk session cookies of a request without a bearer token (a <video> or <img> can't send
+    one), each to be tried: `__session` and the `__session_<suffix>` of every Clerk instance that has
+    set one on this host. Read with Starlette's parser, since Clerk's (SimpleCookie) stops at the first
+    cookie it can't parse, which other apps on localhost leave, and takes only the first it finds."""
+    if request.headers.get("authorization"):
+        return []
+    return [value for name, value in request.cookies.items() if name.startswith("__session") and value]
+
+
 def require_auth(request: Request):
     """Reject unauthenticated API requests; accepts Clerk's bearer token or same-origin session cookie."""
     internal_user_id = _trusted_internal_user.get()
@@ -72,7 +82,10 @@ def require_auth(request: Request):
     if options is None:
         raise HTTPException(status_code=503, detail="Authentication is not configured")
 
-    state = authenticate_request(request, options)
+    for each in [SimpleNamespace(headers={"Authorization": f"Bearer {token}"}) for token in _session_cookies(request)] or [request]:
+        state = authenticate_request(each, options)
+        if state.is_signed_in:
+            break
     if not state.is_signed_in:
         raise HTTPException(
             status_code=401,

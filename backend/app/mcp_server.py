@@ -25,10 +25,10 @@ from anyio import to_thread
 from fastapi import FastAPI, HTTPException, Request
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import ToolAnnotations
+from mcp.types import ListToolsResult, PaginatedRequestParams, ToolAnnotations
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError, WithJsonSchema, create_model
 
-from app.agent.scope import ALLOWED_TOOLS, AgentScope, ScopeRegistry
+from app.agent.scope import ALLOWED_TOOLS, COMPACT_TOOLS_HEADER, AgentScope, ScopeRegistry
 from app.agent.ui_spec import UiSpec
 from app.auth import internal_user_context, require_auth
 from app.workspace import workspace_for_app_context
@@ -1294,6 +1294,14 @@ class _ScopedServer(MCPServer):
         super().__init__("AI Clipper", instructions=AGENT_INSTRUCTIONS)
         self._scopes = scopes
 
+    async def _handle_list_tools(self, ctx: Any, params: PaginatedRequestParams | None) -> ListToolsResult:
+        listed = await super()._handle_list_tools(ctx, params)
+        headers = getattr(ctx.request, "headers", None) or {}
+        if headers.get(COMPACT_TOOLS_HEADER) != "compact":
+            return listed
+        tools = [tool.model_copy(update={"input_schema": _undescribed(tool.input_schema)}) for tool in listed.tools]
+        return listed.model_copy(update={"tools": tools})
+
     async def call_tool(self, name: str, arguments: dict[str, Any], context: Context | None = None) -> Any:
         scope = self._scopes.resolve(_bearer(context))
         if scope is None or not scope.user_id:
@@ -1340,6 +1348,20 @@ def _untitled(schema: Any) -> Any:
         key: value if key == "default" else _untitled(value)
         for key, value in schema.items()
         if not (key == "title" and isinstance(value, str))
+    }
+
+
+def _undescribed(schema: Any) -> Any:
+    """A tool's JSON schema without its fields' descriptions, as `_untitled` is without titles; the
+    tool's own description isn't in it. A property named description stays."""
+    if isinstance(schema, list):
+        return [_undescribed(value) for value in schema]
+    if not isinstance(schema, dict):
+        return schema
+    return {
+        key: value if key == "default" else _undescribed(value)
+        for key, value in schema.items()
+        if not (key == "description" and isinstance(value, str))
     }
 
 

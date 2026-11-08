@@ -18,15 +18,19 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from app.agent.api_loop import tool_summary
 from app.agent.driver import TurnContext
 from app.agent.events import AgentEvent, Stop, TextDelta, ThoughtDelta, ToolFinished, ToolStarted, TurnFinished, shown
 from app.agent.providers import MCP_SERVER_NAME, AcpProvider
+from app.agent.scope import COMPACT_TOOLS_HEADER
 
 logger = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = 1
-MCP_TOOL_PREFIX = f"mcp__{MCP_SERVER_NAME}__"
+# How an agent names the scoped server's tools: `mcp__<server>__<tool>`, or Antigravity's `mcp_<server>_<tool>`.
+MCP_TOOL_PREFIXES = (f"mcp__{MCP_SERVER_NAME}__", f"mcp_{MCP_SERVER_NAME}_")
 # A line of JSON may be long (a tool call's whole input); the default 64 KiB limit isn't enough.
 LINE_LIMIT = 16 * 2**20
 # How long a stopped turn waits for the agent to answer its prompt `cancelled`.
@@ -34,6 +38,8 @@ CANCEL_GRACE_SECS = 5.0
 # How long a sign-in's agent is given to answer `initialize`, and the owner to finish signing in.
 INITIALIZE_TIMEOUT_SECS = 30.0
 LOGIN_TIMEOUT_SECS = 10 * 60.0
+# How long a look at an agent's models (a session opened and left unprompted) is given.
+MODELS_TIMEOUT_SECS = 30.0
 # How long a process is given to exit before it is killed.
 EXIT_GRACE_SECS = 2.0
 # ACP's stop reasons as an Agent Turn's.
@@ -213,6 +219,37 @@ def sees_images(initialized: dict[str, Any] | None) -> bool:
     return bool((capabilities.get("promptCapabilities") or {}).get("image"))
 
 
+class AgentModel(BaseModel):
+    id: str
+    name: str
+
+
+class AgentModels(BaseModel):
+    """The models an ACP agent offers, as its `session/new` answer listed them, and the one it runs."""
+
+    models: list[AgentModel] = []
+    current: str | None = None
+    # How a session's model is changed: `session/set_config_option` on this config, else `session/set_model`.
+    config: str | None = Field(default=None, exclude=True)
+
+
+def session_models(opened: dict[str, Any] | None) -> AgentModels:
+    """The models a `session/new` answer offers: its `models` (Antigravity's, Claude Code's adapter's),
+    else its config option of the model category; none when it offers neither."""
+    listed = (opened or {}).get("models") or {}
+    if available := listed.get("availableModels"):
+        models = [AgentModel(id=model["modelId"], name=model.get("name") or model["modelId"]) for model in available if model.get("modelId")]
+        return AgentModels(models=models, current=listed.get("currentModelId"))
+    options = (opened or {}).get("configOptions") or []
+    option = next((option for option in options if option.get("category") == "model" and option.get("type") == "select"), None)
+    if option is None:
+        return AgentModels()
+    # A select's values come flat or in groups of their own.
+    values = [value for item in option.get("options") or [] for value in (item.get("options") or [item])]
+    models = [AgentModel(id=value["value"], name=value.get("name") or value["value"]) for value in values if value.get("value")]
+    return AgentModels(models=models, current=option.get("currentValue"), config=option.get("id"))
+
+
 def login_method(auth_methods: list[dict[str, Any]]) -> dict[str, Any] | None:
     """The sign-in `authenticate` is called with: the agent's first method that the agent runs itself
     (a browser sign-in), passing over API keys, gateways, and methods run in a terminal."""
@@ -227,8 +264,8 @@ def login_method(auth_methods: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def names_scoped_tool(*values: Any) -> bool:
-    """Whether any of `values` (a title, a `_meta`) names one of the scoped server's tools."""
-    return any(MCP_TOOL_PREFIX in text for value in values for text in _strings(value))
+    """Whether any of `values` (a name, a title, a `_meta`) names one of the scoped server's tools."""
+    return any(prefix in text for value in values for text in _strings(value) for prefix in MCP_TOOL_PREFIXES)
 
 
 def permission_outcome(params: dict[str, Any], known: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -237,7 +274,9 @@ def permission_outcome(params: dict[str, Any], known: dict[str, dict[str, Any]])
     the tool when the request carries its id only."""
     tool_call = params.get("toolCall") or {}
     earlier = known.get(tool_call.get("toolCallId"), {})
-    is_scoped = names_scoped_tool(tool_call.get("title"), tool_call.get("_meta"), earlier.get("title"), earlier.get("_meta"))
+    is_scoped = names_scoped_tool(
+        *(call.get(key) for call in (tool_call, earlier) for key in ("name", "title", "_meta"))
+    )
     options = params.get("options") or []
     kinds = ("allow_once", "allow_always") if is_scoped else ("reject_once", "reject_always")
     chosen = next((option for kind in kinds for option in options if option.get("kind") == kind), None)
@@ -247,10 +286,12 @@ def permission_outcome(params: dict[str, Any], known: dict[str, dict[str, Any]])
 
 
 def tool_name(update: dict[str, Any]) -> str:
-    """A tool call's tool, without its `mcp__<server>__` prefix: Claude Code's adapter names it in
-    `_meta.claudeCode.toolName`, others in the title."""
+    """A tool call's tool, without its `mcp__<server>__` prefix (or Antigravity's `mcp_ai-clipper_`):
+    Claude Code's adapter names it in `_meta.claudeCode.toolName`, others in the name or the title."""
     meta = update.get("_meta") or {}
     name = (meta.get("claudeCode") or {}).get("toolName") or update.get("name") or update.get("title") or "tool"
+    if name.startswith(MCP_TOOL_PREFIXES[1]):
+        return name.removeprefix(MCP_TOOL_PREFIXES[1])
     return name.split("__", 2)[-1] if name.startswith("mcp__") else name
 
 
@@ -285,6 +326,18 @@ async def start_login(command: list[str], cwd: Path, label: str) -> asyncio.Task
     return asyncio.create_task(finish())
 
 
+async def probe_models(command: list[str], cwd: Path, label: str) -> AgentModels:
+    """The models the agent offers: a session opened without the scoped server and closed unprompted,
+    so it costs no tokens. Raises AcpError when it won't open one (it isn't signed in), AcpExited."""
+    cwd.mkdir(parents=True, exist_ok=True)
+    connection = await AcpConnection.start(command, cwd, label, lambda method, params: None, _refuse)
+    try:
+        await connection.request("initialize", {"protocolVersion": PROTOCOL_VERSION, "clientCapabilities": client_capabilities()})
+        return session_models(await connection.request("session/new", {"cwd": str(cwd), "mcpServers": []}))
+    finally:
+        await connection.close()
+
+
 async def _refuse(method: str, params: dict[str, Any]) -> Any:
     raise MethodNotFound(method)
 
@@ -302,6 +355,8 @@ class AcpAgent:
         self._session_id: str | None = None
         # Whether its prompts take images, as its `initialize` answer said.
         self._sees_images = False
+        # The models its session offers, and the one it runs.
+        self.models = AgentModels()
         self._turn: str | None = None
         self._updates: asyncio.Queue[dict[str, Any] | None] | None = None
         self._tool_calls: dict[str, dict[str, Any]] = {}
@@ -312,9 +367,10 @@ class AcpAgent:
         agent that didn't say it sees them fail the turn before it is prompted. Stopped, it sends
         `session/cancel`; a process that exits mid-turn fails the turn, and the next starts a new one."""
         is_new = await self._ensure_started(context)
+        await self._use_model(context.model)
         if context.images and not self._sees_images:
             raise AcpError(f"{self._label} can't see images: send them to an Agent Provider that can, or remove them")
-        text = f"{context.system}\n\n{context.prompt}" if is_new else context.prompt
+        text = "\n\n".join(filter(None, [context.system, self._provider.prompt_note, context.prompt])) if is_new else context.prompt
         images = [{"type": "image", "mimeType": image.media_type, "data": image.data} for image in context.images]
         updates: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self._turn, self._updates, self._tool_calls = context.turn, updates, {}
@@ -359,10 +415,11 @@ class AcpAgent:
         initialized = await self._connection.request(
             "initialize", {"protocolVersion": PROTOCOL_VERSION, "clientCapabilities": client_capabilities()}
         )
-        if not reaches_http_mcp(initialized):
+        if not (self._provider.http_mcp or reaches_http_mcp(initialized)):
             raise AcpError(f"{self._label} doesn't connect to MCP servers over HTTP, which the Agent's tools are served on")
         self._sees_images = sees_images(initialized)
-        params: dict[str, Any] = {"cwd": str(self._sandbox), "mcpServers": [scoped_server(context.tools.url, context.tools.headers)]}
+        headers = {**context.tools.headers, **({COMPACT_TOOLS_HEADER: "compact"} if self._provider.compact_tools else {})}
+        params: dict[str, Any] = {"cwd": str(self._sandbox), "mcpServers": [scoped_server(context.tools.url, headers)]}
         if self._provider.session_meta is not None:
             params["_meta"] = self._provider.session_meta
         try:
@@ -370,7 +427,19 @@ class AcpAgent:
         except AcpError as error:
             advice = " ".join(filter(None, [self._provider.setup_note, f"See {self._provider.docs_url}"]))
             raise AcpError(f"{self._label} didn't open a session: {str(error).rstrip('.')}. {advice}") from error
+        self.models = session_models(result)
         return result["sessionId"]
+
+    async def _use_model(self, model: str | None) -> None:
+        """Switch the session to `model` when it offers it and runs another; else leave it be."""
+        if model is None or model == self.models.current or model not in {offered.id for offered in self.models.models}:
+            return
+        if self.models.config is not None:
+            params = {"sessionId": self._session_id, "configId": self.models.config, "value": model}
+            await self._connection.request("session/set_config_option", params)
+        else:
+            await self._connection.request("session/set_model", {"sessionId": self._session_id, "modelId": model})
+        self.models = self.models.model_copy(update={"current": model})
 
     async def _cancel(self, prompt: asyncio.Future) -> None:
         """Ask the agent to stop and give it a moment to answer the prompt `cancelled`."""
@@ -413,7 +482,7 @@ class AcpAgent:
             earlier = self._tool_calls.setdefault(call, {})
             if earlier.get("finished"):
                 return []
-            earlier.update({key: value for key, value in update.items() if key in ("title", "_meta", "rawInput")})
+            earlier.update({key: value for key, value in update.items() if key in ("name", "title", "_meta", "rawInput")})
             return self._finished(turn, call, update)
         return []
 

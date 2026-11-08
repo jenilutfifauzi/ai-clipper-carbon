@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import jwt
@@ -126,3 +127,39 @@ def test_auth_rejects_signed_in_session_without_a_user_subject(monkeypatch, tmp_
 
     assert exc.value.status_code == 401
     assert "no valid user identity" in exc.value.detail
+
+
+def signed_token(monkeypatch, sub: str = "user_test", azp: str = "http://localhost:5173") -> str:
+    """A session token for `sub`, signed by a key the app is set to trust."""
+    monkeypatch.setattr(auth, "CLERK_ENV_FILE", Path("/nonexistent/.clerk.env"))
+    monkeypatch.setenv("CLERK_SECRET_KEY", "sk_test_dummy")
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_key = private_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("ascii")
+    monkeypatch.setenv("CLERK_JWT_KEY", public_key)
+    monkeypatch.delenv("CLERK_AUTHORIZED_PARTIES", raising=False)
+    auth._clerk_options.cache_clear()
+    now = datetime.now(timezone.utc)
+    claims = {"sub": sub, "sid": "sess_test", "azp": azp, "iat": now, "nbf": now - timedelta(seconds=1), "exp": now + timedelta(minutes=2)}
+    return jwt.encode(claims, private_key, algorithm="RS256")
+
+
+def test_a_video_is_let_through_by_its_session_cookie_among_other_apps_cookies(monkeypatch):
+    # A <video> or <img> can't send a bearer token, only the cookies. Other apps on localhost leave
+    # cookies Python's SimpleCookie gives up on, and another Clerk instance's session cookie that
+    # doesn't verify here.
+    token = signed_token(monkeypatch)
+    app = FastAPI()
+
+    @app.get("/media/job/source.mp4")
+    def source(request: Request, _auth=Depends(auth.require_auth)):
+        return {"user_id": request.state.clerk_user_id}
+
+    cookies = f'theme=x"y,z; __session_other=not.a.token; __session={token}'
+    with TestClient(app) as client:
+        response = client.get("/media/job/source.mp4", headers={"Cookie": cookies})
+
+    assert response.status_code == 200
+    assert response.json() == {"user_id": "user_test"}

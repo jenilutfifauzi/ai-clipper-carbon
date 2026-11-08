@@ -1,6 +1,6 @@
 import { ArrowDown } from "lucide-react";
 import { useContext, useEffect, useRef, useState } from "react";
-import { api, TAB_ID, type AgentAttachment, type AgentProviderListing, type AgentTurnRequest, type Candidate } from "../../../../api";
+import { api, TAB_ID, type AgentAttachment, type AgentModels, type AgentProviderListing, type AgentTurnRequest, type Candidate } from "../../../../api";
 import { rememberedValue } from "../../../../remembered";
 import type { AgentTurnView } from "./agentStream";
 import { attachmentName, encodeAttachments, type DraftAttachment, type ReferableClip } from "./attachments";
@@ -8,7 +8,7 @@ import { ChatHeader } from "./ChatHeader";
 import { ChoicePopup } from "./ChoicePopup";
 import { ErrorNote } from "./ErrorNote";
 import { openChoices } from "./choices";
-import { Composer, type ComposerHandle } from "./Composer";
+import { Composer, type ComposerHandle, type ModelOption } from "./Composer";
 import { PresenceContext } from "./presence";
 import { ProviderSetup } from "./ProviderSetup";
 import type { AgentThreads } from "./threads";
@@ -57,6 +57,19 @@ export function modelOptions({ provider, status }: AgentProviderListing): string
   return [...new Set([status.model, ...provider.models, provider.default_model].filter((model): model is string => !!model))];
 }
 
+/**
+ * The models the composer's pill offers and the one it shows unless another is chosen: an API
+ * provider's by name, or those the ACP agent's session offers (`acp`, none until they are read).
+ */
+export function modelChoices(listing: AgentProviderListing, acp: AgentModels | null | undefined): { options: ModelOption[]; current: string | null } {
+  if (listing.provider.kind === "acp") {
+    const options = (acp?.models ?? []).map(({ id, name }) => ({ value: id, label: name }));
+    return { options, current: acp?.current ?? options[0]?.value ?? null };
+  }
+  const names = modelOptions(listing);
+  return { options: names.map((name) => ({ value: name, label: name })), current: names[0] ?? null };
+}
+
 const NO_CLIPS: ReferableClip[] = [];
 
 /**
@@ -90,6 +103,8 @@ export function AgentTab({
 }) {
   const [providers, setProviders] = useState(initialProviders);
   const [providersError, setProvidersError] = useState<string | null>(null);
+  // Each ACP agent's models once read, by provider; null when it wouldn't list them.
+  const [acpModels, setAcpModels] = useState<Record<string, AgentModels | null>>({});
   const [choice, setChoice] = useState(rememberedAgentChoice.read);
   const [setupOpen, setSetupOpen] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -113,8 +128,18 @@ export function AgentTab({
   }, [providers, presence]);
 
   const listing = providers && chosenListing(providers, choice?.provider ?? null);
-  const models = listing ? modelOptions(listing) : [];
-  const model = choice?.model && models.includes(choice.model) ? choice.model : (models[0] ?? null);
+  const { options: models, current } = listing ? modelChoices(listing, acpModels[listing.provider.id]) : { options: [], current: null };
+  const model = choice?.model && models.some((option) => option.value === choice.model) ? choice.model : current;
+
+  // A ready ACP agent's models are read once it is chosen: it opens a session for that, unprompted.
+  const acpToRead = listing?.provider.kind === "acp" && listing.status.ready && !(listing.provider.id in acpModels) ? listing.provider.id : null;
+  useEffect(() => {
+    if (!acpToRead) return;
+    api.agentProviderModels(acpToRead).then(
+      (read) => setAcpModels((all) => ({ ...all, [acpToRead]: read })),
+      () => setAcpModels((all) => ({ ...all, [acpToRead]: null })),
+    );
+  }, [acpToRead]);
   const busy = sending || stream.running !== null;
 
   const choose = (provider: string, chosenModel: string | null) => {

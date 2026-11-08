@@ -5,6 +5,10 @@ import secrets
 
 from pydantic import BaseModel
 
+# The request header with which an Agent asks for the tools' schemas without their fields'
+# descriptions (`compact`): Antigravity leaves edit_candidate out when they are all in full.
+COMPACT_TOOLS_HEADER = "X-Agent-Tools"
+
 # The MCP server's tools an Agent may call: reading and editing its Candidate (edit_candidate's
 # dry_run is its dry run), its Revisions, the Job's Transcript, the Media Library and the other
 # assets, the Presets, Templates and Looks, Narration and the Channel Profile; and show_ui, which

@@ -197,6 +197,22 @@ def test_gemini_cli_is_launched_with_the_acp_flag_its_help_lists(agent_settings,
     assert gemini["version"] == "0.65.0"
 
 
+def test_antigravity_is_launched_through_the_agy_clis_acp_subcommand(client, tmp_path, monkeypatch):
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+    installed = tmp_path / "home" / ".local" / "bin"
+    installed.mkdir(parents=True)
+    fake_binary(installed, "agy", "1.5.3")
+    fake_binary(installed, "agy_acp_server.par", "1.4.3")
+    monkeypatch.setenv("PATH", str(empty))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    status = listing(client)["antigravity"]["status"]
+
+    assert status["command"] == [str(installed / "agy"), "acp"]
+    assert status["version"] == "1.5.3"
+
+
 def test_antigravity_is_found_where_it_is_installed_when_not_on_path(client, tmp_path, monkeypatch):
     empty = tmp_path / "empty-bin"
     empty.mkdir()

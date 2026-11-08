@@ -49,7 +49,7 @@ const composer = (change: { running?: boolean; attachments?: DraftAttachment[]; 
     <Composer
       providers={[deepseek, openai]}
       listing={change.listing ?? deepseek}
-      models={["deepseek-chat"]}
+      models={[{ value: "deepseek-chat", label: "deepseek-chat" }]}
       model="deepseek-chat"
       onChoose={() => {}}
       setup={false}

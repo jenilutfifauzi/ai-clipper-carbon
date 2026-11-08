@@ -5,7 +5,7 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import type { AgentProviderListing, AgentUi, Candidate } from "../../../../api";
-import { AgentTab, turnRequest } from "./AgentTab";
+import { AgentTab, modelChoices, turnRequest } from "./AgentTab";
 import { encodeAttachments } from "./attachments";
 import { transcriptText } from "./ChatHeader";
 import { ToolGroup } from "./ToolGroup";
@@ -63,6 +63,19 @@ const antigravity: AgentProviderListing = {
   },
   status: { id: "antigravity", ready: false, installed: false, command: null, version: null, login: null, has_key: null, key_source: null, base_url: null, model: null },
 };
+
+describe("the model pill", () => {
+  test("offers an ACP agent's models by name, its session's own first, once they are read", () => {
+    expect(modelChoices(antigravity, undefined)).toEqual({ options: [], current: null });
+    expect(modelChoices(antigravity, { models: [{ id: "fast", name: "Fast" }, { id: "smart", name: "Smart" }], current: "smart" })).toEqual({
+      options: [
+        { value: "fast", label: "Fast" },
+        { value: "smart", label: "Smart" },
+      ],
+      current: "smart",
+    });
+  });
+});
 
 describe("ToolRow", () => {
   test("strips the mcp prefix and turns underscores into spaces", () => {

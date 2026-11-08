@@ -2185,6 +2185,10 @@ export const api = {
   // a sign-in.
   loginAgentProvider: (providerId: string) =>
     request<AgentLogin>(`/agent/providers/${encodeURIComponent(providerId)}/login`, { method: "POST" }),
+  // The models an ACP agent offers and the one it runs, read from a session it opens unprompted the
+  // first time. Rejects with a 400 for an API provider or an agent not installed, a 502 for one that
+  // won't open a session (it isn't signed in).
+  agentProviderModels: (providerId: string) => request<AgentModels>(`/agent/providers/${encodeURIComponent(providerId)}/models`),
   // Starts an Agent Turn on the Candidate from this tab: its id, whose events come on agentEventsUrl.
   // Rejects with a 409 while this tab's turn runs, a 400 for a provider that isn't ready.
   sendAgentTurn: (jobId: string, candidateId: string, body: AgentTurnRequest) =>
@@ -2413,6 +2417,12 @@ export interface ProviderStatus {
   key_source: "saved" | "env" | null;
   base_url: string | null;
   model: string | null;
+}
+
+// The models an ACP agent offers to switch between (backend/app/agent/acp_client.py), by id.
+export interface AgentModels {
+  models: { id: string; name: string }[];
+  current: string | null;
 }
 
 export interface AgentProviderListing {
