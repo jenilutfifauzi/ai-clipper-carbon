@@ -5,6 +5,7 @@ package expo.modules.ondevicerenderer
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.view.WindowManager
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -12,6 +13,7 @@ import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
@@ -24,6 +26,8 @@ import java.io.File
 import java.util.UUID
 
 class OnDeviceRendererModule : Module() {
+  // Transformer must be created, started and cancelled on one Looper thread. Every field below is
+  // read and written on the main thread only, so "is a render running" can never race.
   private val mainHandler = Handler(Looper.getMainLooper())
   private var activeTransformer: Transformer? = null
   private var activeOutputFile: File? = null
@@ -36,7 +40,7 @@ class OnDeviceRendererModule : Module() {
     Events("onRenderProgress")
 
     AsyncFunction("renderPortraitClipAsync") { sourceUri: String, startMs: Double, endMs: Double, promise: Promise ->
-      startRender(sourceUri, startMs, endMs, LocalOverlayPlan.EMPTY, promise)
+      mainHandler.post { startRender(sourceUri, startMs, endMs, null, promise) }
     }
 
     AsyncFunction("renderPortraitClipWithOverlaysAsync") {
@@ -45,41 +49,34 @@ class OnDeviceRendererModule : Module() {
         endMs: Double,
         overlayPlanJson: String,
         promise: Promise ->
-      val plan = try {
-        LocalOverlayPlan.fromJson(overlayPlanJson, (endMs - startMs) / 1000.0)
-      } catch (error: Throwable) {
-        promise.reject(
-          "E_OVERLAY_PLAN",
-          error.localizedMessage ?: "Pengaturan caption atau overlay tidak valid.",
-          error,
-        )
-        return@AsyncFunction
-      }
-      startRender(sourceUri, startMs, endMs, plan, promise)
+      mainHandler.post { startRender(sourceUri, startMs, endMs, overlayPlanJson, promise) }
     }
 
-    AsyncFunction("cancelRenderAsync") {
-      val transformer = activeTransformer ?: return@AsyncFunction false
-      val renderId = activeRenderId
-      val outputFile = activeOutputFile
-      val promise = activePromise
-      mainHandler.post {
-        if (activeRenderId == renderId) {
-          runCatching { transformer.cancel() }
-          outputFile?.delete()
-          finishActiveState()
-          promise?.reject("E_RENDER_CANCELLED", "The video export was cancelled.", null)
-        }
-      }
-      true
+    AsyncFunction("cancelRenderAsync") { promise: Promise ->
+      mainHandler.post { promise.resolve(cancelActiveRender()) }
     }
+
+    OnDestroy {
+      mainHandler.post { cancelActiveRender() }
+    }
+  }
+
+  private fun cancelActiveRender(): Boolean {
+    val transformer = activeTransformer ?: return false
+    val outputFile = activeOutputFile
+    val promise = activePromise
+    runCatching { transformer.cancel() }
+    outputFile?.delete()
+    finishActiveState()
+    promise?.reject("E_RENDER_CANCELLED", "The video export was cancelled.", null)
+    return true
   }
 
   private fun startRender(
     sourceUri: String,
     startMs: Double,
     endMs: Double,
-    overlayPlan: LocalOverlayPlan,
+    overlayPlanJson: String?,
     promise: Promise,
   ) {
     val context = appContext.reactContext
@@ -92,10 +89,36 @@ class OnDeviceRendererModule : Module() {
       return
     }
 
+    if (!startMs.isFinite() || !endMs.isFinite()) {
+      promise.reject("E_RENDER_RANGE", "Choose a valid video and a trim range longer than zero.", null)
+      return
+    }
     val startPositionMs = startMs.toLong()
     val endPositionMs = endMs.toLong()
-    if (sourceUri.isBlank() || startPositionMs < 0 || endPositionMs <= startPositionMs) {
+    if (startPositionMs < 0 || endPositionMs <= startPositionMs) {
       promise.reject("E_RENDER_RANGE", "Choose a valid video and a trim range longer than zero.", null)
+      return
+    }
+
+    // The local render promises the source never leaves the phone. Media3 would happily fetch an
+    // http(s) URI, so only on-device schemes are accepted.
+    val source = Uri.parse(sourceUri)
+    if (source.scheme != "content" && source.scheme != "file") {
+      promise.reject("E_RENDER_SOURCE", "Only videos stored on this device can be rendered.", null)
+      return
+    }
+
+    val overlay = try {
+      overlayPlanJson
+        ?.let { LocalOverlayPlan.fromJson(it, (endMs - startMs) / 1000.0) }
+        ?.takeIf { it.hasOverlays }
+        ?.let(::LocalTextOverlay)
+    } catch (error: Throwable) {
+      promise.reject(
+        "E_OVERLAY_PLAN",
+        error.localizedMessage ?: "Pengaturan caption atau overlay tidak valid.",
+        error,
+      )
       return
     }
 
@@ -104,6 +127,7 @@ class OnDeviceRendererModule : Module() {
       promise.reject("E_RENDER_STORAGE", "Could not create the temporary render folder.", null)
       return
     }
+    pruneOldRenders(outputDirectory)
     val renderId = UUID.randomUUID().toString()
     val outputFile = File(outputDirectory, "clip-$renderId.mp4")
 
@@ -113,7 +137,7 @@ class OnDeviceRendererModule : Module() {
         .setEndPositionMs(endPositionMs)
         .build()
       val mediaItem = MediaItem.Builder()
-        .setUri(Uri.parse(sourceUri))
+        .setUri(source)
         .setClippingConfiguration(clipping)
         .build()
       val portraitEffect = Presentation.createForWidthAndHeight(
@@ -122,11 +146,16 @@ class OnDeviceRendererModule : Module() {
         Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP,
       )
       val videoEffects = mutableListOf<Effect>(portraitEffect)
-      if (overlayPlan.hasOverlays) {
-        videoEffects += OverlayEffect(listOf(LocalTextOverlay(overlayPlan)))
-      }
+      if (overlay != null) videoEffects += OverlayEffect(listOf(overlay))
       val editedItem = EditedMediaItem.Builder(mediaItem)
         .setEffects(Effects(emptyList(), videoEffects))
+        .build()
+      // Phone cameras often record HDR (HLG/HDR10). The export is SDR H.264, so tone-map instead of
+      // failing or producing washed-out colours.
+      val composition = Composition.Builder(
+        EditedMediaItemSequence.withAudioAndVideoFrom(listOf(editedItem)),
+      )
+        .setHdrMode(Composition.HDR_MODE_TONE_MAP_HDR_TO_SDR_USING_OPEN_GL)
         .build()
 
       val transformer = Transformer.Builder(context)
@@ -160,23 +189,12 @@ class OnDeviceRendererModule : Module() {
       activeOutputFile = outputFile
       activePromise = promise
       activeRenderId = renderId
-      mainHandler.post {
-        if (activeRenderId != renderId) return@post
-        try {
-          transformer.start(editedItem, outputFile.absolutePath)
-          startProgressPolling(transformer, renderId)
-        } catch (error: Throwable) {
-          outputFile.delete()
-          finishActiveState()
-          promise.reject(
-            "E_RENDER_START",
-            error.localizedMessage ?: "The video export could not start.",
-            error,
-          )
-        }
-      }
+      setKeepScreenOn(true)
+      transformer.start(composition, outputFile.absolutePath)
+      startProgressPolling(transformer, renderId)
     } catch (error: Throwable) {
       outputFile.delete()
+      finishActiveState()
       promise.reject(
         "E_RENDER_SETUP",
         error.localizedMessage ?: "The video could not be prepared for export.",
@@ -185,13 +203,33 @@ class OnDeviceRendererModule : Module() {
     }
   }
 
+  /** Finished clips are private user video; keep only the newest one (it may still be shared). */
+  private fun pruneOldRenders(directory: File) {
+    val renders = directory.listFiles { file -> file.isFile }?.sortedByDescending { it.lastModified() }
+      ?: return
+    renders.drop(1).forEach { it.delete() }
+  }
+
+  private fun setKeepScreenOn(enabled: Boolean) {
+    val window = appContext.currentActivity?.window ?: return
+    if (enabled) {
+      window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    } else {
+      window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+  }
+
   private fun startProgressPolling(transformer: Transformer, renderId: String) {
     val holder = ProgressHolder()
+    var lastProgress = -1
     val poller = object : Runnable {
       override fun run() {
         if (activeRenderId != renderId) return
-        if (transformer.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) {
-          sendEvent("onRenderProgress", mapOf("progress" to holder.progress))
+        if (transformer.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE &&
+          holder.progress != lastProgress
+        ) {
+          lastProgress = holder.progress
+          sendEvent("onRenderProgress", mapOf("progress" to lastProgress))
         }
         mainHandler.postDelayed(this, 300)
       }
@@ -207,5 +245,6 @@ class OnDeviceRendererModule : Module() {
     activeOutputFile = null
     activePromise = null
     activeRenderId = null
+    setKeepScreenOn(false)
   }
 }

@@ -1,3 +1,5 @@
+import { apiRoot } from "./config";
+
 export type JobStatus =
   | "queued"
   | "downloading"
@@ -64,12 +66,6 @@ export interface JobDetail extends Job {
   clips?: unknown[];
 }
 
-const configuredBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.trim().replace(
-  /\/$/,
-  "",
-);
-const API_ROOT = configuredBaseUrl ? `${configuredBaseUrl}/api` : "";
-
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -81,24 +77,56 @@ export class ApiError extends Error {
 
 export type TokenGetter = () => Promise<string | null>;
 
+const REQUEST_TIMEOUT_MS = 20_000;
+
+type RequestOptions = { method?: "GET" | "POST"; body?: string; signal?: AbortSignal };
+
 export class ApiClient {
   constructor(private readonly getToken: TokenGetter) {}
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    if (!API_ROOT) {
-      throw new ApiError("EXPO_PUBLIC_API_BASE_URL belum dikonfigurasi.", 0);
+  private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    if (!apiRoot.root) {
+      throw new ApiError(apiRoot.error ?? "Server belum dikonfigurasi.", 0);
     }
     const token = await this.getToken();
     if (!token) throw new ApiError("Sesi login tidak tersedia.", 401);
-    const response = await fetch(`${API_ROOT}${path}`, {
-      ...init,
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...(init.headers ?? {}),
-        Authorization: `Bearer ${token}`,
-      },
-    });
+
+    // One controller covers both the caller leaving the screen and a server that never answers.
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+    const abort = () => controller.abort();
+    if (options.signal?.aborted) abort();
+    options.signal?.addEventListener("abort", abort);
+
+    let response: Response;
+    try {
+      response = await fetch(`${apiRoot.root}${path}`, {
+        method: options.method ?? "GET",
+        body: options.body,
+        signal: controller.signal,
+        headers: {
+          Accept: "application/json",
+          ...(options.body ? { "Content-Type": "application/json" } : {}),
+          Authorization: `Bearer ${token}`,
+        },
+      });
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      throw new ApiError(
+        timedOut
+          ? "Server tidak merespons. Coba lagi sebentar lagi."
+          : "Tidak dapat terhubung ke server. Periksa koneksi internet.",
+        0,
+      );
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abort);
+    }
+
     if (!response.ok) {
       let message = `Permintaan gagal (${response.status}).`;
       try {
@@ -120,8 +148,8 @@ export class ApiClient {
     return (await response.json()) as T;
   }
 
-  listJobs(): Promise<Job[]> {
-    return this.request<Job[]>("/jobs");
+  listJobs(signal?: AbortSignal): Promise<Job[]> {
+    return this.request<Job[]>("/jobs", { signal });
   }
 
   createJob(body: JobRequest): Promise<Job> {
@@ -131,7 +159,9 @@ export class ApiClient {
     });
   }
 
-  getJob(jobId: string): Promise<JobDetail> {
-    return this.request<JobDetail>(`/jobs/${encodeURIComponent(jobId)}`);
+  getJob(jobId: string, signal?: AbortSignal): Promise<JobDetail> {
+    return this.request<JobDetail>(`/jobs/${encodeURIComponent(jobId)}`, {
+      signal,
+    });
   }
 }

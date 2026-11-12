@@ -1,13 +1,12 @@
 import { AuthView, UserButton } from "@clerk/expo/native-components";
 import { useAuth } from "@clerk/expo";
-import { Link, router } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -16,12 +15,22 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { ApiClient, ApiError, type Job } from "@/lib/api";
 
+import { Button } from "@/components/Button";
+import { ApiClient, ApiError, type Job, type JobOptions } from "@/lib/api";
+import { accountFeaturesConfigured } from "@/lib/config";
+import { statusLabel } from "@/lib/jobStatus";
+import { colors, TOUCH_TARGET } from "@/lib/theme";
+import { isYouTubeUrl } from "@/lib/youtube";
+
+// `@clerk/expo/native-components` types its lazily loaded components as opaque; these are the
+// props `@clerk/expo-native-components` documents for AuthView.
 const NativeAuthView = AuthView as unknown as React.ComponentType<{
   onDismiss?: () => void;
 }>;
-const options = {
+const NativeUserButton = UserButton as unknown as React.ComponentType;
+
+const options: JobOptions = {
   language: "id",
   min_secs: 20,
   max_secs: 90,
@@ -29,172 +38,104 @@ const options = {
   brief: null,
   transcribe_locally: false,
   template: "default",
-  aspect: "9:16" as const,
+  aspect: "9:16",
 };
-const statusLabel = (s: Job["status"]) =>
-  ({
-    queued: "Menunggu",
-    downloading: "Mengunduh",
-    transcribing: "Transkripsi",
-    analyzing: "Analisis AI",
-    review: "Siap ditinjau",
-    rendering: "Merender",
-    waiting_quota: "Menunggu kuota",
-    error: "Gagal",
-  })[s] ?? s;
 
-export default function HomeScreen() {
-  const { isLoaded, isSignedIn, getToken } = useAuth({
-    treatPendingAsSignedOut: false,
-  });
-  const [authOpen, setAuthOpen] = useState(false),
-    [url, setUrl] = useState(""),
-    [jobs, setJobs] = useState<Job[]>([]),
-    [loading, setLoading] = useState(false),
-    [refreshing, setRefreshing] = useState(false),
-    [error, setError] = useState<string | null>(null);
-  const client = useMemo(() => new ApiClient(getToken), [getToken]);
-  const loadJobs = useCallback(async () => {
-    if (!isSignedIn) return;
-    try {
-      setJobs(await client.listJobs());
-      setError(null);
-    } catch (e) {
-      setError(
-        e instanceof ApiError ? e.message : "Tidak dapat memuat pekerjaan.",
-      );
-    }
-  }, [client, isSignedIn]);
-  useEffect(() => {
-    void loadJobs();
-  }, [loadJobs]);
-  async function startJob() {
-    const value = url.trim();
-    if (!/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(value)) {
-      setError("Masukkan URL YouTube yang valid.");
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const job = await client.createJob({ url: value, options });
-      setUrl("");
-      setJobs((old) => [job, ...old]);
-      router.push(`/job/${job.id}`);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Gagal memulai pekerjaan.");
-    } finally {
-      setLoading(false);
-    }
-  }
-  if (!isLoaded || isSignedIn === undefined)
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator color="#6d5dfc" />
-        <Text style={styles.muted}>Memuat sesi…</Text>
-      </View>
-    );
+type JobList = {
+  jobs: Job[];
+  loading: boolean;
+  refreshing: boolean;
+  onRefresh: () => void;
+};
+
+function HomeFrame({
+  account,
+  children,
+  error,
+  list,
+}: {
+  account?: ReactNode;
+  children: ReactNode;
+  error: string | null;
+  list: JobList | null;
+}) {
   return (
     <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.flex}
-      >
+      <KeyboardAvoidingView behavior="padding" style={styles.flex}>
         <FlatList
-          data={isSignedIn ? jobs : []}
+          data={list?.jobs ?? []}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
           refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={async () => {
-                setRefreshing(true);
-                await loadJobs();
-                setRefreshing(false);
-              }}
-            />
+            list ? (
+              <RefreshControl
+                refreshing={list.refreshing}
+                onRefresh={list.onRefresh}
+                tintColor={colors.accentSoft}
+                colors={[colors.accent]}
+                progressBackgroundColor={colors.surface}
+              />
+            ) : undefined
           }
           ListHeaderComponent={
             <>
               <View style={styles.header}>
-                <View>
+                <View style={styles.flex}>
                   <Text style={styles.eyebrow}>AI CLIPPER</Text>
-                  <Text style={styles.title}>Buat klip pendek</Text>
-                </View>
-                {isSignedIn && Platform.OS !== "web" ? <UserButton /> : null}
-              </View>
-              {!isSignedIn ? (
-                <View style={styles.card}>
-                  <Text style={styles.cardTitle}>Masuk untuk mulai</Text>
-                  <Text style={styles.muted}>
-                    Login diperlukan untuk membuat dan melihat pekerjaan AI.
+                  <Text accessibilityRole="header" style={styles.title}>
+                    Buat klip pendek
                   </Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    style={styles.primary}
-                    onPress={() => setAuthOpen(true)}
-                  >
-                    <Text style={styles.primaryText}>Masuk / Daftar</Text>
-                  </Pressable>
                 </View>
-              ) : (
-                <View style={styles.card}>
-                  <Text style={styles.cardTitle}>Sumber YouTube</Text>
-                  <TextInput
-                    accessibilityLabel="URL YouTube"
-                    value={url}
-                    onChangeText={setUrl}
-                    placeholder="https://youtube.com/watch?v=…"
-                    placeholderTextColor="#8d8ba0"
-                    autoCapitalize="none"
-                    keyboardType="url"
-                    style={styles.input}
-                  />
-                  <Pressable
-                    accessibilityRole="button"
-                    disabled={loading}
-                    style={[styles.primary, loading && styles.disabled]}
-                    onPress={() => void startJob()}
-                  >
-                    {loading ? (
-                      <ActivityIndicator color="#fff" />
-                    ) : (
-                      <Text style={styles.primaryText}>Mulai AI Job</Text>
-                    )}
-                  </Pressable>
-                </View>
-              )}
+                {account}
+              </View>
+              {children}
               {error ? (
                 <Text accessibilityRole="alert" style={styles.error}>
                   {error}
                 </Text>
               ) : null}
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Pekerjaan terbaru</Text>
-                <Link href="/local-render" asChild>
-                  <Pressable accessibilityRole="button">
-                    <Text style={styles.link}>Local Render →</Text>
-                  </Pressable>
-                </Link>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Render di perangkat</Text>
+                <Text style={styles.muted}>
+                  Potong video dari galeri menjadi klip 9:16 dengan caption,
+                  hook, dan watermark. Video tidak diunggah.
+                </Text>
+                <Button
+                  variant="secondary"
+                  label="Buka Local Render"
+                  onPress={() => router.push("/local-render")}
+                />
               </View>
+              {list ? (
+                <Text accessibilityRole="header" style={styles.sectionTitle}>
+                  Pekerjaan terbaru
+                </Text>
+              ) : null}
             </>
           }
           ListEmptyComponent={
-            isSignedIn
-              ? () => <Text style={styles.muted}>Belum ada pekerjaan.</Text>
-              : undefined
+            list ? (
+              list.loading ? (
+                <ActivityIndicator color={colors.accent} />
+              ) : (
+                <Text style={styles.muted}>Belum ada pekerjaan.</Text>
+              )
+            ) : undefined
           }
           renderItem={({ item }) => (
             <Pressable
               accessibilityRole="button"
-              style={styles.jobRow}
+              accessibilityLabel={`${item.url || "Upload lokal"}, ${statusLabel(item.status)}`}
+              android_ripple={{ color: colors.ripple }}
+              style={({ pressed }) => [styles.jobRow, pressed && styles.pressed]}
               onPress={() => router.push(`/job/${item.id}`)}
             >
               <View style={styles.flex}>
                 <Text numberOfLines={1} style={styles.jobUrl}>
                   {item.url || "Upload lokal"}
                 </Text>
-                <Text style={styles.muted}>
+                <Text numberOfLines={2} style={styles.muted}>
                   {statusLabel(item.status)}
                   {item.message ? ` · ${item.message}` : ""}
                 </Text>
@@ -209,34 +150,164 @@ export default function HomeScreen() {
             </Pressable>
           )}
         />
-        <Modal
-          animationType="slide"
-          visible={authOpen}
-          presentationStyle="pageSheet"
-          onRequestClose={() => setAuthOpen(false)}
-        >
-          {Platform.OS === "web" ? (
-            <View style={styles.modalFallback}>
-              <Text style={styles.cardTitle}>
-                Auth native memerlukan development build.
-              </Text>
-              <Pressable
-                style={styles.primary}
-                onPress={() => setAuthOpen(false)}
-              >
-                <Text style={styles.primaryText}>Tutup</Text>
-              </Pressable>
-            </View>
-          ) : (
-            <NativeAuthView onDismiss={() => setAuthOpen(false)} />
-          )}
-        </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
+
+function AccountHome() {
+  const { isLoaded, isSignedIn, getToken } = useAuth({
+    treatPendingAsSignedOut: false,
+  });
+  const [authOpen, setAuthOpen] = useState(false);
+  const [url, setUrl] = useState("");
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const client = useMemo(() => new ApiClient(getToken), [getToken]);
+
+  const loadJobs = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!isSignedIn) return;
+      try {
+        const next = await client.listJobs(signal);
+        setJobs(next);
+        setError(null);
+      } catch (e) {
+        if (signal?.aborted) return;
+        setError(
+          e instanceof ApiError ? e.message : "Tidak dapat memuat pekerjaan.",
+        );
+      }
+      setLoaded(true);
+    },
+    [client, isSignedIn],
+  );
+
+  // Reload whenever the screen comes back into view, so a Job's status isn't stale after a visit
+  // to its detail screen; leaving cancels the request in flight.
+  useFocusEffect(
+    useCallback(() => {
+      const controller = new AbortController();
+      void loadJobs(controller.signal);
+      return () => controller.abort();
+    }, [loadJobs]),
+  );
+
+  useEffect(() => {
+    if (isSignedIn) setAuthOpen(false);
+  }, [isSignedIn]);
+
+  async function startJob() {
+    const value = url.trim();
+    if (!isYouTubeUrl(value)) {
+      setError("Masukkan URL YouTube yang valid.");
+      return;
+    }
+    setStarting(true);
+    setError(null);
+    try {
+      const job = await client.createJob({ url: value, options });
+      setUrl("");
+      setJobs((old) => [job, ...old]);
+      router.push(`/job/${job.id}`);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Gagal memulai pekerjaan.");
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  if (!isLoaded || isSignedIn === undefined)
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator color={colors.accent} />
+        <Text style={styles.muted}>Memuat sesi…</Text>
+      </View>
+    );
+
+  return (
+    <>
+      <HomeFrame
+        account={isSignedIn ? <NativeUserButton /> : null}
+        error={error}
+        list={
+          isSignedIn
+            ? {
+                jobs,
+                loading: !loaded,
+                refreshing,
+                onRefresh: () => {
+                  setRefreshing(true);
+                  void loadJobs().finally(() => setRefreshing(false));
+                },
+              }
+            : null
+        }
+      >
+        {isSignedIn ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Sumber YouTube</Text>
+            <TextInput
+              accessibilityLabel="URL YouTube"
+              value={url}
+              onChangeText={setUrl}
+              placeholder="https://youtube.com/watch?v=…"
+              placeholderTextColor={colors.placeholder}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              returnKeyType="go"
+              onSubmitEditing={() => void startJob()}
+              style={styles.input}
+            />
+            <Button
+              label="Mulai AI Job"
+              loading={starting}
+              onPress={() => void startJob()}
+            />
+          </View>
+        ) : (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Masuk untuk mulai</Text>
+            <Text style={styles.muted}>
+              Login diperlukan untuk membuat dan melihat pekerjaan AI.
+            </Text>
+            <Button label="Masuk / Daftar" onPress={() => setAuthOpen(true)} />
+          </View>
+        )}
+      </HomeFrame>
+      <Modal
+        animationType="slide"
+        visible={authOpen}
+        presentationStyle="pageSheet"
+        onRequestClose={() => setAuthOpen(false)}
+      >
+        <NativeAuthView onDismiss={() => setAuthOpen(false)} />
+      </Modal>
+    </>
+  );
+}
+
+export default function HomeScreen() {
+  if (accountFeaturesConfigured) return <AccountHome />;
+  return (
+    <HomeFrame error={null} list={null}>
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Login belum dikonfigurasi</Text>
+        <Text style={styles.muted}>
+          Build ini dibuat tanpa kunci Clerk dan alamat server, jadi AI Job dari
+          YouTube belum tersedia. Local Render di bawah tetap berfungsi penuh.
+        </Text>
+      </View>
+    </HomeFrame>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#0e0d16" },
+  safe: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
   content: { padding: 20, paddingBottom: 40 },
   center: {
@@ -244,73 +315,60 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
-    backgroundColor: "#0e0d16",
+    backgroundColor: colors.background,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 12,
     marginBottom: 28,
   },
   eyebrow: {
-    color: "#9c92ff",
+    color: colors.accentSoft,
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 2,
   },
-  title: { color: "#fff", fontSize: 30, fontWeight: "800", marginTop: 6 },
+  title: { color: colors.text, fontSize: 30, fontWeight: "800", marginTop: 6 },
   card: {
-    backgroundColor: "#191725",
+    backgroundColor: colors.surface,
     borderRadius: 18,
     padding: 18,
     marginBottom: 24,
     gap: 12,
   },
-  cardTitle: { color: "#fff", fontSize: 18, fontWeight: "700" },
-  muted: { color: "#aaa7b8", fontSize: 14, lineHeight: 21 },
+  cardTitle: { color: colors.text, fontSize: 18, fontWeight: "700" },
+  muted: { color: colors.textMuted, fontSize: 14, lineHeight: 21 },
   input: {
-    backgroundColor: "#242132",
-    color: "#fff",
+    backgroundColor: colors.field,
+    color: colors.text,
     borderRadius: 10,
-    padding: 14,
-    fontSize: 15,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    minHeight: TOUCH_TARGET,
   },
-  primary: {
-    backgroundColor: "#6d5dfc",
-    paddingVertical: 14,
-    borderRadius: 10,
-    alignItems: "center",
-    minHeight: 48,
-    justifyContent: "center",
-  },
-  primaryText: { color: "#fff", fontWeight: "700", fontSize: 15 },
-  disabled: { opacity: 0.6 },
-  error: { color: "#ff9f9f", marginBottom: 18 },
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+  error: { color: colors.danger, fontSize: 14, lineHeight: 20, marginBottom: 18 },
+  sectionTitle: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: "700",
     marginBottom: 10,
   },
-  sectionTitle: { color: "#fff", fontSize: 18, fontWeight: "700" },
-  link: { color: "#aaa1ff", fontWeight: "700" },
   jobRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: "#191725",
+    backgroundColor: colors.surface,
     borderRadius: 12,
     padding: 15,
     marginBottom: 9,
+    minHeight: TOUCH_TARGET,
+    overflow: "hidden",
   },
-  jobUrl: { color: "#fff", fontSize: 14, marginBottom: 5 },
-  progress: { color: "#b7afff", fontWeight: "700" },
-  chevron: { color: "#aaa7b8", fontSize: 26 },
-  modalFallback: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
-    gap: 18,
-  },
+  pressed: { opacity: 0.82 },
+  jobUrl: { color: colors.text, fontSize: 14, marginBottom: 5 },
+  progress: { color: colors.accentText, fontWeight: "700" },
+  chevron: { color: colors.textMuted, fontSize: 26 },
 });

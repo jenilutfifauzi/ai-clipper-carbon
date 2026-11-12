@@ -1,15 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import { Asset, requestPermissionsAsync } from "expo-media-library";
 import * as ImagePicker from "expo-image-picker";
-import { Stack, router } from "expo-router";
+import { router } from "expo-router";
 import * as Sharing from "expo-sharing";
 import { VideoView, useVideoPlayer } from "expo-video";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
-  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -19,7 +17,13 @@ import {
 } from "react-native";
 
 import OnDeviceRenderer from "../../modules/on-device-renderer";
-import { buildLocalOverlayPlan, type LocalCaptionCueDraft } from "../lib/localOverlayPlan";
+import { Button } from "@/components/Button";
+import {
+  buildLocalOverlayPlan,
+  type LocalCaptionCueDraft,
+} from "@/lib/localOverlayPlan";
+import { renderErrorMessage } from "@/lib/renderErrors";
+import { colors, TOUCH_TARGET } from "@/lib/theme";
 
 type LocalVideo = {
   uri: string;
@@ -27,10 +31,24 @@ type LocalVideo = {
   durationMs: number | null;
 };
 
-function VideoPreview({ uri }: { uri: string }) {
+type PreviewHandle = {
+  /** The playhead, in seconds. */
+  position: () => number;
+  pause: () => void;
+};
+
+function VideoPreview({ uri, ref }: { uri: string; ref: Ref<PreviewHandle> }) {
   const player = useVideoPlayer(uri, (videoPlayer) => {
     videoPlayer.loop = true;
   });
+  useImperativeHandle(
+    ref,
+    () => ({
+      position: () => player.currentTime,
+      pause: () => player.pause(),
+    }),
+    [player],
+  );
 
   return (
     <VideoView
@@ -46,6 +64,11 @@ function parseSeconds(value: string): number {
   return Number(value.trim().replace(",", "."));
 }
 
+/** Seconds as the trim fields show them: at most one decimal, no trailing ".0". */
+function formatSeconds(value: number): string {
+  return String(Math.round(value * 10) / 10);
+}
+
 export default function LocalRenderScreen() {
   const [source, setSource] = useState<LocalVideo | null>(null);
   const [startText, setStartText] = useState("0");
@@ -58,6 +81,7 @@ export default function LocalRenderScreen() {
   const [captionDrafts, setCaptionDrafts] = useState<LocalCaptionCueDraft[]>([]);
   const [hookText, setHookText] = useState("");
   const [watermarkText, setWatermarkText] = useState("");
+  const preview = useRef<PreviewHandle>(null);
 
   useEffect(() => {
     const subscription = OnDeviceRenderer.addListener(
@@ -66,7 +90,12 @@ export default function LocalRenderScreen() {
         setProgress(nextProgress);
       },
     );
-    return () => subscription.remove();
+    return () => {
+      subscription.remove();
+      // Leaving the screen abandons the export; without this it would keep the encoder busy and
+      // leave a file nobody can reach.
+      OnDeviceRenderer.cancelRenderAsync().catch(() => {});
+    };
   }, []);
 
   const trim = useMemo(
@@ -112,8 +141,8 @@ export default function LocalRenderScreen() {
       ...old,
       {
         id: `${Date.now()}-${old.length}`,
-        start: String(start),
-        end: String(end),
+        start: formatSeconds(start),
+        end: formatSeconds(end),
         text: "",
       },
     ]);
@@ -127,13 +156,28 @@ export default function LocalRenderScreen() {
     setRenderedUri(null);
   }
 
-  async function chooseVideo() {
+  function setStart(value: string) {
+    setStartText(value);
+    setRenderedUri(null);
+  }
+
+  function setEnd(value: string) {
+    setEndText(value);
+    setRenderedUri(null);
+  }
+
+  async function pickVideo() {
     setError(null);
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["videos"],
-      allowsMultipleSelection: false,
-      quality: 1,
-    });
+    let result: ImagePicker.ImagePickerResult;
+    try {
+      result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["videos"],
+        allowsMultipleSelection: false,
+      });
+    } catch {
+      setError("Tidak dapat membuka galeri di perangkat ini.");
+      return;
+    }
     if (result.canceled || !result.assets[0]) return;
 
     const asset = result.assets[0];
@@ -157,6 +201,22 @@ export default function LocalRenderScreen() {
     setProgress(0);
   }
 
+  function chooseVideo() {
+    // Another video resets the trim and every text, so ask before throwing typed work away.
+    if (!hasOverlayDraft) {
+      void pickVideo();
+      return;
+    }
+    Alert.alert(
+      "Ganti video?",
+      "Caption, hook, dan watermark yang sudah diisi akan dihapus.",
+      [
+        { text: "Batal", style: "cancel" },
+        { text: "Ganti video", style: "destructive", onPress: () => void pickVideo() },
+      ],
+    );
+  }
+
   async function renderClip() {
     if (!source || !validTrim || rendering) return;
     if (!overlayResult.plan) {
@@ -167,6 +227,8 @@ export default function LocalRenderScreen() {
     setRendering(true);
     setProgress(0);
     setRenderedUri(null);
+    // The preview's decoder competes with the export's on phones with few codec instances.
+    preview.current?.pause();
     try {
       const plan = overlayResult.plan;
       const hasOverlays = Boolean(
@@ -187,13 +249,7 @@ export default function LocalRenderScreen() {
       setRenderedUri(uri);
       setProgress(100);
     } catch (renderError) {
-      const message =
-        renderError instanceof Error
-          ? renderError.message
-          : "Render gagal di perangkat ini.";
-      setError(
-        message.includes("E_RENDER_CANCELLED") ? "Render dibatalkan." : message,
-      );
+      setError(renderErrorMessage(renderError));
     } finally {
       setRendering(false);
     }
@@ -212,6 +268,7 @@ export default function LocalRenderScreen() {
     setSaving(true);
     setError(null);
     try {
+      // Write-only: Android 10 and later grant this without a prompt, and no read access is asked.
       const permission = await requestPermissionsAsync(true, ["video"]);
       if (!permission.granted) {
         setError(
@@ -224,12 +281,8 @@ export default function LocalRenderScreen() {
         "Tersimpan",
         "Klip portrait sudah disimpan ke galeri perangkat.",
       );
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "Tidak dapat menyimpan video ke galeri.",
-      );
+    } catch {
+      setError("Tidak dapat menyimpan video ke galeri.");
     } finally {
       setSaving(false);
     }
@@ -246,22 +299,16 @@ export default function LocalRenderScreen() {
         mimeType: "video/mp4",
         dialogTitle: "Bagikan klip AI Clipper",
       });
-    } catch (shareError) {
-      setError(
-        shareError instanceof Error
-          ? shareError.message
-          : "Tidak dapat membuka menu berbagi.",
-      );
+    } catch {
+      setError("Tidak dapat membuka menu berbagi.");
     }
   }
 
+  const renderBlocked = !validTrim || !overlayValid;
+
   return (
     <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ headerShown: false }} />
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <ScrollView
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
@@ -270,14 +317,22 @@ export default function LocalRenderScreen() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Kembali"
-              onPress={() => router.back()}
-              style={styles.backButton}
+              android_ripple={{ color: colors.ripple }}
+              onPress={() =>
+                router.canGoBack() ? router.back() : router.replace("/")
+              }
+              style={({ pressed }) => [
+                styles.backButton,
+                pressed && styles.pressed,
+              ]}
             >
               <Text style={styles.backText}>‹</Text>
             </Pressable>
             <View style={styles.headerCopy}>
               <Text style={styles.eyebrow}>EDITOR PERANGKAT</Text>
-              <Text style={styles.title}>Local Render</Text>
+              <Text accessibilityRole="header" style={styles.title}>
+                Local Render
+              </Text>
             </View>
           </View>
 
@@ -287,32 +342,51 @@ export default function LocalRenderScreen() {
           </Text>
 
           {source ? (
-            <View style={styles.previewFrame}>
-              <VideoPreview uri={renderedUri ?? source.uri} />
+            <View style={styles.previewBlock}>
+              <View style={styles.previewLabelRow}>
+                <Text style={styles.fieldLabel}>
+                  {renderedUri ? "PRATINJAU · HASIL RENDER" : "PRATINJAU · VIDEO SUMBER"}
+                </Text>
+                {renderedUri ? (
+                  <Button
+                    variant="text"
+                    label="Edit lagi"
+                    accessibilityLabel="Kembali ke video sumber untuk mengedit lagi"
+                    onPress={() => setRenderedUri(null)}
+                  />
+                ) : null}
+              </View>
+              <View style={styles.previewFrame}>
+                <VideoPreview ref={preview} uri={renderedUri ?? source.uri} />
+              </View>
             </View>
           ) : (
             <Pressable
               accessibilityRole="button"
-              style={styles.emptyPreview}
-              onPress={() => void chooseVideo()}
+              accessibilityLabel="Pilih video dari galeri"
+              android_ripple={{ color: colors.ripple }}
+              style={({ pressed }) => [
+                styles.emptyPreview,
+                pressed && styles.pressed,
+              ]}
+              onPress={chooseVideo}
             >
               <Text style={styles.playMark}>▶</Text>
               <Text style={styles.emptyTitle}>Pilih video dari galeri</Text>
-              <Text style={styles.muted}>
+              <Text style={styles.mutedCentered}>
                 Video tetap di perangkat; tidak diunggah untuk render ini.
               </Text>
             </Pressable>
           )}
 
-          <Pressable
-            accessibilityRole="button"
-            style={styles.secondaryButton}
-            onPress={() => void chooseVideo()}
-          >
-            <Text style={styles.secondaryText}>
-              {source ? "Pilih video lain" : "Pilih video"}
-            </Text>
-          </Pressable>
+          {source ? (
+            <Button
+              variant="secondary"
+              label="Pilih video lain"
+              disabled={rendering}
+              onPress={chooseVideo}
+            />
+          ) : null}
 
           {source ? (
             <View style={styles.card}>
@@ -327,7 +401,7 @@ export default function LocalRenderScreen() {
                     accessibilityLabel="Waktu mulai dalam detik"
                     style={styles.input}
                     value={startText}
-                    onChangeText={setStartText}
+                    onChangeText={setStart}
                     keyboardType="decimal-pad"
                     selectTextOnFocus
                   />
@@ -338,12 +412,34 @@ export default function LocalRenderScreen() {
                     accessibilityLabel="Waktu akhir dalam detik"
                     style={styles.input}
                     value={endText}
-                    onChangeText={setEndText}
+                    onChangeText={setEnd}
                     keyboardType="decimal-pad"
                     selectTextOnFocus
                   />
                 </View>
               </View>
+              {renderedUri ? null : (
+                <View style={styles.rangeRow}>
+                  <Button
+                    variant="secondary"
+                    label="Mulai di posisi video"
+                    accessibilityLabel="Isi waktu mulai dari posisi pratinjau saat ini"
+                    onPress={() =>
+                      setStart(formatSeconds(preview.current?.position() ?? 0))
+                    }
+                    style={styles.rangeField}
+                  />
+                  <Button
+                    variant="secondary"
+                    label="Akhir di posisi video"
+                    accessibilityLabel="Isi waktu akhir dari posisi pratinjau saat ini"
+                    onPress={() =>
+                      setEnd(formatSeconds(preview.current?.position() ?? 0))
+                    }
+                    style={styles.rangeField}
+                  />
+                </View>
+              )}
               {durationSeconds !== null ? (
                 <Text style={styles.muted}>
                   Durasi sumber {durationSeconds.toFixed(1)} detik.
@@ -355,56 +451,19 @@ export default function LocalRenderScreen() {
                   sumber.
                 </Text>
               ) : null}
-              <Pressable
-                accessibilityRole="button"
-                disabled={!validTrim || rendering || !overlayValid}
-                style={[
-                  styles.primaryButton,
-                  (!validTrim || rendering || !overlayValid) && styles.disabled,
-                ]}
-                onPress={() => void renderClip()}
-              >
-                {rendering ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.primaryText}>Render klip 9:16</Text>
-                )}
-              </Pressable>
-              {rendering ? (
-                <View style={styles.progressWrap}>
-                  <View style={styles.progressTrack}>
-                    <View
-                      style={[
-                        styles.progressFill,
-                        { width: `${Math.max(4, progress)}%` },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.progressText}>
-                    {progress}% · render di perangkat
-                  </Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => void cancelRender()}
-                    style={styles.cancelButton}
-                  >
-                    <Text style={styles.cancelText}>Batalkan render</Text>
-                  </Pressable>
-                </View>
-              ) : null}
-              </View>
-            ) : null}
+            </View>
+          ) : null}
 
           {source ? (
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Teks dan branding</Text>
               <Text style={styles.muted}>
-                Waktu caption dihitung dari awal klip hasil potong. Kata disorot
-                merata selama cue; ini bukan transkripsi atau timing suara otomatis.
-                Jika teks tidak muat, render ditolak agar tidak ada kata yang terpotong.
+                Opsional. Waktu caption dihitung dari awal klip hasil potong.
+                Kata disorot merata selama caption tampil; ini bukan transkripsi
+                otomatis. Teks yang tidak muat ditolak agar tidak terpotong.
               </Text>
 
-              <View style={styles.rangeField}>
+              <View style={styles.fieldGroup}>
                 <Text style={styles.fieldLabel}>HOOK · 3 DETIK PERTAMA</Text>
                 <TextInput
                   accessibilityLabel="Teks hook"
@@ -416,11 +475,11 @@ export default function LocalRenderScreen() {
                   }}
                   maxLength={120}
                   placeholder="Contoh: Ini yang sering terlewat"
-                  placeholderTextColor="#777386"
+                  placeholderTextColor={colors.placeholder}
                 />
               </View>
 
-              <View style={styles.rangeField}>
+              <View style={styles.fieldGroup}>
                 <Text style={styles.fieldLabel}>WATERMARK · SELURUH KLIP</Text>
                 <TextInput
                   accessibilityLabel="Teks watermark"
@@ -431,8 +490,9 @@ export default function LocalRenderScreen() {
                     setRenderedUri(null);
                   }}
                   maxLength={40}
+                  autoCapitalize="none"
                   placeholder="Contoh: @akunmu"
-                  placeholderTextColor="#777386"
+                  placeholderTextColor={colors.placeholder}
                 />
               </View>
 
@@ -440,8 +500,9 @@ export default function LocalRenderScreen() {
                 <View key={cue.id} style={styles.cueCard}>
                   <View style={styles.cueHeader}>
                     <Text style={styles.fieldLabel}>CAPTION {index + 1}</Text>
-                    <Pressable
-                      accessibilityRole="button"
+                    <Button
+                      variant="danger"
+                      label="Hapus"
                       accessibilityLabel={`Hapus caption ${index + 1}`}
                       onPress={() => {
                         setCaptionDrafts((old) =>
@@ -449,9 +510,7 @@ export default function LocalRenderScreen() {
                         );
                         setRenderedUri(null);
                       }}
-                    >
-                      <Text style={styles.removeText}>Hapus</Text>
-                    </Pressable>
+                    />
                   </View>
                   <View style={styles.rangeRow}>
                     <View style={styles.rangeField}>
@@ -492,22 +551,17 @@ export default function LocalRenderScreen() {
                     multiline
                     textAlignVertical="top"
                     placeholder="Tulis teks caption"
-                    placeholderTextColor="#777386"
+                    placeholderTextColor={colors.placeholder}
                   />
                 </View>
               ))}
 
-              <Pressable
-                accessibilityRole="button"
+              <Button
+                variant="secondary"
+                label="＋ Tambah caption"
                 disabled={captionDrafts.length >= 50 || rendering}
-                style={[
-                  styles.secondaryButton,
-                  (captionDrafts.length >= 50 || rendering) && styles.disabled,
-                ]}
                 onPress={addCaptionCue}
-              >
-                <Text style={styles.secondaryText}>＋ Tambah caption</Text>
-              </Pressable>
+              />
               {hasOverlayDraft && overlayResult.error ? (
                 <Text accessibilityRole="alert" style={styles.validation}>
                   {overlayResult.error}
@@ -516,45 +570,81 @@ export default function LocalRenderScreen() {
             </View>
           ) : null}
 
-          {renderedUri ? (
+          {source ? (
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>Klip siap</Text>
-              <Text style={styles.muted}>
-                MP4 H.264 · 720 × 1280 · trim, crop, dan teks overlay (jika diisi) diproses di ponsel.
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                disabled={saving}
-                style={[styles.primaryButton, saving && styles.disabled]}
-                onPress={() => void saveToGallery()}
-              >
-                {saving ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.primaryText}>Simpan ke galeri</Text>
-                )}
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                style={styles.secondaryButton}
-                onPress={() => void shareVideo()}
-              >
-                <Text style={styles.secondaryText}>Bagikan video…</Text>
-              </Pressable>
+              <Button
+                label="Render klip 9:16"
+                loading={rendering}
+                disabled={renderBlocked}
+                onPress={() => void renderClip()}
+              />
+              {renderBlocked && !rendering ? (
+                <Text style={styles.validation}>
+                  {!validTrim
+                    ? "Perbaiki rentang waktu di bagian Potong klip untuk merender."
+                    : "Perbaiki teks atau waktu caption di atas untuk merender."}
+                </Text>
+              ) : null}
+              {rendering ? (
+                <View style={styles.progressWrap}>
+                  <View
+                    accessibilityRole="progressbar"
+                    accessibilityValue={{ min: 0, max: 100, now: progress }}
+                    style={styles.progressTrack}
+                  >
+                    <View
+                      style={[
+                        styles.progressFill,
+                        { width: `${Math.max(4, progress)}%` },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.progressText}>
+                    {progress}% · render di perangkat, biarkan aplikasi terbuka
+                  </Text>
+                  <Button
+                    variant="danger"
+                    label="Batalkan render"
+                    onPress={() => void cancelRender()}
+                  />
+                </View>
+              ) : null}
+              {error ? (
+                <Text accessibilityRole="alert" style={styles.error}>
+                  {error}
+                </Text>
+              ) : null}
             </View>
-          ) : null}
-
-          {error ? (
+          ) : error ? (
             <Text accessibilityRole="alert" style={styles.error}>
               {error}
             </Text>
           ) : null}
+
+          {renderedUri ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Klip siap</Text>
+              <Text style={styles.muted}>
+                MP4 H.264 · 720 × 1280 · diproses sepenuhnya di ponsel.
+              </Text>
+              <Button
+                label="Simpan ke galeri"
+                loading={saving}
+                onPress={() => void saveToGallery()}
+              />
+              <Button
+                variant="secondary"
+                label="Bagikan video…"
+                onPress={() => void shareVideo()}
+              />
+            </View>
+          ) : null}
+
           <Text style={styles.footnote}>
-            Mendukung satu video, trim, crop tengah 9:16, caption manual bertiming,
-            hook teks, dan watermark teks. Preview belum menunjukkan highlight
-            caption yang tersinkron; timeline multi-track, transkripsi, logo,
-            musik, template, keyframe, dan efek lanjutan belum tersedia di editor
-            native ini.
+            Mendukung satu video, trim, crop tengah 9:16, caption manual
+            bertiming, hook teks, dan watermark teks. Pratinjau belum
+            menampilkan caption; timeline multi-track, transkripsi, logo, musik,
+            template, dan efek lanjutan belum tersedia di editor native ini.
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -563,38 +653,48 @@ export default function LocalRenderScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#0e0d16" },
+  safe: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
   content: { padding: 20, paddingBottom: 40, gap: 16 },
   header: { flexDirection: "row", alignItems: "center", gap: 12 },
   backButton: {
-    width: 42,
-    height: 42,
+    width: TOUCH_TARGET,
+    height: TOUCH_TARGET,
     borderRadius: 13,
-    backgroundColor: "#191725",
+    backgroundColor: colors.surface,
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
-  backText: { color: "#fff", fontSize: 34, lineHeight: 38, marginTop: -5 },
+  backText: { color: colors.text, fontSize: 34, lineHeight: 38, marginTop: -5 },
+  pressed: { opacity: 0.82 },
   headerCopy: { flex: 1 },
   eyebrow: {
-    color: "#9c92ff",
-    fontSize: 11,
+    color: colors.accentSoft,
+    fontSize: 12,
     fontWeight: "800",
     letterSpacing: 1.8,
   },
-  title: { color: "#fff", fontSize: 26, fontWeight: "800", marginTop: 3 },
-  intro: { color: "#aaa7b8", fontSize: 14, lineHeight: 21 },
+  title: { color: colors.text, fontSize: 26, fontWeight: "800", marginTop: 3 },
+  intro: { color: colors.textMuted, fontSize: 14, lineHeight: 21 },
+  previewBlock: { gap: 4 },
+  previewLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    minHeight: TOUCH_TARGET,
+  },
   emptyPreview: {
     aspectRatio: 9 / 16,
     borderRadius: 20,
-    backgroundColor: "#191725",
+    backgroundColor: colors.surface,
     alignItems: "center",
     justifyContent: "center",
     padding: 28,
     gap: 12,
     borderWidth: 1,
-    borderColor: "#2b2938",
+    borderColor: colors.border,
+    overflow: "hidden",
   },
   previewFrame: {
     aspectRatio: 9 / 16,
@@ -603,29 +703,29 @@ const styles = StyleSheet.create({
     backgroundColor: "#08070d",
   },
   preview: { width: "100%", height: "100%" },
-  playMark: { color: "#9c92ff", fontSize: 32, marginBottom: 4 },
+  playMark: { color: colors.accentSoft, fontSize: 32, marginBottom: 4 },
   emptyTitle: {
-    color: "#fff",
+    color: colors.text,
     fontSize: 18,
     fontWeight: "700",
     textAlign: "center",
   },
-  muted: { color: "#aaa7b8", fontSize: 13, lineHeight: 19 },
-  secondaryButton: {
-    minHeight: 46,
-    borderRadius: 11,
-    borderWidth: 1,
-    borderColor: "#3b384b",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+  muted: { color: colors.textMuted, fontSize: 14, lineHeight: 20 },
+  mutedCentered: {
+    color: colors.textMuted,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "center",
   },
-  secondaryText: { color: "#d1ccff", fontSize: 14, fontWeight: "700" },
-  card: { backgroundColor: "#191725", borderRadius: 18, padding: 17, gap: 14 },
-  cardTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: 18,
+    padding: 17,
+    gap: 14,
+  },
+  cardTitle: { color: colors.text, fontSize: 18, fontWeight: "800" },
   cueCard: {
-    backgroundColor: "#211f2e",
+    backgroundColor: colors.surfaceRaised,
     borderRadius: 13,
     padding: 12,
     gap: 10,
@@ -635,53 +735,36 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  removeText: { color: "#ffc0c0", fontSize: 12, fontWeight: "700" },
   multilineInput: { minHeight: 74, paddingTop: 12 },
-  fileName: { color: "#c3c0d0", fontSize: 13 },
+  fileName: { color: colors.textSecondary, fontSize: 13 },
   rangeRow: { flexDirection: "row", gap: 12 },
   rangeField: { flex: 1, gap: 7 },
+  fieldGroup: { gap: 7 },
   fieldLabel: {
-    color: "#9a96a9",
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 1.1,
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.8,
   },
   input: {
-    backgroundColor: "#242132",
-    color: "#fff",
+    backgroundColor: colors.field,
+    color: colors.text,
     borderRadius: 10,
     paddingHorizontal: 13,
     paddingVertical: 12,
     fontSize: 16,
-    minHeight: 46,
+    minHeight: TOUCH_TARGET,
   },
-  validation: { color: "#ffc28e", fontSize: 13, lineHeight: 18 },
-  primaryButton: {
-    minHeight: 49,
-    borderRadius: 11,
-    backgroundColor: "#6d5dfc",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-  },
-  primaryText: { color: "#fff", fontSize: 15, fontWeight: "800" },
-  disabled: { opacity: 0.48 },
+  validation: { color: colors.warning, fontSize: 14, lineHeight: 20 },
   progressWrap: { gap: 8 },
   progressTrack: {
     height: 7,
-    backgroundColor: "#302d41",
+    backgroundColor: colors.track,
     borderRadius: 4,
     overflow: "hidden",
   },
-  progressFill: { height: 7, backgroundColor: "#9c92ff", borderRadius: 4 },
-  progressText: { color: "#c9c5d8", fontSize: 12, textAlign: "center" },
-  cancelButton: {
-    minHeight: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cancelText: { color: "#ffc0c0", fontWeight: "700" },
-  error: { color: "#ff9f9f", fontSize: 13, lineHeight: 19 },
-  footnote: { color: "#7f7c8f", fontSize: 12, lineHeight: 18, marginTop: 4 },
+  progressFill: { height: 7, backgroundColor: colors.accentSoft, borderRadius: 4 },
+  progressText: { color: colors.textSecondary, fontSize: 13, textAlign: "center" },
+  error: { color: colors.danger, fontSize: 14, lineHeight: 20 },
+  footnote: { color: colors.textMuted, fontSize: 12, lineHeight: 18, marginTop: 4 },
 });

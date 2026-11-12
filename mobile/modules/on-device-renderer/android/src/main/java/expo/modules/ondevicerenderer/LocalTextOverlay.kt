@@ -57,7 +57,7 @@ internal data class LocalOverlayPlan(
           require(end <= trimDurationSeconds + 0.001) {
             "Waktu caption berada di luar klip yang akan dirender."
           }
-          require(text.isNotEmpty() && text.length <= 160) { "Teks caption harus 1–160 karakter." }
+          require(text.isNotEmpty() && text.visibleLength() <= 160) { "Teks caption harus 1–160 karakter." }
 
           val wordArray = cue.optJSONArray("words")
           require(wordArray != null && wordArray.length() > 0) {
@@ -97,13 +97,16 @@ internal data class LocalOverlayPlan(
       val hook = root.optString("hookText", "").trim()
       val watermark = root.optString("watermarkText", "").trim()
       val opacity = root.optDouble("watermarkOpacity", 0.55).toFloat()
-      require(hook.length <= 120) { "Hook maksimal 120 karakter." }
-      require(watermark.length <= 40) { "Watermark maksimal 40 karakter." }
+      require(hook.visibleLength() <= 120) { "Hook maksimal 120 karakter." }
+      require(watermark.visibleLength() <= 40) { "Watermark maksimal 40 karakter." }
       require(opacity.isFinite() && opacity in 0.05f..1.0f) { "Opasitas watermark tidak valid." }
       return LocalOverlayPlan(captions, hook, watermark, opacity)
     }
   }
 }
+
+/** Counts user-visible characters the way the JS plan builder does (`Array.from(text).length`). */
+private fun String.visibleLength(): Int = codePointCount(0, length)
 
 private data class TextLayout(val textSize: Float, val lines: List<List<String>>)
 
@@ -145,22 +148,44 @@ internal class LocalTextOverlay(private val plan: LocalOverlayPlan) : CanvasOver
     )
   }
   private val watermarkSize = fitWatermark(plan.watermarkText)
+  private val highlightRect = RectF()
+  private val hookRect = RectF()
+  private var drawnCanvas: Canvas? = null
+  private var drawnCue = -1
+  private var drawnWord = -1
+  private var drawnHook = false
 
   init {
     setCanvasSize(720, 1280)
   }
 
   override fun onDraw(canvas: Canvas, presentationTimeUs: Long) {
-    // CanvasOverlay reuses its bitmap between frames; clear it so a previous frame's text never sticks.
-    canvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
     val timeSeconds = presentationTimeUs / 1_000_000.0
-
-    if (plan.watermarkText.isNotBlank()) drawWatermark(canvas)
     val cueIndex = plan.captions.indexOfFirst {
       timeSeconds >= it.startSeconds && timeSeconds < it.endSeconds
     }
-    if (cueIndex >= 0) drawCaption(canvas, plan.captions[cueIndex], captionLayouts[cueIndex], timeSeconds)
-    if (hookLayout != null && timeSeconds in 0.0..3.0) drawHook(canvas, hookLayout)
+    val wordIndex = if (cueIndex < 0) -1 else plan.captions[cueIndex].words.indexOfFirst {
+      timeSeconds >= it.startSeconds && timeSeconds < it.endSeconds
+    }
+    val hookVisible = hookLayout != null && timeSeconds >= 0.0 && timeSeconds <= 3.0
+
+    // CanvasOverlay reuses one bitmap, and Media3 re-uploads it as a GL texture whenever its
+    // generation id changes. Most frames show exactly what the previous one did, so leave the
+    // bitmap untouched then instead of redrawing and re-uploading 720x1280 pixels per frame.
+    if (canvas === drawnCanvas && cueIndex == drawnCue && wordIndex == drawnWord && hookVisible == drawnHook) {
+      return
+    }
+    drawnCanvas = canvas
+    drawnCue = cueIndex
+    drawnWord = wordIndex
+    drawnHook = hookVisible
+
+    canvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+    if (plan.watermarkText.isNotBlank()) drawWatermark(canvas)
+    if (cueIndex >= 0 && wordIndex >= 0) {
+      drawCaption(canvas, captionLayouts[cueIndex], wordIndex)
+    }
+    if (hookVisible && hookLayout != null) drawHook(canvas, hookLayout)
   }
 
   private fun drawWatermark(canvas: Canvas) {
@@ -169,12 +194,7 @@ internal class LocalTextOverlay(private val plan: LocalOverlayPlan) : CanvasOver
     canvas.drawText(plan.watermarkText, 684f, 1242f, watermarkPaint)
   }
 
-  private fun drawCaption(canvas: Canvas, cue: LocalCaptionCue, layout: TextLayout, timeSeconds: Double) {
-    val activeWord = cue.words.indexOfFirst {
-      timeSeconds >= it.startSeconds && timeSeconds < it.endSeconds
-    }
-    if (activeWord < 0) return
-
+  private fun drawCaption(canvas: Canvas, layout: TextLayout, activeWord: Int) {
     textPaint.textSize = layout.textSize
     val allLines = layout.lines
     val lineHeight = layout.textSize * 1.2f
@@ -190,12 +210,8 @@ internal class LocalTextOverlay(private val plan: LocalOverlayPlan) : CanvasOver
         val wordWidth = textPaint.measureText(word)
         val selected = wordIndex == activeWord
         if (selected) {
-          canvas.drawRoundRect(
-            RectF(x - 7f, baseline + metrics.ascent - 4f, x + wordWidth + 7f, baseline + metrics.descent + 3f),
-            7f,
-            7f,
-            highlightPaint,
-          )
+          highlightRect.set(x - 7f, baseline + metrics.ascent - 4f, x + wordWidth + 7f, baseline + metrics.descent + 3f)
+          canvas.drawRoundRect(highlightRect, 7f, 7f, highlightPaint)
         }
         textPaint.color = if (selected) Color.rgb(24, 22, 30) else Color.WHITE
         canvas.drawText(word, x, baseline, textPaint)
@@ -212,7 +228,8 @@ internal class LocalTextOverlay(private val plan: LocalOverlayPlan) : CanvasOver
     val top = 132f
     val width = (layout.lines.maxOf { measureLine(it, hookPaint) } + 36f).coerceAtMost(660f)
     val height = layout.lines.size * lineHeight + 22f
-    canvas.drawRoundRect(RectF((720f - width) / 2f, top, (720f + width) / 2f, top + height), 14f, 14f, hookBoxPaint)
+    hookRect.set((720f - width) / 2f, top, (720f + width) / 2f, top + height)
+    canvas.drawRoundRect(hookRect, 14f, 14f, hookBoxPaint)
     val metrics = hookPaint.fontMetrics
     val firstBaseline = top + 11f - metrics.ascent
     for ((lineIndex, line) in layout.lines.withIndex()) {

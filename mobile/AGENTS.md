@@ -15,4 +15,4 @@ The native project is generated from `app.json` and local modules; `android/` is
 
 ## Checks
 
-Run `npm run typecheck`, `npm run android:prebuild`, and `npm run android:export`. Run `npm run android` on a connected Android device/emulator for native validation when the Android SDK is available.
+Run `npm run typecheck`, `npm run test:unit`, `npm run android:prebuild`, and `npm run android:export`. Run `npm run android` on a connected Android device/emulator for native validation when the Android SDK is available.
