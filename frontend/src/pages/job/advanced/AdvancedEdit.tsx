@@ -299,7 +299,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const [pickState, setPickState] = useState<Pick>(null);
   // On a phone: the sheet open over the timeline, of an asset tab, of the inspector, of the picked
   // picture's Transform, of the picked item's Speed or Audio effects, of the Tracks or of Playback.
-  const [sheet, setSheet] = useState<AssetTab | "inspector" | "transform" | "speed" | "adjust" | "effects" | "tracks" | "playback" | null>(null);
+  const [sheet, setSheet] = useState<AssetTab | "inspector" | "transform" | "speed" | "adjust" | "effects" | "tracks" | "playback" | "compare" | "meters" | null>(null);
   const [assetTab, setAssetTab] = useState<AssetTab>("text");
   // The Media tab's category, kept while other tabs are open.
   const [mediaCategory, setMediaCategory] = useState<MediaCategory>("all");
@@ -1446,6 +1446,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             </>
           ) : (
             <>
+              <CompareButton playback={playback} compare={checks.compare} state={checks.state} fetch={fetchCompare} />
               <TakeButton flow={take} atEnd={atEnd} settings={takeSettings} />
               {holdOriginal}
               {fullscreenButton}
@@ -1453,7 +1454,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
           )
         }
         hideBar={!fullscreenBar.shown}
-        over={wide && <CompareSplit state={checks.state} onClose={() => checks.compare.clear()} />}
+        over={<CompareSplit state={checks.state} onClose={() => checks.compare.clear()} />}
       />
     </ShowOriginal>
   );
@@ -1766,11 +1767,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
               compact
             />
             <RevisionHistory jobId={job.id} candidateId={initial.id} revision={candidate.revision} here="advanced-edit" onRestore={restore} />
-            {wide && (
-              <Button variant="ghost" size="icon" onClick={() => setSavingTemplate(true)} aria-label="Save as Template…" title="Save as Template…">
-                <BookmarkPlus aria-hidden size={18} />
-              </Button>
-            )}
+            <Button variant="ghost" size="icon" onClick={() => setSavingTemplate(true)} aria-label="Save as Template…" title="Save as Template…">
+              <BookmarkPlus aria-hidden size={18} />
+            </Button>
           </>
         }
         primary={
@@ -1790,7 +1789,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       />
       <ShortcutsSheet open={shortcuts && wide} onClose={() => setShortcuts(false)} />
       <SaveTemplateDialog
-        open={savingTemplate && wide}
+        open={savingTemplate}
         jobId={job.id}
         candidateId={initial.id}
         draft={draft}
@@ -2034,6 +2033,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
             onFilters={colorable ? () => setSheet("filters") : null}
             onAdjust={colorable ? () => setSheet("adjust") : null}
             onAudioEffects={audioEffects && (() => setSheet("effects"))}
+            onCompare={() => setSheet("compare")}
+            onMeters={() => setSheet("meters")}
             onTracks={() => setSheet("tracks")}
             onPlayback={() => setSheet("playback")}
             onPicking={() => setPickingMode(true)}
@@ -2056,10 +2057,14 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                         ? "Adjust"
                       : sheet === "effects"
                         ? "Audio effects"
-                      : sheet === "tracks"
+                        : sheet === "tracks"
                         ? "Tracks"
                           : sheet === "playback"
                             ? "Playback"
+                            : sheet === "compare"
+                              ? "Compare"
+                              : sheet === "meters"
+                                ? "Meters"
                             : ASSET_TABS.find((tab) => tab.value === sheet)!.label
               }
               onClose={() => setSheet(null)}
@@ -2135,6 +2140,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 <TracksPanel tracks={tracks} onTrack={toggleTrack} />
               ) : sheet === "playback" ? (
                 <PlaybackPanel playback={playback} commands={commands} region={region} looping={looping} editPoints={points} fps={fps} />
+              ) : sheet === "compare" ? (
+                <div className="flex flex-col gap-3">
+                  <CompareButton playback={playback} compare={checks.compare} state={checks.state} fetch={fetchCompare} />
+                  <p className="text-sm text-pretty text-muted">Compare the paused preview with a server-rendered frame at the playhead.</p>
+                </div>
+              ) : sheet === "meters" ? (
+                <Meters playback={playback} />
               ) : sheet === "media" ? (
                 <div className="flex flex-col gap-3">
                   <MediaCategories value={mediaCategory} onChange={setMediaCategory} />
