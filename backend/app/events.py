@@ -15,8 +15,9 @@ from app.jobs import Job, JobNotFound, JobStatus, JobStore, JobWarning
 from app.revisions import changed_parts
 from app.text_presets import TextPresetStore
 
-# The statuses a Job stays in until the owner acts (reviews it, or retries it): the stream ends there.
-SETTLED = frozenset({JobStatus.REVIEW, JobStatus.ERROR})
+# The statuses a Job stays in until the owner acts (reviews it, retries it or continues it): the
+# stream ends there.
+SETTLED = frozenset({JobStatus.REVIEW, JobStatus.ERROR, JobStatus.STOPPED})
 # How often the stream reads the Job again by itself. The store announces its own changes as they
 # happen; this catches those made by another process, such as a CLI run.
 RECHECK_SECS = 2.0
@@ -50,7 +51,7 @@ class JobProgress:
 
 async def job_events(store: JobStore, job_id: str, recheck_secs: float = RECHECK_SECS) -> AsyncIterator[ServerSentEvent]:
     """A `job` event with the Job's progress now, then one each time it changes. Once the Job is in
-    review or error, an `end` event follows with its status, and the stream ends; also when the Job
+    review, error or stopped, an `end` event follows with its status, and the stream ends; also when the Job
     is deleted, with "deleted".
 
     Every change the store makes is sent, in order, even when they come faster than the client reads;

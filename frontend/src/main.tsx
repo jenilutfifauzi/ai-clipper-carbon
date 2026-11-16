@@ -8,12 +8,15 @@ import { setClerkTokenProvider } from "./api";
 import "./index.css";
 import { Home } from "./pages/Home";
 import { NotFound } from "./pages/NotFound";
+import { ProjectOpening, ProjectsPage } from "./pages/ProjectsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { applyTheme, storedTheme } from "./theme";
 
 // The Job page (its review, editor and timeline) is most of the code: it loads when first opened,
 // so that Home shows without it. App holds its skeleton meanwhile.
 const JobPage = lazy(() => import("./pages/JobPage").then((module) => ({ default: module.JobPage })));
+// A Project's exports show its Clips, which are the Job page's: loaded with it.
+const ProjectClipsPage = lazy(() => import("./pages/ProjectClipsPage").then((module) => ({ default: module.ProjectClipsPage })));
 // The Advanced Edit is full screen, outside the shell, and loads when first opened.
 const AdvancedEditPage = lazy(() =>
   import("./pages/job/advanced/AdvancedEdit").then((module) => ({ default: module.AdvancedEditPage })),
@@ -25,6 +28,9 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Home /> },
       { path: "settings", element: <SettingsPage /> },
+      { path: "projects", element: <ProjectsPage /> },
+      { path: "projects/:jobId", element: <ProjectOpening /> },
+      { path: "projects/:jobId/clips", element: <ProjectClipsPage /> },
       { path: "jobs/:jobId", element: <JobPage /> },
       { path: "*", element: <NotFound /> },
     ],

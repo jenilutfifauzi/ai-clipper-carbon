@@ -1,15 +1,16 @@
-import { ExternalLink, FileVideo } from "lucide-react";
+import { ExternalLink, FileVideo, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { api, ApiError, type Clip, type ExportPresetList, type JobDetail, type JobProgress } from "../api";
+import { Button } from "../components/Button";
 import { Panel } from "../components/Panel";
 import { StageProgress } from "../components/StageProgress";
 import { StatusBadge } from "../components/StatusBadge";
 import { formatBytes, formatRelative } from "../format";
 import { useJobEvents } from "../hooks/useJobEvents";
-import { stageIndex } from "../stages";
+import { stageIndex, STOPPABLE } from "../stages";
 import { BackLink, JobSkeleton } from "./job/JobSkeleton";
-import { ErrorNote, WaitingNote, Warnings } from "./job/JobStatusNotes";
+import { ErrorNote, StoppedNote, WaitingNote, Warnings } from "./job/JobStatusNotes";
 import { ExportPresetsSheet } from "./job/ExportPresetsSheet";
 import { pickedPreset, sourceHeight } from "./job/exportPresets";
 import { Review } from "./job/Review";
@@ -19,7 +20,7 @@ export function JobPage() {
   return <JobView key={jobId} jobId={jobId} />;
 }
 
-function progressOf(job: JobDetail): JobProgress {
+export function progressOf(job: JobDetail): JobProgress {
   const { status, stage, progress, message, error, warnings, quota } = job;
   return { status, stage, progress, message, error, warnings, retry_at: quota?.retry_at ?? null };
 }
@@ -31,6 +32,9 @@ function JobView({ jobId }: { jobId: string }) {
   const [loadError, setLoadError] = useState<ApiError | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  // A Stop or Continue on its way to the backend, and why the last one was refused.
+  const [toggling, setToggling] = useState(false);
+  const [toggleError, setToggleError] = useState<string | null>(null);
   const events = useJobEvents(jobId);
   // Whether the Job was in review when last loaded: then only its Clips change by themselves.
   const reviewing = useRef(false);
@@ -114,6 +118,22 @@ function JobView({ jobId }: { jobId: string }) {
     }
   }
 
+  // Stop the Job (a running stage stops soon after, its events say when), or queue a stopped one again.
+  async function toggle(change: (id: string) => Promise<unknown>) {
+    setToggling(true);
+    setToggleError(null);
+    try {
+      await change(jobId);
+      events.reconnect();
+    } catch (reason) {
+      setToggleError((reason as Error).message);
+    } finally {
+      setToggling(false);
+    }
+  }
+
+  const stopping = progress.message === "Stopping…";
+
   return (
     <div className="flex flex-col gap-5">
       <BackLink />
@@ -154,9 +174,28 @@ function JobView({ jobId }: { jobId: string }) {
         {events.lost && (
           <p className="text-sm text-muted">Reconnecting to live progress…</p>
         )}
+        {STOPPABLE.has(progress.status) && (
+          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
+            <Button size="sm" onClick={() => toggle(api.stopJob)} disabled={toggling || stopping}>
+              <Square aria-hidden size={14} fill="currentColor" />
+              {toggling || stopping ? "Stopping…" : "Stop"}
+            </Button>
+            <p className="text-sm text-muted">Continue later from where it stops.</p>
+            {toggleError && <p className="text-sm text-danger">{toggleError}</p>}
+          </div>
+        )}
       </Panel>
 
       {progress.status === "waiting_quota" && <WaitingNote progress={progress} />}
+      {progress.status === "stopped" && (
+        <StoppedNote
+          progress={progress}
+          uploaded={job.upload !== null}
+          continuing={toggling}
+          continueError={toggleError}
+          onContinue={() => toggle(api.continueJob)}
+        />
+      )}
       {progress.status === "error" && (
         <ErrorNote
           progress={progress}

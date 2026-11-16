@@ -1,21 +1,29 @@
 """Runs a Job's stages in order, recording each status change in the Job store.
 
 A Job resumes where it stopped: a run skips the stages whose output is complete (see `_done`).
+The owner can stop a run (see `Pipeline.stop`); it ends in `stopped` at the next progress report,
+LLM request or retry pause of its stage, and a transcription is cut short at once.
 """
 
 import hashlib
 import json
 import logging
+import math
+import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, replace
+from uuid import uuid4
 from datetime import UTC, datetime, timedelta
 
 from app.audio import WINDOW_AUDIO_MIME_TYPE, SileroVad, chunks, window_audio
-from app.candidates import Candidate
+from app.candidates import Candidate, Framing, Segment, Transform, manual_candidate
+from app.canvas import canvas_for
 from app.config import LlmChoice, Settings
 from app.fewshot import FEWSHOT_DIR, few_shot_examples
-from app.jobs import DEFAULT_TEMPLATE, TRANSCRIPT_FILE, Job, JobConflict, JobStatus, JobStore, JobWarning, QuotaWait
+from app.jobs import (
+    DEFAULT_TEMPLATE, TRANSCRIPT_FILE, Job, JobConflict, JobNotFound, JobStatus, JobStore, JobWarning, QuotaWait,
+)
 from app.llm import DetailResponse, Llm, LlmRequest, Overloaded, PacedLlm, QuotaExceeded, ScoreResponse
 from app.media import MEDIA_DIR, MediaStore
 from app.ports import Ports
@@ -36,6 +44,10 @@ WINDOW_AUDIO_DIR = "window_audio"
 DOWNLOAD_HINT = "If YouTube changed something, updating the downloader may fix it: run `make update-ytdlp`, then retry."
 
 
+class JobStopped(RuntimeError):
+    """The owner asked a running Job to stop (see Pipeline.stop)."""
+
+
 class Pipeline:
     def __init__(
         self, store: JobStore, ports: Ports, settings: Settings, templates: TemplateStore | None = None,
@@ -52,40 +64,94 @@ class Pipeline:
         self.llm = PacedLlm(ports.llm, settings.quota.request_interval_secs)
         # The Video Source of uploaded Jobs. It only reads the stored file, so tests use it as it is.
         self.uploads = UploadVideoSource(settings)
+        # The Jobs the owner has asked to stop, until they are run again (see `stop`).
+        self._stops: set[str] = set()
+        self._stops_changed = threading.Condition()
         self.stages: list[tuple[JobStatus, Callable[[Job], Job]]] = [
             (JobStatus.DOWNLOADING, self._download),
             (JobStatus.TRANSCRIBING, self._transcribe),
             (JobStatus.ANALYZING, self._analyze),
+        ]
+        # A Project's: it is opened, not transcribed nor analyzed. Its Transcript, empty, is written
+        # last, so that the step counts as done (see `_done`) once its Candidate is saved.
+        self.project_stages: list[tuple[JobStatus, Callable[[Job], Job]]] = [
+            (JobStatus.DOWNLOADING, self._download),
+            (JobStatus.TRANSCRIBING, self._open_project),
         ]
 
     def run(self, job_id: str) -> Job:
         """Run the Job's stages from the first whose output isn't complete: from the stage it failed
         in, was interrupted in or waited for Gemini in, or from analyzing for a Job in review.
 
-        Ends in `review`, `error` or `waiting_quota`. Raises JobConflict when another process is
-        running the Job, or while it is rendering.
+        Ends in `review`, `error`, `waiting_quota` or `stopped`. Raises JobConflict when another
+        process is running the Job, or while it is rendering.
         """
         with self.store.running(job_id):
-            return self._run(job_id)
+            try:
+                return self._run(job_id)
+            finally:
+                self.clear_stop(job_id)
+
+    def stop(self, job_id: str) -> None:
+        """Ask this process's run of the Job, now or when it starts, to end in `stopped`. A
+        transcription in progress is stopped at once (Whisper is killed, freeing its memory)."""
+        with self._stops_changed:
+            self._stops.add(job_id)
+            self._stops_changed.notify_all()
+        try:
+            transcribing = self.store.get(job_id).status is JobStatus.TRANSCRIBING
+        except JobNotFound:
+            return
+        if transcribing:
+            self.ports.transcriber.stop()
+
+    def clear_stop(self, job_id: str) -> None:
+        """Forget a stop asked for the Job, so that it can run again."""
+        with self._stops_changed:
+            self._stops.discard(job_id)
+
+    def _stopping(self, job_id: str) -> bool:
+        with self._stops_changed:
+            return job_id in self._stops
+
+    def _check_stop(self, job_id: str) -> None:
+        if self._stopping(job_id):
+            raise JobStopped(f"Job {job_id} was stopped")
+
+    def _sleep(self, job_id: str) -> Callable[[float], None]:
+        """A sleep that ends early, raising JobStopped, once the Job is asked to stop."""
+
+        def sleep(secs: float) -> None:
+            with self._stops_changed:
+                self._stops_changed.wait_for(lambda: job_id in self._stops, secs)
+            self._check_stop(job_id)
+
+        return sleep
 
     def run_until_done(self, job_id: str, waiting: Callable[[Job], None] = lambda job: None) -> Job:
         """`run`, sleeping through the waits for Gemini: for the CLI and the eval, which have no worker
         to come back to the Job. `waiting` is called with the Job as each wait starts. Ends in
         `review` or `error`."""
         with self.store.running(job_id):
-            while (job := self._run(job_id)).status is JobStatus.WAITING_QUOTA:
-                assert job.quota is not None
-                waiting(job)
-                time.sleep(max(0.0, (job.quota.retry_at - datetime.now(UTC)).total_seconds()))
-            return job
+            try:
+                while (job := self._run(job_id)).status is JobStatus.WAITING_QUOTA:
+                    assert job.quota is not None
+                    waiting(job)
+                    time.sleep(max(0.0, (job.quota.retry_at - datetime.now(UTC)).total_seconds()))
+                return job
+            finally:
+                self.clear_stop(job_id)
 
     def _run(self, job_id: str) -> Job:
         job = self.store.get(job_id)
         if job.status is JobStatus.RENDERING:
             # Analyzing again now would replace Candidates that are queued to be rendered.
             raise JobConflict(f"Job {job_id} is rendering: wait until its Clips are done")
-        start = next(i for i, (stage, _) in enumerate(self.stages) if not self._done(job, stage))
-        for stage, run_stage in self.stages[start:]:
+        stages = self.project_stages if job.project is not None else self.stages
+        start = next((i for i, (stage, _) in enumerate(stages) if not self._done(job, stage)), len(stages))
+        for stage, run_stage in stages[start:]:
+            if self._stopping(job_id):
+                return self._stopped(job_id)
             logger.info("Job %s: %s", job_id, stage)
             job = self.store.update(
                 job_id,
@@ -98,9 +164,12 @@ class Pipeline:
             )
             try:
                 job = run_stage(job)
-            except (QuotaExceeded, Overloaded) as exc:
-                return self._wait_for_gemini(job_id, exc)
             except Exception as exc:
+                # Whatever a stopped stage raises (JobStopped, or a killed Whisper's error) only stops it.
+                if self._stopping(job_id):
+                    return self._stopped(job_id)
+                if isinstance(exc, (QuotaExceeded, Overloaded)):
+                    return self._wait_for_gemini(job_id, exc)
                 logger.exception("Job %s failed while %s", job_id, stage)
                 error = str(exc) or type(exc).__name__
                 if stage is JobStatus.DOWNLOADING and job.upload is None:
@@ -130,6 +199,11 @@ class Pipeline:
         if stage is JobStatus.TRANSCRIBING:
             return (job_dir / TRANSCRIPT_FILE).is_file()
         return False
+
+    def _stopped(self, job_id: str) -> Job:
+        """Put the Job in `stopped`, keeping the stage it stopped in (if it had started one)."""
+        logger.info("Job %s: stopped by the owner", job_id)
+        return self.store.update(job_id, status=JobStatus.STOPPED, progress=None, message=None, quota=None)
 
     def _wait_for_gemini(self, job_id: str, exc: QuotaExceeded | Overloaded) -> Job:
         """Put the Job in `waiting_quota`, as Gemini's quota is used up or Gemini stays busy: for the
@@ -192,10 +266,12 @@ class Pipeline:
 
     def _reporter(self, job_id: str, reported: int | None = None) -> Callable[[float], None]:
         """A progress callback that records the fraction done on the Job, in whole percents, only
-        when the percent changes. `reported` is the percent the Job already shows, if any."""
+        when the percent changes. `reported` is the percent the Job already shows, if any. Raises
+        JobStopped once the Job is asked to stop."""
 
         def progress(done: float) -> None:
             nonlocal reported
+            self._check_stop(job_id)
             if (percent := round(100 * done)) != reported:
                 reported = percent
                 self.store.update(job_id, progress=float(percent))
@@ -228,6 +304,7 @@ class Pipeline:
             reason = f"no '{language}' YouTube captions"
 
         def downloading(arrived: int, total: int | None) -> None:
+            self._check_stop(job.id)
             so_far = f"{arrived / 1e6:.0f} of {total / 1e6:.0f} MB" if total else f"{arrived / 1e6:.0f} MB"
             self.store.update(
                 job.id, progress=round(100 * arrived / total, 1) if total else 0.0,
@@ -250,6 +327,7 @@ class Pipeline:
         began = time.monotonic()
         try:
             for start, end in ranges:
+                self._check_stop(job.id)
                 try:
                     parts.append(watchdog.transcribe(media, language, start, end))
                 except TranscriptionStalled as stalled:
@@ -282,6 +360,7 @@ class Pipeline:
         assert transcript is not None
 
         def progress(message: str, percent: float | None = None) -> None:
+            self._check_stop(job.id)
             if percent is None:
                 self.store.update(job.id, message=message)
             else:
@@ -301,7 +380,7 @@ class Pipeline:
             )
         audio = self._window_audio(job) if self.settings.selection_audio_signal else None
         selection = select(
-            _KeptScores(self.llm, self.store, job.id, self.settings.llm),
+            _KeptScores(self.llm, self.store, job.id, self.settings.llm, lambda: self._check_stop(job.id)),
             self.settings.selection,
             transcript,
             duration=job.source.metadata.duration,
@@ -312,6 +391,7 @@ class Pipeline:
             examples=examples,
             progress=progress,
             window_audio=audio,
+            sleep=self._sleep(job.id),
         )
         # Its Candidates take the Job's Canvas Aspect (docs/adr/0022).
         candidates = [replace(candidate, aspect=job.options.aspect) for candidate in selection.candidates]
@@ -357,6 +437,43 @@ class Pipeline:
         )
         return self.store.update(job.id, prompt_version=selection.prompt_version)
 
+    def _open_project(self, job: Job) -> Job:
+        """A Project's one Candidate: its whole Source, then each of its Media Library videos whole,
+        fitted to the Canvas and uncaptioned, with the Job's Template; then its empty Transcript.
+        Nothing is transcribed nor sent to the LLM."""
+        assert job.source is not None and job.project is not None
+        metadata, lengths = job.source.metadata, self.lengths()
+        centre = canvas_for(job.options.aspect).centre
+        videos = [
+            Segment(f"m{i}", 0, lengths[media], media=media, framing=Framing(Transform(x=centre[0], y=centre[1])), captions=False)
+            for i, media in enumerate(job.project.media, start=1)
+            if media in lengths
+        ]
+        if missing := [media for media in job.project.media if media not in lengths]:
+            raise RuntimeError(f"Not in the Media Library any more: {', '.join(missing)}")
+        transcript = Transcript(job.options.language, "whisper", [], [])
+        candidate = manual_candidate(uuid4().hex[:8], 0, metadata.duration, job.options.aspect)
+        if videos:
+            candidate = replace(candidate, segments=[Segment("s0", 0, metadata.duration), *videos])
+        fresh = [candidate]
+        if job.options.template == DEFAULT_TEMPLATE:
+            job = self.store.update(job.id, options=self.templates.for_new_job(job.options))
+        template, notices = self.templates.for_new_candidates(job.options.template)
+        if template is not None:
+            episode = Episode(
+                transcript, metadata.duration, math.inf, self.settings.selection, job.options.aspect,
+                (metadata.width, metadata.height), snap=False,
+            )
+            fresh = branded(template, fresh, episode, lengths)
+        if notices:
+            told = [JobWarning(JobStatus.TRANSCRIBING, notice) for notice in notices]
+            job = self.store.update(job.id, warnings=[*job.warnings, *told])
+        # One left by an earlier run (stopped or failed before the Transcript was written) is kept.
+        self.store.change_candidates(job.id, lambda _, previous: (previous or fresh, None))
+        self.store.save_transcript(job.id, transcript)
+        logger.info("Job %s: opened as a Project of %d videos", job.id, 1 + len(videos))
+        return job
+
     def _window_audio(self, job: Job) -> Callable[[float, float], tuple[bytes, str]]:
         """The audio of the Job's Source over a time range, made with the configured ffmpeg and kept
         in the Job's WINDOW_AUDIO_DIR."""
@@ -377,14 +494,18 @@ class _KeptScores:
     An answer is kept under a hash of all that shaped it: the prompt version, the LLM (provider,
     model and thinking), the temperature and the prompt itself, which holds the Windows' text and
     times (so the Transcript and the Window tuning), the language, the duration range, the profile
-    summary and the Brief. A change to any of them asks again.
+    summary and the Brief. A change to any of them asks again. `check` is called before each request
+    is sent, and raises to stop the Job.
     """
 
-    def __init__(self, llm: Llm, store: JobStore, job_id: str, choice: LlmChoice) -> None:
+    def __init__(
+        self, llm: Llm, store: JobStore, job_id: str, choice: LlmChoice, check: Callable[[], None] = lambda: None
+    ) -> None:
         self.llm = llm
         self.store = store
         self.job_id = job_id
         self.choice = choice
+        self.check = check
         self.answers = store.load_scores(job_id)
 
     def score(self, request: LlmRequest) -> ScoreResponse:
@@ -392,11 +513,13 @@ class _KeptScores:
             json.dumps([PROMPT_VERSION, asdict(self.choice), request.temperature, request.prompt]).encode()
         ).hexdigest()
         if (answer := self.answers.get(key)) is None:
+            self.check()
             answer = self.answers[key] = self.llm.score(request)
             self.store.save_scores(self.job_id, self.answers)
         return answer
 
     def detail(self, request: LlmRequest) -> DetailResponse:
+        self.check()
         return self.llm.detail(request)
 
 

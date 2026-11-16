@@ -3,6 +3,8 @@
 A Job that runs out of Gemini quota, or finds Gemini busy, leaves the queue while it waits, so that
 other Jobs' stages can run meanwhile, and is queued again when its wait is over.
 
+The owner can stop a Job on its way to review, and continue it later from where it stopped.
+
 Renders share the queue: a Job asked to render Clips is submitted like a new Job, and when its turn
 comes the worker renders its queued Clips one after another. So only one heavy tool (yt-dlp's
 merge, Whisper, Selection's requests or an ffmpeg encode) runs at a time, which an 8 GB Mac needs.
@@ -11,11 +13,11 @@ merge, Whisper, Selection's requests or an ffmpeg encode) runs at a time, which 
 import logging
 import threading
 from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, nullcontext, suppress
 from datetime import UTC, datetime
 from queue import Queue
 
-from app.jobs import RUNNING, Job, JobConflict, JobNotFound, JobStatus, JobStore
+from app.jobs import RUNNING, STOPPABLE, Job, JobConflict, JobNotFound, JobStatus, JobStore
 from app.pipeline import Pipeline
 from app.renderer import RenderStopped
 from app.rendering import Renders
@@ -44,6 +46,8 @@ class Worker:
         self._queue: Queue[str | None] = Queue()
         self._stopping = threading.Event()
         self._working = threading.Event()
+        # The Job whose turn is running now, if any.
+        self._current: str | None = None
         self._thread = threading.Thread(target=self._loop, name="job-worker", daemon=True)
         self._timers: dict[str, threading.Timer] = {}
         self._timers_lock = threading.Lock()
@@ -76,9 +80,53 @@ class Worker:
     def retry(self, job_id: str) -> Job:
         """Queue a Job in `error` again; it resumes from the stage it failed in. Raises JobConflict
         for a Job in any other status."""
+        self._pipeline.clear_stop(job_id)
         job = self._store.update(
             job_id,
             expect={JobStatus.ERROR},
+            status=JobStatus.QUEUED,
+            stage=None,
+            error=None,
+            progress=None,
+            message=None,
+        )
+        self.submit(job_id)
+        return job
+
+    def stop_job(self, job_id: str) -> Job:
+        """Stop a Job on its way to review. One queued or waiting for quota is `stopped` at once; a
+        running one at its stage's next progress report, LLM request or retry pause (a transcription
+        at once), with "Stopping…" as its message meanwhile. Raises JobConflict for a Job in any
+        other status, or one that another process is running."""
+        job = self._store.get(job_id)
+        if job.status not in STOPPABLE:
+            raise JobConflict(f"Job {job_id} is {job.status}")
+        if job.status in RUNNING and self._current != job_id:
+            raise JobConflict(f"Job {job_id} is being run by another process")
+        self._pipeline.stop(job_id)
+        with self._timers_lock:
+            if timer := self._timers.pop(job_id, None):
+                timer.cancel()
+        with suppress(JobConflict):
+            return self._store.update(
+                job_id,
+                expect={JobStatus.QUEUED, JobStatus.WAITING_QUOTA},
+                status=JobStatus.STOPPED,
+                progress=None,
+                message=None,
+                quota=None,
+            )
+        with suppress(JobConflict):
+            return self._store.update(job_id, expect=RUNNING, message="Stopping…")
+        return self._store.get(job_id)
+
+    def resume(self, job_id: str) -> Job:
+        """Queue a `stopped` Job again; it resumes from the stage it stopped in, keeping what that
+        stage had kept (the Score answers already in). Raises JobConflict for a Job in any other status."""
+        self._pipeline.clear_stop(job_id)
+        job = self._store.update(
+            job_id,
+            expect={JobStatus.STOPPED},
             status=JobStatus.QUEUED,
             stage=None,
             error=None,
@@ -140,6 +188,7 @@ class Worker:
     def _loop(self) -> None:
         while (job_id := self._queue.get()) is not None and not self._stopping.is_set():
             self._working.set()
+            self._current = job_id
             try:
                 context = self._workspace_context() if self._workspace_context else nullcontext()
                 with context, _PROCESS_WORK_LOCK:
@@ -162,6 +211,7 @@ class Worker:
                 if job.status is JobStatus.WAITING_QUOTA:
                     self._wake_later(job)
             finally:
+                self._current = None
                 self._working.clear()
 
     def _wake_later(self, job: Job) -> None:

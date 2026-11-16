@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from pydantic import Field, TypeAdapter, ValidationError
 
-from app.candidates import Candidate, TemplateId
+from app.candidates import Candidate, MediaId, TemplateId
 from app.canvas import Aspect
 from app.clips import Clip
 from app.llm import ScoreResponse
@@ -65,11 +65,15 @@ class JobStatus(StrEnum):
     # In review, with Clips queued or being rendered; back to review once they are done.
     RENDERING = "rendering"
     WAITING_QUOTA = "waiting_quota"
+    # Stopped by the owner before review; Continue queues it again, and it resumes where it stopped.
+    STOPPED = "stopped"
     ERROR = "error"
 
 
 # The statuses in which a process is running one of the Job's stages.
 RUNNING = frozenset({JobStatus.DOWNLOADING, JobStatus.TRANSCRIBING, JobStatus.ANALYZING})
+# The statuses in which the owner can stop a Job: on its way to review.
+STOPPABLE = frozenset({JobStatus.QUEUED, JobStatus.WAITING_QUOTA, *RUNNING})
 
 
 # A new Job's Template when none is chosen: the default Template, whichever it is then.
@@ -141,6 +145,15 @@ class Upload:
 
 
 @dataclass(frozen=True)
+class Project:
+    """What makes a Job a Project (GLOSSARY.md): opened straight in the Advanced Edit, its uploaded
+    master file the first video on the Main Track and these Media Library videos after it, in order.
+    It is neither transcribed nor analyzed."""
+
+    media: list[MediaId] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class Job:
     id: str
     # The episode's YouTube URL; empty for an uploaded master file.
@@ -152,7 +165,8 @@ class Job:
     # eval run replaces it with the current profile before analyzing the Job again.
     profile: ChannelProfile = ChannelProfile()
     status: JobStatus = JobStatus.QUEUED
-    # The stage running now, or the one the Job stopped in (with `error` set, or waiting for quota);
+    # The stage running now, or the one the Job stopped in (with `error` set, waiting for quota, or
+    # stopped by the owner);
     # None when queued or done.
     stage: JobStatus | None = None
     error: str | None = None
@@ -165,6 +179,8 @@ class Job:
     quota: QuotaWait | None = None
     # Set when the Source is a master file the owner uploaded.
     upload: Upload | None = None
+    # Set for a Project: an uploaded Job opened straight in the Advanced Edit.
+    project: Project | None = None
     source: Source | None = None
     # The version of the Selection prompts that produced the Job's Candidates.
     prompt_version: str | None = None
@@ -211,11 +227,16 @@ class JobStore:
         self._edits: dict[tuple[str, str], tuple[int, Edit, datetime]] = {}
 
     def create(
-        self, url: str, options: JobOptions, profile: ChannelProfile, upload: tuple[Path, str] | None = None
+        self,
+        url: str,
+        options: JobOptions,
+        profile: ChannelProfile,
+        upload: tuple[Path, str] | None = None,
+        project: Project | None = None,
     ) -> Job:
         """A new queued Job. For an uploaded master file, `upload` is the complete file and its name
         on the owner's machine: the file is moved into the Job's directory (on the same volume) before
-        the Job is saved, so that no Job is ever without its whole upload."""
+        the Job is saved, so that no Job is ever without its whole upload. `project` makes it a Project."""
         now = datetime.now(UTC)
         job = Job(
             id=uuid4().hex[:12],
@@ -224,6 +245,7 @@ class JobStore:
             created_at=now,
             updated_at=now,
             profile=profile,
+            project=project,
             history=[StatusChange(JobStatus.QUEUED, now)],
         )
         self.job_dir(job.id).mkdir(parents=True)

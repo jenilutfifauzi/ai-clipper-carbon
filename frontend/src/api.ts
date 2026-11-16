@@ -9,6 +9,8 @@ export type JobStatus =
   // In review, with Clips queued or being rendered.
   | "rendering"
   | "waiting_quota"
+  // Stopped by the owner on its way to review; Continue resumes it where it stopped.
+  | "stopped"
   | "error";
 
 export interface JobOptions {
@@ -157,7 +159,7 @@ export interface Job {
   created_at: string;
   updated_at: string;
   status: JobStatus;
-  // The stage running now, or the one the Job stopped in (error, waiting_quota).
+  // The stage running now, or the one the Job stopped in (error, waiting_quota, stopped).
   stage: JobStatus | null;
   error: string | null;
   progress: number | null;
@@ -165,11 +167,18 @@ export interface Job {
   warnings: JobWarning[];
   quota: QuotaWait | null;
   upload: Upload | null;
+  // Set for a Project (GLOSSARY.md): opened straight in the Advanced Edit, its uploaded file first on
+  // the Main Track and these Media Library videos after it. Never transcribed nor analyzed.
+  project: Project | null;
   source: Source | null;
   prompt_version: string | null;
   history: { status: JobStatus; at: string }[];
   // Candidates queued to be prepared for the clip editor.
   preparing: string[];
+}
+
+export interface Project {
+  media: string[];
 }
 
 export interface Word {
@@ -1952,15 +1961,20 @@ export const api = {
     return request<AppSettings>("/settings/youtube-cookies", { method: "POST", body });
   },
   deleteYoutubeCookies: () => request<void>("/settings/youtube-cookies", { method: "DELETE" }),
-  // Newest first: a page of `limit`, the one before the Job created at `before` (the last listed).
-  listJobs: (page: { limit: number; before?: string }) => {
+  // Newest first: a page of `limit`, the one before the Job created at `before` (the last listed);
+  // with `project`, only the Projects (true) or only the clipper's Jobs (false).
+  listJobs: (page: { limit: number; before?: string; project?: boolean }) => {
     const query = new URLSearchParams({ limit: String(page.limit) });
     if (page.before) query.set("before", page.before);
+    if (page.project !== undefined) query.set("project", String(page.project));
     return request<Job[]>(`/jobs?${query}`);
   },
   getJob: (id: string) => request<JobDetail>(`/jobs/${id}`),
   createJob: (job: NewJob) => request<Job>("/jobs", { method: "POST", body: JSON.stringify(job) }),
   retryJob: (id: string) => request<Job>(`/jobs/${id}/retry`, { method: "POST" }),
+  // Stop a Job on its way to review (a running stage stops soon after), and queue a stopped one again.
+  stopJob: (id: string) => request<Job>(`/jobs/${id}/stop`, { method: "POST" }),
+  continueJob: (id: string) => request<Job>(`/jobs/${id}/continue`, { method: "POST" }),
   deleteJob: (id: string) => request<void>(`/jobs/${id}`, { method: "DELETE" }),
   // Rejects with the backend's message (507) when an upload this size wouldn't fit on the disk.
   checkUpload: (size: number) => request<void>(`/jobs/upload/check?size=${size}`),
@@ -2473,12 +2487,13 @@ export interface UploadProgress {
 /**
  * Create a Job from a master file, streamed to the backend as multipart/form-data. XHR rather than
  * fetch, because only XHR reports upload progress. `abort()` cancels the upload, which then rejects
- * with an AbortError; the backend keeps nothing of it.
+ * with an AbortError; the backend keeps nothing of it. With `project`, the Job is a Project.
  */
 export function uploadJob(
   file: File,
   options: Partial<JobOptions>,
   onProgress: (progress: UploadProgress) => void,
+  project?: Project,
 ): { done: Promise<Job>; abort: () => void } {
   const xhr = new XMLHttpRequest();
   const done = new Promise<Job>((resolve, reject) => {
@@ -2506,6 +2521,7 @@ export function uploadJob(
   const form = new FormData();
   // The options go first: the backend checks them before it stores any of the file.
   form.append("options", JSON.stringify(options));
+  if (project) form.append("project", JSON.stringify(project));
   form.append("file", file);
   xhr.open("POST", "/api/jobs/upload");
   xhr.send(form);

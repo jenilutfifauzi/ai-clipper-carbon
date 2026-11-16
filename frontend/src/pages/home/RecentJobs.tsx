@@ -1,8 +1,8 @@
-import { ChevronRight, Film, Loader2, Trash2 } from "lucide-react";
+import { ChevronRight, Download, Film, Loader2, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { api, type Job } from "../../api";
-import { Button } from "../../components/Button";
+import { Button, buttonClass } from "../../components/Button";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { Panel } from "../../components/Panel";
 import { Skeleton } from "../../components/Skeleton";
@@ -16,8 +16,10 @@ const REFRESH_MS = 4000;
 // How many Jobs are fetched at a time: the next page as the end of the list comes into reach.
 const PAGE = 20;
 
-// The Jobs, newest first, each linking to its page, with a delete that asks first.
-export function RecentJobs() {
+// The Jobs, newest first, each linking to its page, with a delete that asks first. With `project`,
+// the Projects instead, each opening in the Advanced Edit; without, the clipper's Jobs only.
+export function RecentJobs({ project = false }: { project?: boolean }) {
+  const noun = project ? "Project" : "Job";
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
@@ -35,7 +37,7 @@ export function RecentJobs() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
     const limit = Math.max(PAGE, listed.current);
-    api.listJobs({ limit }).then(
+    api.listJobs({ limit, project }).then(
       (list) => {
         if (cancelled) return;
         // A full answer may leave out older Jobs listed meanwhile (by a next page): keep those.
@@ -56,7 +58,7 @@ export function RecentJobs() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [version]);
+  }, [version, project]);
 
   async function loadMore() {
     const last = jobs?.at(-1);
@@ -64,7 +66,7 @@ export function RecentJobs() {
     setLoadingMore(true);
     setMoreError(null);
     try {
-      const page = await api.listJobs({ limit: PAGE, before: last.created_at });
+      const page = await api.listJobs({ limit: PAGE, before: last.created_at, project });
       setJobs((old) => old && [...old, ...page.filter((job) => !old.some((listed) => listed.id === job.id))]);
       setHasMore(page.length === PAGE);
     } catch (reason) {
@@ -93,17 +95,17 @@ export function RecentJobs() {
   return (
     <Panel aria-labelledby="recent-heading">
       <h2 id="recent-heading" className="font-semibold">
-        Recent Jobs
+        Recent {noun}s
       </h2>
-      {loadError && <p className="mt-3 text-sm text-danger">Couldn't load the Jobs: {loadError}</p>}
+      {loadError && <p className="mt-3 text-sm text-danger">Couldn't load the {noun}s: {loadError}</p>}
       {!jobs && !loadError && <JobsSkeleton />}
-      {jobs?.length === 0 && <p className="mt-3 text-muted">No Jobs yet. Start one above.</p>}
+      {jobs?.length === 0 && <p className="mt-3 text-muted">No {noun}s yet. Start one above.</p>}
       {jobs && jobs.length > 0 && (
         <ul className="mt-3 -mx-2 flex flex-col">
           {jobs.map((job) => (
             <li key={job.id} className="flex items-center gap-1 border-t border-border first:border-t-0">
               <Link
-                to={`/jobs/${job.id}`}
+                to={project ? `/projects/${job.id}` : `/jobs/${job.id}`}
                 className="flex min-h-20 min-w-0 flex-1 items-center gap-3 rounded-control px-2 py-2 hover:bg-fill motion-safe:transition-colors"
               >
                 <Thumbnail job={job} />
@@ -120,9 +122,19 @@ export function RecentJobs() {
                 </div>
                 <ChevronRight aria-hidden size={18} className="shrink-0 text-muted" />
               </Link>
+              {project && (
+                <Link
+                  to={`/projects/${job.id}/clips`}
+                  aria-label={`Exports of ${jobTitle(job)}`}
+                  title="Exports"
+                  className={buttonClass("ghost", "icon")}
+                >
+                  <Download aria-hidden size={18} />
+                </Link>
+              )}
               <Button
                 variant="ghost"
-                aria-label={`Delete Job ${jobTitle(job)}`}
+                aria-label={`Delete ${noun} ${jobTitle(job)}`}
                 onClick={() => {
                   setDeleteError(null);
                   setDeleting(job);
@@ -139,7 +151,7 @@ export function RecentJobs() {
         <div ref={endRef} className="mt-1 flex min-h-11 items-center justify-center gap-2 text-sm text-muted">
           {moreError ? (
             <>
-              <span className="text-danger">Couldn't load more Jobs: {moreError}</span>
+              <span className="text-danger">Couldn't load more {noun}s: {moreError}</span>
               <Button variant="ghost" size="sm" onClick={() => setMoreError(null)}>
                 Try again
               </Button>
@@ -147,7 +159,7 @@ export function RecentJobs() {
           ) : (
             <span role="status" className="inline-flex items-center gap-2">
               <Loader2 aria-hidden size={16} className="motion-safe:animate-spin" />
-              Loading more Jobs…
+              Loading more {noun}s…
             </span>
           )}
         </div>
@@ -155,8 +167,8 @@ export function RecentJobs() {
 
       <ConfirmDialog
         open={deleting !== null}
-        title="Delete this Job?"
-        confirmLabel="Delete Job"
+        title={`Delete this ${noun}?`}
+        confirmLabel={`Delete ${noun}`}
         busyLabel="Deleting…"
         busy={busy}
         error={deleteError}
@@ -167,6 +179,7 @@ export function RecentJobs() {
           <p>
             <span className="text-text">{jobTitle(deleting)}</span> and all its files ({deleting.upload ? "the uploaded file" : "the downloaded video"}, the
             Transcript and the Candidates) will be removed. This can't be undone.
+            {project && " Its other videos stay in the Media Library."}
           </p>
         )}
       </ConfirmDialog>

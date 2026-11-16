@@ -5,6 +5,8 @@ Use these terms in code, UI copy, tickets and commit messages.
 ## Jobs and selection
 
 - **Job:** one episode being processed, from its URL, upload or a file on this Mac to its Clips.
+- **Project:** a Job opened straight in the Advanced Edit, like a CapCut project, from the Projects menu: one or more videos, never transcribed nor analyzed. The first is uploaded as its Source; the others go into the Media Library and follow it on the Main Track of its one Candidate, fitted to the Canvas and uncaptioned. Its ranges aren't snapped to Words (it has none) nor held to a longest clip. Projects are listed apart from the clipper's Jobs.
+- **Stop / Continue:** the owner can stop a Job on its way to review (queued, in a stage, or waiting for the LLM); a running stage stops at its next progress report, LLM request or retry pause, and a transcription at once. Continue queues it again from the stage it stopped in: the stages before it are kept, and so are the Windows already scored; a stopped transcription starts over.
 - **Source:** the episode video. Times "on the Source's timeline" are seconds into it.
 - **Transcript / Words:** the episode's normalized text with per-Word timing.
 - **Window:** a Transcript slice scored by the AI.

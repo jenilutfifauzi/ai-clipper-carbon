@@ -1,5 +1,6 @@
 """HTTP API routes. Services come from `app.state`, set up by `create_app`."""
 
+import math
 import shutil
 import tempfile
 import time
@@ -70,7 +71,7 @@ from app.effected import EFFECTED_DIR, NoCopy, copies_used as effected_used, eff
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.kokoro import KokoroBusy, KokoroModel
 from app.person_model import PersonModel, PersonModelBusy
-from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore, JobWarning
+from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore, JobWarning, Project
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app import audio_effects, video_effects
 from app.looks import MAX_UPLOAD_BYTES as MAX_LOOK_BYTES, BadCube, ImportedLooks, Look, LookNotFound, all_looks, builtin_looks, get_look
@@ -154,6 +155,9 @@ ADJUSTMENT_LAYERS_MAX = 50
 PICTURES_ROUTE = "texts"
 
 _OPTIONS = TypeAdapter(JobOptions)
+_PROJECT = TypeAdapter(Project)
+# The upload form's field that makes the Job a Project (`Project` as JSON), before the file.
+PROJECT_FIELD = "project"
 _CANDIDATE = TypeAdapter(Candidate)
 _HISTORY_ENTRY = TypeAdapter(HistoryEntry)
 
@@ -808,30 +812,42 @@ def create_job(body: JobRequest, store: Store, profiles: Profiles, templates: Te
 
 @router.post("/jobs/upload", status_code=201)
 async def upload_job(
-    request: Request, settings: AppSettings, store: Store, profiles: Profiles, templates: Templates, worker: JobWorker
+    request: Request,
+    settings: AppSettings,
+    store: Store,
+    profiles: Profiles,
+    templates: Templates,
+    library: Media,
+    worker: JobWorker,
 ) -> Job:
     """Create a Job from an uploaded master file: a multipart/form-data body with an `options` field
-    (JobOptions as JSON; optional) and then a `file`. The file is streamed to disk as it comes. 507
+    (JobOptions as JSON; optional), a `project` field (Project as JSON, its videos in the Media
+    Library: optional, and 422 for one that isn't a video there) to make it a Project, and then a `file`. The file is streamed to disk as it comes. 507
     before anything is written when the Content-Length leaves less than Settings.upload_reserve_bytes
     free (the browser asks `check_upload` first), or as soon as free space runs short while it
     comes; 400 for an upload cut short, which leaves nothing behind."""
 
-    def accept(fields: dict[str, str]) -> JobOptions:
+    def accept(fields: dict[str, str]) -> tuple[JobOptions, Project | None]:
         try:
             options = _OPTIONS.validate_json(fields.get(OPTIONS_FIELD) or "{}")
+            project = _PROJECT.validate_json(fields[PROJECT_FIELD]) if PROJECT_FIELD in fields else None
         except ValidationError as exc:
             raise RequestValidationError(exc.errors(include_url=False)) from None
-        return with_template(options, templates)
+        for media in project.media if project else []:
+            item = library.find(media)
+            if item is None or item.kind is not MediaKind.VIDEO:
+                raise HTTPException(422, f"No video {media} in the Media Library")
+        return with_template(options, templates), project
 
     try:
-        received, options = await receive(
+        received, (options, project) = await receive(
             request, settings.data_dir / UPLOADS_DIR, settings.upload_reserve_bytes, accept
         )
     except NotEnoughSpace as exc:
         raise HTTPException(507, str(exc)) from None
     except BadUpload as exc:
         raise HTTPException(400, str(exc)) from None
-    job = store.create("", options, profiles.load(), upload=(received.path, received.name))
+    job = store.create("", options, profiles.load(), upload=(received.path, received.name), project=project)
     worker.submit(job.id)
     return job
 
@@ -861,11 +877,15 @@ def list_jobs(
     store: Store,
     limit: Annotated[int | None, Query(ge=1, le=100)] = None,
     before: AwareDatetime | None = None,
+    project: bool | None = None,
 ) -> list[Job]:
-    """The Jobs, newest first: every one, or a page of `limit`. The next page is the one `before`
-    the last Job's `created_at`, a cursor that neither skips nor repeats a Job when others are
-    started or deleted meanwhile."""
+    """The Jobs, newest first: every one, or a page of `limit`; with `project`, only the Projects
+    (true) or only the others (false). The next page is the one `before` the last Job's
+    `created_at`, a cursor that neither skips nor repeats a Job when others are started or deleted
+    meanwhile."""
     jobs = store.all()
+    if project is not None:
+        jobs = [job for job in jobs if (job.project is not None) is project]
     if before is not None:
         jobs = [job for job in jobs if job.created_at < before]
     return jobs[:limit]
@@ -997,7 +1017,7 @@ def job_retimed(job: ExistingJob, body: RetimedRequest, store: Store, settings: 
 async def stream_job_events(job: ExistingJob, store: Store) -> AsyncIterator[ServerSentEvent]:
     """The Job's progress (status, stage, percent, message, error, warnings, retry_at) as `job`
     events: one now, then one per change. The stream ends with an `end` event once the Job is in
-    review or error, or is deleted; after a retry, open it again."""
+    review, error or stopped, or is deleted; after a retry or a continue, open it again."""
     async for event in job_events(store, job.id):
         yield event
 
@@ -1022,6 +1042,30 @@ def retry_job(job_id: str, worker: JobWorker) -> Job:
         raise HTTPException(404, f"No Job {job_id}") from None
     except JobConflict as exc:
         raise HTTPException(409, f"{exc}: only a Job in error can be retried") from None
+
+
+@router.post("/jobs/{job_id}/stop")
+def stop_job(job_id: str, worker: JobWorker) -> Job:
+    """Stop a Job on its way to review (queued, in a stage, or waiting for quota). One queued or
+    waiting is `stopped` at once; a running one when its stage next checks, with "Stopping…" as its
+    message meanwhile: follow its events."""
+    try:
+        return worker.stop_job(job_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    except JobConflict as exc:
+        raise HTTPException(409, f"{exc}: only a Job on its way to review can be stopped") from None
+
+
+@router.post("/jobs/{job_id}/continue")
+def continue_job(job_id: str, worker: JobWorker) -> Job:
+    """Queue a `stopped` Job again. It resumes from the stage it stopped in."""
+    try:
+        return worker.resume(job_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    except JobConflict as exc:
+        raise HTTPException(409, f"{exc}: only a stopped Job can be continued") from None
 
 
 @router.delete("/jobs/{job_id}", status_code=204)
@@ -1520,8 +1564,16 @@ def _episode(job: Job, transcript: Transcript, settings: Settings) -> Episode:
     """What a Job's edits are checked against (`review.Episode`), but the Media Library's sizes."""
     assert job.source is not None  # a Job with a Transcript has its Source
     metadata = job.source.metadata
+    # A Project's ranges aren't snapped to Words (it has none) nor held to a longest clip.
+    project = job.project is not None
     return Episode(
-        transcript, metadata.duration, job.options.max_secs, settings.selection, job.options.aspect, (metadata.width, metadata.height)
+        transcript,
+        metadata.duration,
+        math.inf if project else job.options.max_secs,
+        settings.selection,
+        job.options.aspect,
+        (metadata.width, metadata.height),
+        snap=not project,
     )
 
 

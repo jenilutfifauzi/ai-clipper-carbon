@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { jobEventsUrl, type JobProgress, type JobStatus } from "../api";
 
-// How a Job's event stream ended: settled in review or error, or the Job was deleted.
-export type StreamEnd = Extract<JobStatus, "review" | "error"> | "deleted";
+// How a Job's event stream ended: settled in review, error or stopped, or the Job was deleted.
+export type StreamEnd = Extract<JobStatus, "review" | "error" | "stopped"> | "deleted";
 
 /**
  * The Job's live progress from its server-sent events. The stream ends once the Job settles in
- * review or error; `reconnect()` opens it again, e.g. after a retry. When the connection drops,
+ * review, error or stopped; `reconnect()` opens it again, e.g. after a retry or a continue. When the connection drops,
  * EventSource reconnects by itself; `lost` is true until it has.
  */
 export function useJobEvents(jobId: string) {

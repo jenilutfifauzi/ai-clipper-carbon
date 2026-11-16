@@ -78,7 +78,8 @@ KITA_SOAL = (1.6, 2.6)
 # "template" and a Template's {name, job_id, candidate_id, anchors} in the presets tools,
 # apply_template, and JobOptions' `template` in both create_job tools; the rest is in the instructions.
 # 97_949 with Canvas Aspects, Background removal and Templates all in (merged).
-TOOLS_BUDGET_BYTES = 98_500
+# Raised for stopping and continuing a Job: the stop_job and continue_job tools (99_018 with them).
+TOOLS_BUDGET_BYTES = 99_500
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},

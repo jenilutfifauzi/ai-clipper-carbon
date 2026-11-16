@@ -144,7 +144,8 @@ clips; a Clip is a rendered Candidate (an MP4 on this Mac).
 Workflow:
 1. create_job_from_url (YouTube) or create_job_from_file (a path on this Mac).
 2. wait_for_job until review (downloading and transcribing take minutes: call it again while
-   `reached` is false). A Job in error says why; retry_job resumes it.
+   `reached` is false). A Job in error says why; retry_job resumes it. stop_job stops a Job on its
+   way to review, and continue_job resumes it.
 3. get_job lists the Candidates, best first, with why they were picked. get_transcript reads the
    Source by time range; add_candidate makes a Candidate of any range.
 4. edit_candidate selects Candidates and changes their range, hook text, Kicker, Layout, Style
@@ -687,9 +688,9 @@ def build_mcp(app: FastAPI, scoped: bool = False, authenticated: bool = True) ->
         until: list[JobStatus] | None = None,
         timeout_secs: int = Field(WAIT_SECS, ge=5, le=WAIT_MAX_SECS),
     ) -> dict:
-        """Wait until the Job's status is one of `until` (review or error by default), reporting its
-        progress meanwhile. Returns `reached` and the Job: on timeout, or when the Job settles in
-        review or error without reaching `until`, `reached` is false; call it again to go on waiting."""
+        """Wait until the Job's status is one of `until` (review, error or stopped by default),
+        reporting its progress meanwhile. Returns `reached` and the Job: on timeout, or when the Job
+        settles in review, error or stopped without reaching `until`, `reached` is false; call it again to go on waiting."""
         wanted = set(until or SETTLED)
         reached = False
         workspace = workspace_for_app_context(app)
@@ -718,6 +719,16 @@ def build_mcp(app: FastAPI, scoped: bool = False, authenticated: bool = True) ->
     async def retry_job(job_id: str) -> dict:
         """Queue a Job in error again; it resumes from the stage it failed in."""
         return _job_view(await api("POST", f"/jobs/{job_id}/retry"))
+
+    @tool()
+    async def stop_job(job_id: str) -> dict:
+        """Stop a Job on its way to review; a running stage stops soon after (wait_for_job)."""
+        return _job_view(await api("POST", f"/jobs/{job_id}/stop"))
+
+    @tool()
+    async def continue_job(job_id: str) -> dict:
+        """Queue a stopped Job again, from the stage it stopped in."""
+        return _job_view(await api("POST", f"/jobs/{job_id}/continue"))
 
     @tool(destructive=True)
     async def delete_job(job_id: str) -> dict:

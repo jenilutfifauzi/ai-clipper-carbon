@@ -1,4 +1,4 @@
-import { Scissors, Settings2 } from "lucide-react";
+import { Clapperboard, Scissors, Settings2 } from "lucide-react";
 import { UserButton } from "@clerk/react";
 import { Suspense } from "react";
 import { Link, Outlet, useMatch } from "react-router";
@@ -27,6 +27,14 @@ export function App() {
           AI Clipper
         </Link>
         <div className="flex items-center gap-1.5">
+          <Link
+            to="/projects"
+            aria-current={useMatch("/projects/*") ? "page" : undefined}
+            className="inline-flex min-h-10 items-center gap-2 rounded-control px-3 text-sm font-medium text-muted hover:bg-fill hover:text-text"
+          >
+            <Clapperboard aria-hidden size={17} />
+            Projects
+          </Link>
           <Link
             to="/settings"
             aria-current={useMatch("/settings") ? "page" : undefined}

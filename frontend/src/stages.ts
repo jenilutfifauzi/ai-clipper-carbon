@@ -10,15 +10,25 @@ export const STAGES = [
   { status: "rendering", label: "Render", noun: "rendering" },
 ] as const satisfies readonly { status: JobStatus; label: string; noun: string }[];
 
-export type StageState = "pending" | "active" | "waiting" | "failed" | "done";
+export type StageState = "pending" | "active" | "waiting" | "stopped" | "failed" | "done";
 
 // The statuses in which the Job is still on its way to review or error, so its list entry changes by itself.
+// (A stopped Job waits for the owner.)
 export const ACTIVE: ReadonlySet<JobStatus> = new Set([
   "queued",
   "downloading",
   "transcribing",
   "analyzing",
   "rendering",
+  "waiting_quota",
+]);
+
+// The statuses in which the owner can stop the Job: on its way to review.
+export const STOPPABLE: ReadonlySet<JobStatus> = new Set([
+  "queued",
+  "downloading",
+  "transcribing",
+  "analyzing",
   "waiting_quota",
 ]);
 
@@ -46,11 +56,13 @@ export function stageStates(progress: JobProgress, reached: number): StageState[
   const { status, stage } = progress;
   if (status === "review") return STAGES.map((_, i) => (i <= Math.max(reached, stageIndex("review")) ? "done" : "pending"));
   const current =
-    status === "error" || status === "waiting_quota" ? stageIndex(stage) : stageIndex(status);
+    status === "error" || status === "waiting_quota" || status === "stopped" ? stageIndex(stage) : stageIndex(status);
   return STAGES.map((_, i) => {
     if (current === -1) return i < reached ? "done" : "pending";
     if (i < current) return "done";
     if (i > current) return "pending";
-    return status === "error" ? "failed" : status === "waiting_quota" ? "waiting" : "active";
+    if (status === "error") return "failed";
+    if (status === "stopped") return "stopped";
+    return status === "waiting_quota" ? "waiting" : "active";
   });
 }

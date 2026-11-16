@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, Clock, RotateCcw } from "lucide-react";
+import { AlertCircle, AlertTriangle, CirclePause, Clock, Play, RotateCcw } from "lucide-react";
 import type { JobProgress, JobWarning } from "../../api";
 import { Button } from "../../components/Button";
 import { Panel } from "../../components/Panel";
@@ -32,6 +32,43 @@ export function ErrorNote({
         {retrying ? "Retrying…" : `Retry from ${stageNoun(progress.stage, uploaded)}`}
       </Button>
     </section>
+  );
+}
+
+// The owner stopped the Job: where, and a Continue from that stage.
+export function StoppedNote({
+  progress,
+  uploaded,
+  continuing,
+  continueError,
+  onContinue,
+}: {
+  progress: JobProgress;
+  uploaded: boolean;
+  continuing: boolean;
+  continueError: string | null;
+  onContinue: () => void;
+}) {
+  const where = progress.stage ? `during ${stageNoun(progress.stage, uploaded)}` : "in the queue";
+  return (
+    <Panel aria-labelledby="stopped-heading" className="flex flex-col gap-3">
+      <h2 id="stopped-heading" className="flex items-center gap-2 font-semibold">
+        <CirclePause aria-hidden size={18} className="text-muted" />
+        Stopped {where}
+      </h2>
+      <p className="text-sm text-muted">
+        {progress.stage === "analyzing"
+          ? "Continue picks up the analysis where it stopped, keeping the Windows already scored."
+          : progress.stage
+            ? `Continue starts the ${stageNoun(progress.stage, uploaded)} again; the stages before it are kept.`
+            : "Continue puts it back in the queue."}
+      </p>
+      {continueError && <p className="text-sm text-danger">{continueError}</p>}
+      <Button variant="primary" onClick={onContinue} disabled={continuing} className="self-start">
+        <Play aria-hidden size={18} />
+        {continuing ? "Continuing…" : "Continue"}
+      </Button>
+    </Panel>
   );
 }
 
