@@ -28,7 +28,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ListToolsResult, PaginatedRequestParams, ToolAnnotations
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError, WithJsonSchema, create_model
 
-from app.agent.scope import ALLOWED_TOOLS, COMPACT_TOOLS_HEADER, AgentScope, ScopeRegistry
+from app.agent.scope import ADDABLE_KINDS, ALLOWED_TOOLS, COMPACT_TOOLS_HEADER, AgentScope, ScopeRegistry
 from app.agent.ui_spec import UiSpec
 from app.auth import internal_user_context, require_auth
 from app.workspace import workspace_for_app_context
@@ -541,6 +541,8 @@ AGENT_INSTRUCTIONS = f"""\
 You work on one Candidate of one Job: their ids are given in your first message. Every tool here
 takes that Job and that Candidate only, and refuses any other; you can't create or delete Jobs,
 render, or touch other Candidates. Of the workflow below, only the tools this server lists are yours.
+add_asset kind "media" adds a file on this Mac (a picture you made, a sound effect, a song, a
+video) to the Media Library; its id then goes in an Overlay, a Music Clip or a Segment.
 The owner reads your answers in a chat, which draws Markdown; show_ui shows a component there
 instead: choices to pick from, the Candidate after a change, a table, a callout.
 
@@ -1306,7 +1308,7 @@ class _ScopedServer(MCPServer):
         scope = self._scopes.resolve(_bearer(context))
         if scope is None or not scope.user_id:
             raise ToolError("Refused: this server takes only the bearer token of an open Agent Session")
-        if (refusal := _out_of_scope(scope, arguments)) is not None:
+        if (refusal := _out_of_scope(scope, name, arguments)) is not None:
             raise ToolError(refusal)
         edit = _edit_headers.set({"X-Edit-Source": "agent", "X-Edit-Tab": scope.edit_tab})
         try:
@@ -1325,8 +1327,11 @@ def _bearer(context: Context | None) -> str | None:
     return (token.strip() or None) if kind.lower() == "bearer" else None
 
 
-def _out_of_scope(scope: AgentScope, arguments: dict[str, Any]) -> str | None:
-    """Why a call's arguments reach past `scope` (a Job or Candidate not its own), or None."""
+def _out_of_scope(scope: AgentScope, name: str, arguments: dict[str, Any]) -> str | None:
+    """Why a call of tool `name` reaches past `scope` (a Job or Candidate not its own, or an asset
+    but the Media Library's), or None."""
+    if name == "add_asset" and arguments.get("kind") not in ADDABLE_KINDS:
+        return "Refused: this Agent adds only media (a video, a song or an image) to the Media Library"
     job_id = arguments.get("job_id")
     if job_id is not None and job_id != scope.job_id:
         return f"Refused: this Agent works on Job {scope.job_id} only"
