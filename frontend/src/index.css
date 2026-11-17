@@ -265,6 +265,39 @@
 }
 
 /*
+ * The Agent's cursor floats while it works: the whole cursor bobs a few pixels, and the arrow
+ * tilts at its tip a beat behind, as if pointing. Still for an owner who asked for less motion.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .agent-float {
+    animation: agent-float 2.4s ease-in-out infinite;
+    will-change: transform;
+  }
+  .agent-tap {
+    transform-origin: 1px 1px;
+    animation: agent-tap 1.2s ease-in-out -0.3s infinite;
+  }
+}
+@keyframes agent-float {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(1px, -3px);
+  }
+}
+@keyframes agent-tap {
+  0%,
+  100% {
+    rotate: 0deg;
+  }
+  50% {
+    rotate: -8deg;
+  }
+}
+
+/*
  * The Agent's status line, Claude Code style: a lighter band sweeps across its muted label while
  * it works. Used as motion-safe:shimmer, so the label stays plain for an owner who asked for less
  * motion.

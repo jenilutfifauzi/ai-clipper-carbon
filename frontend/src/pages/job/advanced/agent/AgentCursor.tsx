@@ -42,12 +42,14 @@ export function AgentCursor({ pps }: { pps: number }) {
       className="pointer-events-none absolute top-0 z-20 transition-transform duration-180 ease-out will-change-transform motion-reduce:transition-none"
       style={{ left: "var(--track-label)", transform: `translate3d(${x}px, ${top}px, 0)` }}
     >
-      <svg width="12" height="14" viewBox="0 0 12 14" className="-translate-x-px -translate-y-1 fill-accent stroke-bg drop-shadow-sm">
-        <path d="M1 1 L11 7 L6 8 L4 13 Z" strokeWidth="1" strokeLinejoin="round" />
-      </svg>
-      <span className="ml-2.5 -mt-1 block w-max rounded-full bg-accent px-1.5 py-0.5 text-[11px] leading-none font-medium text-on-accent shadow-accent">
-        {status === "thinking" ? `${label} · thinking…` : label}
-      </span>
+      <div className="agent-float">
+        <svg width="12" height="14" viewBox="0 0 12 14" className="agent-tap -translate-x-px -translate-y-1 fill-accent stroke-bg drop-shadow-sm">
+          <path d="M1 1 L11 7 L6 8 L4 13 Z" strokeWidth="1" strokeLinejoin="round" />
+        </svg>
+        <span className="ml-2.5 -mt-1 block w-max rounded-full bg-accent px-1.5 py-0.5 text-[11px] leading-none font-medium text-on-accent shadow-accent">
+          {status === "thinking" ? `${label} · thinking…` : label}
+        </span>
+      </div>
     </div>
   );
 }
