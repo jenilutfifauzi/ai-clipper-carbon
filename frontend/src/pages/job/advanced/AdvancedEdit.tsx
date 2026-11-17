@@ -1877,7 +1877,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                       )}
                       {/* Its top space is a spacer, not padding: padding would hold the tabs' sticky shelf
                           headings below the top edge, with the cards scrolling past above them. */}
-                      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 pb-4 before:block before:h-4 before:content-['']">
+                      {/* Relative, so that a hidden input (an upload's, a Switch's) is laid out in this scroll:
+                          laid out in the grid outside, focusing it scrolls the whole workspace off the screen. */}
+                      <div className="relative min-h-0 min-w-0 flex-1 overflow-y-auto px-4 pb-4 before:block before:h-4 before:content-['']">
                         {assets(assetTab)}
                       </div>
                     </div>
@@ -1938,7 +1940,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 />
               )}
               {!ws.inspectorHidden && (
-                <aside aria-label="Inspector" className="panel min-h-0 overflow-y-auto p-4">
+                <aside aria-label="Inspector" className="panel relative min-h-0 overflow-y-auto p-4">
                   {inspector}
                 </aside>
               )}

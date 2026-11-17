@@ -432,7 +432,8 @@ export function Sheet({ title, onClose, children }: { title: string; onClose: ()
           <X aria-hidden size={18} />
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4">{children}</div>
+      {/* Relative, so that a hidden input (a Switch's, an upload's) is laid out in this scroll. */}
+      <div className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4">{children}</div>
     </section>
   );
 }
