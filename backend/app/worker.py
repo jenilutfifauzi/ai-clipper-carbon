@@ -57,9 +57,10 @@ class Worker:
         stage are queued again, oldest first, and those waiting for quota wait out what is left of
         their wait. A Job left rendering renders its queued Clips, and the one it was rendering, again.
         A Job that another process (a CLI run, or the previous server still shutting down) is
-        running is left to it, and taken back once that process lets go if it left the Job unfinished."""
+        running is left to it, and taken back once that process lets go if it left the Job unfinished.
+        A Job whose media are on another machine is that machine's to take back."""
         for job in sorted(self._store.all(), key=lambda job: job.created_at):
-            if job.status not in _RESUMED:
+            if job.status not in _RESUMED or not self._store.here(job.id):
                 continue
             if self._store.busy(job.id):
                 threading.Thread(
@@ -79,7 +80,9 @@ class Worker:
 
     def retry(self, job_id: str) -> Job:
         """Queue a Job in `error` again; it resumes from the stage it failed in. Raises JobConflict
-        for a Job in any other status."""
+        for a Job in any other status, and JobElsewhere (as all that follow) for one whose media are
+        on another machine."""
+        self._store.job_dir(job_id)
         self._pipeline.clear_stop(job_id)
         job = self._store.update(
             job_id,
@@ -99,6 +102,7 @@ class Worker:
         at once), with "Stopping…" as its message meanwhile. Raises JobConflict for a Job in any
         other status, or one that another process is running."""
         job = self._store.get(job_id)
+        self._store.job_dir(job_id)
         if job.status not in STOPPABLE:
             raise JobConflict(f"Job {job_id} is {job.status}")
         if job.status in RUNNING and self._current != job_id:
@@ -123,6 +127,7 @@ class Worker:
     def resume(self, job_id: str) -> Job:
         """Queue a `stopped` Job again; it resumes from the stage it stopped in, keeping what that
         stage had kept (the Score answers already in). Raises JobConflict for a Job in any other status."""
+        self._store.job_dir(job_id)
         self._pipeline.clear_stop(job_id)
         job = self._store.update(
             job_id,
@@ -138,16 +143,19 @@ class Worker:
 
     def render(self, job_id: str, candidate_ids: list[str] | None = None, export_preset_id: str | None = None) -> None:
         """Queue Clips of the Job's Candidates (see Renders.request); they are rendered in the Job's turn."""
+        self._store.job_dir(job_id)
         if self._renders.request(job_id, candidate_ids, export_preset_id):
             self.submit(job_id)
 
     def prepare(self, job_id: str, candidate_id: str) -> None:
         """Queue the Candidate to be prepared for the editor (see Renders.prepare), in the Job's turn."""
+        self._store.job_dir(job_id)
         if self._renders.prepare(job_id, candidate_id):
             self.submit(job_id)
 
     def transcribe_media(self, job_id: str, media_id: str, again: bool = False) -> None:
         """Queue a video's Media Words for the Job to be transcribed (see Renders.transcribe_media), in the Job's turn."""
+        self._store.job_dir(job_id)
         if self._renders.transcribe_media(job_id, media_id, again):
             self.submit(job_id)
 

@@ -29,7 +29,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.candidates import Candidate
 from app.config import REFERENCE_SET, REPO_ROOT, LlmChoice, Settings
-from app.jobs import TRANSCRIPT_FILE, Job, JobOptions, JobStatus, JobStore
+from app.jobs import Job, JobOptions, JobStatus, JobStore
 from app.pipeline import Pipeline
 from app.ports import Ports
 from app.profile import PROFILE_FILE, ChannelProfile, ProfileStore
@@ -211,7 +211,7 @@ def transcribed_job(store: JobStore, url: str, options: JobOptions) -> Job | Non
             and video_id(job.url) == video
             and _selecting(job.options) == _selecting(options)
             and job.source is not None
-            and (store.job_dir(job.id) / TRANSCRIPT_FILE).is_file()
+            and store.has_transcript(job.id)
         ):
             return job
     return None

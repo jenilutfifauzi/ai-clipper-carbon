@@ -9,6 +9,7 @@ import { Skeleton } from "../../components/Skeleton";
 import { StatusBadge } from "../../components/StatusBadge";
 import { formatClock, formatRelative, jobThumbnail, jobTitle } from "../../format";
 import { useOnVisible } from "../../hooks/useOnVisible";
+import { elsewhere, useMachine } from "../../machine";
 import { ACTIVE } from "../../stages";
 
 // While some Job is on its way, the list is fetched again this often to follow its status.
@@ -20,6 +21,7 @@ const PAGE = 20;
 // the Projects instead, each opening in the Advanced Edit; without, the clipper's Jobs only.
 export function RecentJobs({ project = false }: { project?: boolean }) {
   const noun = project ? "Project" : "Job";
+  const machine = useMachine();
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
@@ -115,6 +117,7 @@ export function RecentJobs({ project = false }: { project?: boolean }) {
                     <p className="truncate font-medium">{jobTitle(job)}</p>
                     <p className="truncate text-sm text-muted">
                       {formatRelative(job.created_at)}
+                      {elsewhere(job, machine) && <> · On {elsewhere(job, machine)}</>}
                       {job.options.brief && <> · {job.options.brief}</>}
                     </p>
                   </div>

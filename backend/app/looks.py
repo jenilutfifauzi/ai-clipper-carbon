@@ -36,12 +36,15 @@ from pydantic import Field, StringConstraints, TypeAdapter
 
 from app.candidates import Adjust
 from app.config import LOOKS_DIR
+from app.documents import Document
 from app.library import Index
 from app.storage import write_atomic
 
 # In DATA_DIR, with its index.
 IMPORTED_DIR = "looks"
 INDEX_FILE = "looks.json"
+# The index's key among the account's documents.
+IMPORTED_INDEX = f"{IMPORTED_DIR}/{INDEX_FILE}"
 # The Filters tab's shelf of the Imported Looks, after the built-in ones.
 IMPORTED = "Imported"
 IMPORTED_ORDER = 10_000
@@ -176,22 +179,18 @@ class ImportedLooks:
     """The owner's Imported Looks, in `folder`: <id>.cube each (the table as kept, on 0..1), the tables
     mixed at an intensity made from it (<id>@<intensity>.cube), and their index. Without a folder, none."""
 
-    def __init__(self, folder: Path | None) -> None:
+    def __init__(self, folder: Path | None, index: Document | None = None) -> None:
         self.folder = folder
-        self._index = None if folder is None else Index(folder / INDEX_FILE, _IMPORTED)
+        self._index = None if folder is None else Index(index or folder / INDEX_FILE, _IMPORTED)
         self._lock = threading.Lock()
         # The Looks as last read, and the index's state they were read at.
-        self._read: tuple[tuple[int, int] | None, list[Look]] = (None, [])
+        self._read: tuple[object | None, list[Look]] = (None, [])
 
     def all(self) -> list[Look]:
         """In the order they were imported."""
         if self._index is None:
             return []
-        try:
-            stat = self._index.path.stat()
-            state: tuple[int, int] | None = (stat.st_mtime_ns, stat.st_size)
-        except FileNotFoundError:
-            state = None
+        state = self._index.version()
         seen, looks = self._read
         if state != seen or state is None:
             looks = [

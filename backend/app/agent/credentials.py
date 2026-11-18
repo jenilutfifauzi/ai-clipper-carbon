@@ -1,9 +1,9 @@
-"""The API Agent Providers' keys: saved from the setup form in DATA_DIR/agent/credentials.json (mode
-600), else read from the `.env` names. A key leaves this module only for an API adapter; the browser
-gets `has_key`."""
+"""The API Agent Providers' keys: saved from the setup form among the account's secrets, as
+agent/credentials.json (mode 600 in its data directory, or sealed in Postgres: app/documents.py), else
+read from the `.env` names. A key leaves this module only for an API adapter; the browser gets
+`has_key`. Each function takes the secret they are saved in; without it, the file in `settings.data_dir`."""
 
 import json
-import os
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, Field
 
 from app.config import DEEPSEEK_HOST, Settings
-from app.storage import write_atomic
+from app.documents import Document, FileDocument
 
 CREDENTIALS_FILE = Path("agent") / "credentials.json"
 
@@ -37,34 +37,33 @@ def credentials_path(settings: Settings) -> Path:
     return settings.data_dir / CREDENTIALS_FILE
 
 
-def saved_credentials(settings: Settings) -> dict[str, SavedCredential]:
-    path = credentials_path(settings)
-    if not path.is_file():
+def saved_credentials(settings: Settings, secret: Document | None = None) -> dict[str, SavedCredential]:
+    saved = _secret(settings, secret).read()
+    if saved is None:
         return {}
-    raw = json.loads(path.read_text())
-    return {provider_id: SavedCredential.model_validate(entry) for provider_id, entry in raw.items()}
+    return {provider_id: SavedCredential.model_validate(entry) for provider_id, entry in json.loads(saved).items()}
 
 
-def save_credential(settings: Settings, provider_id: str, update: SavedCredential) -> None:
+def save_credential(settings: Settings, provider_id: str, update: SavedCredential, secret: Document | None = None) -> None:
     """Merge `update`'s given fields into what is saved for `provider_id`."""
-    entries = saved_credentials(settings)
+    entries = saved_credentials(settings, secret)
     current = entries.get(provider_id, SavedCredential())
     entries[provider_id] = current.model_copy(update=update.model_dump(exclude_unset=True))
-    _write(settings, entries)
+    _write(settings, secret, entries)
 
 
-def delete_credential(settings: Settings, provider_id: str) -> bool:
+def delete_credential(settings: Settings, provider_id: str, secret: Document | None = None) -> bool:
     """Forget what is saved for `provider_id`; False when nothing was."""
-    entries = saved_credentials(settings)
+    entries = saved_credentials(settings, secret)
     if entries.pop(provider_id, None) is None:
         return False
-    _write(settings, entries)
+    _write(settings, secret, entries)
     return True
 
 
-def credential_for(settings: Settings, provider_id: str) -> Credential | None:
+def credential_for(settings: Settings, provider_id: str, secret: Document | None = None) -> Credential | None:
     """The saved key, else the environment's; the saved base URL and model either way. None without a key."""
-    saved = saved_credentials(settings).get(provider_id, SavedCredential())
+    saved = saved_credentials(settings, secret).get(provider_id, SavedCredential())
     if saved.api_key:
         model = saved.model or _app_model(settings, provider_id)
         return Credential(api_key=saved.api_key, base_url=saved.base_url, model=model, source="saved")
@@ -95,9 +94,10 @@ def _env_credential(settings: Settings, provider_id: str) -> Credential | None:
     return None
 
 
-def _write(settings: Settings, entries: dict[str, SavedCredential]) -> None:
-    path = credentials_path(settings)
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _secret(settings: Settings, secret: Document | None) -> Document:
+    return secret or FileDocument(credentials_path(settings), private=True)
+
+
+def _write(settings: Settings, secret: Document | None, entries: dict[str, SavedCredential]) -> None:
     data = {provider_id: entry.model_dump(exclude_none=True) for provider_id, entry in entries.items()}
-    write_atomic(path, json.dumps(data, indent=2).encode())
-    os.chmod(path, 0o600)
+    _secret(settings, secret).write(json.dumps(data, indent=2).encode())

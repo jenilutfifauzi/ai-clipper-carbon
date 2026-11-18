@@ -22,7 +22,7 @@ from app.canvas import canvas_for
 from app.config import LlmChoice, Settings
 from app.fewshot import FEWSHOT_DIR, few_shot_examples
 from app.jobs import (
-    DEFAULT_TEMPLATE, TRANSCRIPT_FILE, Job, JobConflict, JobNotFound, JobStatus, JobStore, JobWarning, QuotaWait,
+    DEFAULT_TEMPLATE, Job, JobConflict, JobNotFound, JobStatus, JobStore, JobWarning, QuotaWait,
 )
 from app.llm import DetailResponse, Llm, LlmRequest, Overloaded, PacedLlm, QuotaExceeded, ScoreResponse
 from app.media import MEDIA_DIR, MediaStore
@@ -186,7 +186,7 @@ class Pipeline:
         Downloading is complete once the Video Source has returned and any preview proxy is made,
         which is when `job.source` is recorded (a half-written or interrupted download never has
         it), and the files it names exist. (An upload cut short never becomes a Job at all.)
-        Transcribing is complete once transcript.json exists: it is written whole, as the stage's
+        Transcribing is complete once the transcript is saved: it is written whole, as the stage's
         last step. Analyzing, the last stage, always runs.
         """
         job_dir = self.store.job_dir(job.id)
@@ -197,7 +197,7 @@ class Pipeline:
                 if name
             )
         if stage is JobStatus.TRANSCRIBING:
-            return (job_dir / TRANSCRIPT_FILE).is_file()
+            return self.store.has_transcript(job.id)
         return False
 
     def _stopped(self, job_id: str) -> Job:

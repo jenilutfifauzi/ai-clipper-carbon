@@ -36,6 +36,7 @@ from app.derived import (
     peaks_outputs,
     strip_outputs,
 )
+from app.documents import Document
 from app.library import Index, shrink
 from app.matte import Mattes
 from app.renderer import last_lines
@@ -45,6 +46,8 @@ from app.transcript import Language
 # In DATA_DIR, with its index.
 MEDIA_DIR = "media"
 INDEX_FILE = "media.json"
+# The index's key among the account's documents.
+MEDIA_INDEX = f"{MEDIA_DIR}/{INDEX_FILE}"
 
 
 class MediaKind(StrEnum):
@@ -121,11 +124,11 @@ class MediaStore:
     Peaks' chunks of one with sound in <id>.peaks, a video's or an image's Matte in <id>.mattes, and
     their index."""
 
-    def __init__(self, folder: Path, ffmpeg: Path, ffprobe: Path) -> None:
+    def __init__(self, folder: Path, ffmpeg: Path, ffprobe: Path, index: Document | None = None) -> None:
         self.folder = folder
         self.ffmpeg = ffmpeg
         self.ffprobe = ffprobe
-        self._index = Index(folder / INDEX_FILE, _ITEMS)
+        self._index = Index(index or folder / INDEX_FILE, _ITEMS)
 
     def all(self) -> list[MediaItem]:
         """In the order they were uploaded."""

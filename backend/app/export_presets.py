@@ -12,7 +12,6 @@ The owner's Presets are kept in DATA_DIR/export-presets.json, with the id of the
 """
 
 import json
-import threading
 from dataclasses import dataclass, field, fields, replace
 from functools import cache
 from pathlib import Path
@@ -23,7 +22,7 @@ from pydantic import Field, StringConstraints, TypeAdapter
 
 from app.config import EXPORT_PRESETS_DIR
 from app.encoding import ExportSettings
-from app.storage import write_atomic
+from app.documents import Document, document_of
 from app.styles import Name
 
 # In DATA_DIR.
@@ -97,9 +96,8 @@ def _builtins() -> tuple[ExportPreset, ...]:
 class ExportPresetStore:
     """The built-in Export Presets and the owner's, in `path`, and the default."""
 
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._lock = threading.Lock()
+    def __init__(self, path: Path | Document) -> None:
+        self._doc = document_of(path)
 
     def all(self) -> list[ExportPreset]:
         """The built-in Presets by their order, then the owner's in the order they were made."""
@@ -129,7 +127,7 @@ class ExportPresetStore:
 
     def create(self, name: str, settings: ExportSettings) -> ExportPreset:
         builtin = {preset.id for preset in _builtins()}
-        with self._lock:
+        with self._doc.changing():
             saved = self._saved()
             preset_id = next(new for new in iter(lambda: uuid4().hex[:8], None) if new not in builtin)
             preset = ExportPreset(preset_id, name, settings)
@@ -139,7 +137,7 @@ class ExportPresetStore:
     def change(self, preset_id: str, name: str, settings: ExportSettings) -> ExportPreset:
         """One of the owner's Presets given another name and settings. A Clip made with it keeps the
         copy of the settings it records."""
-        with self._lock:
+        with self._doc.changing():
             saved = self._saved()
             i = self._index(saved, preset_id)
             preset = replace(saved.presets[i], name=name, settings=settings)
@@ -148,7 +146,7 @@ class ExportPresetStore:
 
     def delete(self, preset_id: str) -> None:
         """Delete one of the owner's Presets; the default, "Shorts / TikTok / Reels" is the default again."""
-        with self._lock:
+        with self._doc.changing():
             saved = self._saved()
             i = self._index(saved, preset_id)
             default = DEFAULT_EXPORT_PRESET if saved.default == preset_id else saved.default
@@ -156,7 +154,7 @@ class ExportPresetStore:
 
     def use_as_default(self, preset_id: str) -> ExportPreset:
         """Make the Preset, built-in or the owner's, the one a render uses when none is asked for."""
-        with self._lock:
+        with self._doc.changing():
             preset = self.get(preset_id)
             self._save(replace(self._saved(), default=preset.id))
         return preset
@@ -170,8 +168,8 @@ class ExportPresetStore:
         raise ExportPresetNotFound(preset_id)
 
     def _saved(self) -> _Saved:
-        return _SAVED.validate_json(self.path.read_bytes()) if self.path.is_file() else _Saved()
+        saved = self._doc.read()
+        return _Saved() if saved is None else _SAVED.validate_json(saved)
 
     def _save(self, saved: _Saved) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        write_atomic(self.path, _SAVED.dump_json(saved, indent=2))
+        self._doc.write(_SAVED.dump_json(saved, indent=2))

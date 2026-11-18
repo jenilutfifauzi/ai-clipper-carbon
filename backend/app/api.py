@@ -71,6 +71,7 @@ from app.effected import EFFECTED_DIR, NoCopy, copies_used as effected_used, eff
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.kokoro import KokoroBusy, KokoroModel
 from app.person_model import PersonModel, PersonModelBusy
+from app.machine import Machine
 from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore, JobWarning, Project
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app import audio_effects, video_effects
@@ -802,6 +803,13 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@router.get("/machine")
+def machine(store: Store) -> Machine | None:
+    """This machine, as each Job names its Host: a Job of another Host has its media there, not here.
+    Null when the Jobs' documents are files on this machine, which then has all their media."""
+    return store.machine
+
+
 @router.post("/jobs", status_code=201)
 def create_job(body: JobRequest, store: Store, profiles: Profiles, templates: Templates, worker: JobWorker) -> Job:
     """Create a Job and queue it. 404 for an unknown Template in its options."""
@@ -900,7 +908,9 @@ def get_job(job_id: str, store: Store, library: Media, mattes: MatteMaker, backg
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
     candidates = store.load_candidates(job_id)
-    background.add_task(sweep_unused, store, library, mattes, job_id)
+    # On the machine that has the Job's media only: there is nothing of it to sweep on another.
+    if store.here(job_id):
+        background.add_task(sweep_unused, store, library, mattes, job_id)
     return JobDetail(
         **vars(job),
         transcript=store.load_transcript(job_id),
@@ -1937,7 +1947,7 @@ def create_template(
     Face or a Logo that isn't there, or media it can't use so (`_saveable`)."""
     captured = _saveable(body, store, settings, presets, library, faces, logos)
     template = templates.create(body.name, captured)
-    notices = [*captured.notices, *_poster(template.id, body, store, settings, presets, logos, library, media_words, templates)]
+    notices = [*captured.notices, *_poster(template.id, body, store, settings, presets, logos, library, media_words)]
     return SavedTemplate(**vars(template), notices=notices)
 
 
@@ -1962,21 +1972,21 @@ def save_over_template(
         template = templates.save_over(template_id, body.name, captured)
     except TemplateNotFound:
         raise HTTPException(404, f"No Template {template_id}") from None
-    notices = [*captured.notices, *_poster(template.id, body, store, settings, presets, logos, library, media_words, templates)]
+    notices = [*captured.notices, *_poster(template.id, body, store, settings, presets, logos, library, media_words)]
     return SavedTemplate(**vars(template), notices=notices)
 
 
 @router.get("/templates/{template_id}/poster", response_class=FileResponse)
-def template_poster(template_id: str, templates: Templates) -> FileResponse:
+def template_poster(template_id: str, settings: AppSettings) -> FileResponse:
     """A Template's poster, a PNG; 404 when it has none."""
-    path = _poster_path(templates, template_id)
+    path = _poster_path(settings, template_id)
     if not path.is_file():
         raise HTTPException(404, f"Template {template_id} has no poster")
     return FileResponse(path, media_type="image/png")
 
 
-def _poster_path(templates: TemplateStore, template_id: str) -> Path:
-    return templates.path.parent / POSTERS_DIR / f"{template_id}.png"
+def _poster_path(settings: Settings, template_id: str) -> Path:
+    return settings.data_dir / POSTERS_DIR / f"{template_id}.png"
 
 
 def _poster(
@@ -1988,7 +1998,6 @@ def _poster(
     logos: LogoStore,
     library: MediaStore,
     media_words: MediaWordsStore,
-    templates: TemplateStore,
 ) -> list[str]:
     """Draw the Template's poster from `body`'s draft at `poster_at`, if given, in place of the one it
     had; what the owner is told when it couldn't be (the Template is saved all the same)."""
@@ -1997,7 +2006,7 @@ def _poster(
     planned = _draft_plan(body.job_id, body.candidate_id, store, settings, presets, logos, library, media_words, body.edits)
     job, job_dir = store.get(body.job_id), store.job_dir(body.job_id)
     try:
-        draw_poster(job, job_dir, planned.plan, body.poster_at, _poster_path(templates, template_id), POSTER_SIZE, settings, library, logos)
+        draw_poster(job, job_dir, planned.plan, body.poster_at, _poster_path(settings, template_id), POSTER_SIZE, settings, library, logos)
     except RuntimeError as exc:
         return [f"Its poster couldn't be made: {exc}"]
     return []
@@ -2013,14 +2022,14 @@ def rename_template(template_id: str, body: TemplateName, templates: Templates) 
 
 
 @router.delete("/templates/{template_id}", status_code=204)
-def delete_template(template_id: str, templates: Templates) -> None:
+def delete_template(template_id: str, templates: Templates, settings: AppSettings) -> None:
     """Delete one of the Templates; when it was the default, there is then none. The Candidates it
     was applied to keep their Template items, and Jobs that chose it make their new ones plain."""
     try:
         templates.delete(template_id)
     except TemplateNotFound:
         raise HTTPException(404, f"No Template {template_id}") from None
-    _poster_path(templates, template_id).unlink(missing_ok=True)
+    _poster_path(settings, template_id).unlink(missing_ok=True)
 
 
 @router.post("/jobs/{job_id}/templates/apply")

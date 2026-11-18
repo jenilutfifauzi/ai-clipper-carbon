@@ -171,6 +171,8 @@ export interface Job {
   // the Main Track and these Media Library videos after it. Never transcribed nor analyzed.
   project: Project | null;
   source: Source | null;
+  // The machine the Job was made on, which has its media (ADR 0033); none where every Job's are here.
+  host?: Machine | null;
   prompt_version: string | null;
   history: { status: JobStatus; at: string }[];
   // Candidates queued to be prepared for the clip editor.
@@ -179,6 +181,12 @@ export interface Job {
 
 export interface Project {
   media: string[];
+}
+
+// One of the machines the owner runs the app on (backend/app/machine.py).
+export interface Machine {
+  id: string;
+  name: string;
 }
 
 export interface Word {
@@ -1970,6 +1978,8 @@ export const api = {
     return request<Job[]>(`/jobs?${query}`);
   },
   getJob: (id: string) => request<JobDetail>(`/jobs/${id}`),
+  // This machine; null where the Jobs' documents are files on it, and so are all their media.
+  machine: () => request<Machine | null>("/machine"),
   createJob: (job: NewJob) => request<Job>("/jobs", { method: "POST", body: JSON.stringify(job) }),
   retryJob: (id: string) => request<Job>(`/jobs/${id}/retry`, { method: "POST" }),
   // Stop a Job on its way to review (a running stage stops soon after), and queue a stopped one again.

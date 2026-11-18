@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, CirclePause, Clock, Play, RotateCcw } from "lucide-react";
+import { AlertCircle, AlertTriangle, CirclePause, Clock, HardDrive, Play, RotateCcw } from "lucide-react";
 import type { JobProgress, JobWarning } from "../../api";
 import { Button } from "../../components/Button";
 import { Panel } from "../../components/Panel";
@@ -68,6 +68,22 @@ export function StoppedNote({
         <Play aria-hidden size={18} />
         {continuing ? "Continuing…" : "Continue"}
       </Button>
+    </Panel>
+  );
+}
+
+// The Job's media are on another of the owner's machines (ADR 0033): what this one can't do with it.
+export function ElsewhereNote({ name }: { name: string }) {
+  return (
+    <Panel aria-labelledby="elsewhere-heading" className="flex flex-col gap-2">
+      <h2 id="elsewhere-heading" className="flex items-center gap-2 font-semibold">
+        <HardDrive aria-hidden size={18} className="text-muted" />
+        Its files are on {name}
+      </h2>
+      <p className="text-sm text-muted">
+        The video, previews and Clips of this Job stay on the machine it was made on. Open the app on {name} to play, run or render
+        it; its Candidates and their edits are the same on both.
+      </p>
     </Panel>
   );
 }

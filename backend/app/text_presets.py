@@ -11,7 +11,6 @@ titles: built-in Text at first, and again when the one chosen is deleted.
 """
 
 import json
-import threading
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass, field, fields, replace
@@ -25,7 +24,7 @@ from pydantic import Field, StringConstraints, TypeAdapter
 from app.candidates import TextStyle
 from app.config import TEXT_PRESETS_DIR
 from app.listeners import Listeners
-from app.storage import write_atomic
+from app.documents import Document, document_of
 from app.styles import Name, laid_over
 
 # In DATA_DIR.
@@ -107,9 +106,8 @@ def _builtins() -> tuple[TextPreset, ...]:
 class TextPresetStore:
     """The built-in Text Presets and the owner's, in `path`, and the one used for new titles."""
 
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._lock = threading.Lock()
+    def __init__(self, path: Path | Document) -> None:
+        self._doc = document_of(path)
         self._listeners = Listeners()
 
     def all(self) -> list[TextPreset]:
@@ -131,7 +129,7 @@ class TextPresetStore:
 
     def create(self, name: str, style: TextStyle) -> TextPreset:
         builtin = {preset.id for preset in _builtins()}
-        with self._lock:
+        with self._doc.changing():
             saved = self._saved()
             preset_id = next(new for new in iter(lambda: uuid4().hex[:8], None) if new not in builtin)
             preset = TextPreset(preset_id, name, style, sample=name)
@@ -141,7 +139,7 @@ class TextPresetStore:
 
     def change(self, preset_id: str, name: str | None = None, style: TextStyle | None = None) -> TextPreset:
         """One of the owner's Presets renamed, given another style, or both."""
-        with self._lock:
+        with self._doc.changing():
             saved = self._saved()
             i = self._index(saved, preset_id)
             preset = saved.presets[i]
@@ -155,7 +153,7 @@ class TextPresetStore:
 
     def delete(self, preset_id: str) -> None:
         """Delete one of the owner's Presets; used for new titles, built-in Text is used again."""
-        with self._lock:
+        with self._doc.changing():
             saved = self._saved()
             i = self._index(saved, preset_id)
             default = DEFAULT_TEXT_PRESET if saved.default == preset_id else saved.default
@@ -164,7 +162,7 @@ class TextPresetStore:
 
     def use_for_new_titles(self, preset_id: str) -> TextPreset:
         """Make the Preset, built-in or the owner's, the one used for new titles."""
-        with self._lock:
+        with self._doc.changing():
             preset = self.get(preset_id)
             self._save(replace(self._saved(), default=preset.id))
         self._listeners.notify()
@@ -184,8 +182,8 @@ class TextPresetStore:
         raise TextPresetNotFound(preset_id)
 
     def _saved(self) -> _Saved:
-        return _SAVED.validate_json(self.path.read_bytes()) if self.path.is_file() else _Saved()
+        saved = self._doc.read()
+        return _Saved() if saved is None else _SAVED.validate_json(saved)
 
     def _save(self, saved: _Saved) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        write_atomic(self.path, _SAVED.dump_json(saved, indent=2))
+        self._doc.write(_SAVED.dump_json(saved, indent=2))

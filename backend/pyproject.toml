@@ -33,6 +33,8 @@ dependencies = [
     "uvicorn[standard]>=0.54.0",
     "yt-dlp[default]>=2026.8.19",
     "clerk-backend-api>=7.1.0",
+    "psycopg[binary,pool]>=3.2",
+    "cryptography>=46",
 ]
 
 [dependency-groups]

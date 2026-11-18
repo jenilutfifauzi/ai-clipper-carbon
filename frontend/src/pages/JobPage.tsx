@@ -8,9 +8,10 @@ import { StageProgress } from "../components/StageProgress";
 import { StatusBadge } from "../components/StatusBadge";
 import { formatBytes, formatRelative } from "../format";
 import { useJobEvents } from "../hooks/useJobEvents";
+import { elsewhere, useMachine } from "../machine";
 import { stageIndex, STOPPABLE } from "../stages";
 import { BackLink, JobSkeleton } from "./job/JobSkeleton";
-import { ErrorNote, StoppedNote, WaitingNote, Warnings } from "./job/JobStatusNotes";
+import { ElsewhereNote, ErrorNote, StoppedNote, WaitingNote, Warnings } from "./job/JobStatusNotes";
 import { ExportPresetsSheet } from "./job/ExportPresetsSheet";
 import { pickedPreset, sourceHeight } from "./job/exportPresets";
 import { Review } from "./job/Review";
@@ -36,6 +37,7 @@ function JobView({ jobId }: { jobId: string }) {
   const [toggling, setToggling] = useState(false);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const events = useJobEvents(jobId);
+  const machine = useMachine();
   // Whether the Job was in review when last loaded: then only its Clips change by themselves.
   const reviewing = useRef(false);
   // The Export Presets for the Render buttons, and the one picked for this page's session: the
@@ -84,6 +86,8 @@ function JobView({ jobId }: { jobId: string }) {
   if (!job) return <JobSkeleton />;
 
   const progress = events.progress ?? progressOf(job);
+  // The machine that has the Job's media, when it is another than this one.
+  const onMachine = elsewhere(job, machine);
   const reached = Math.max(
     -1,
     ...job.history.map((change) => stageIndex(change.status)),
@@ -186,6 +190,7 @@ function JobView({ jobId }: { jobId: string }) {
         )}
       </Panel>
 
+      {onMachine && <ElsewhereNote name={onMachine} />}
       {progress.status === "waiting_quota" && <WaitingNote progress={progress} />}
       {progress.status === "stopped" && (
         <StoppedNote

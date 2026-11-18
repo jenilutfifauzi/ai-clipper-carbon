@@ -37,6 +37,7 @@ from app.agent.providers import (
 from app.api import AfterSave, AppSettings, EditBy, ExistingJob, Logos, Media, Presets, Store, restore_revision
 from app.candidates import Candidate
 from app.config import Settings
+from app.documents import Document, Documents
 from app.jobs import JobNotFound
 from app.workspace import workspace_for_request
 
@@ -54,7 +55,7 @@ class CredentialUpdate(BaseModel):
 
 @router.get("/providers")
 async def list_providers(request: Request) -> list[ProviderListing]:
-    settings = _settings(request)
+    settings, credentials = _settings(request), _credentials(request)
     detection = _detection(request)
     acp = [provider for provider in PROVIDERS if isinstance(provider, AcpProvider)]
     acp_statuses = dict(zip([p.id for p in acp], await asyncio.gather(*(detection.status(p) for p in acp))))
@@ -63,7 +64,7 @@ async def list_providers(request: Request) -> list[ProviderListing]:
             provider=provider,
             status=acp_statuses[provider.id]
             if isinstance(provider, AcpProvider)
-            else api_status(provider, credential_for(settings, provider.id)),
+            else api_status(provider, credential_for(settings, provider.id, credentials)),
         )
         for provider in PROVIDERS
     ]
@@ -125,15 +126,17 @@ async def put_credential(provider_id: str, update: CredentialUpdate, request: Re
     provider = _api_provider(provider_id)
     if update.base_url and not provider.base_url_editable:
         raise HTTPException(400, f"{provider.label}'s base URL can't be changed")
-    settings = _settings(request)
-    await asyncio.to_thread(save_credential, settings, provider.id, SavedCredential(**update.model_dump(exclude_unset=True)))
-    return ProviderListing(provider=provider, status=api_status(provider, credential_for(settings, provider.id)))
+    settings, credentials = _settings(request), _credentials(request)
+    await asyncio.to_thread(
+        save_credential, settings, provider.id, SavedCredential(**update.model_dump(exclude_unset=True)), credentials
+    )
+    return ProviderListing(provider=provider, status=api_status(provider, credential_for(settings, provider.id, credentials)))
 
 
 @router.delete("/credentials/{provider_id}", status_code=204)
 async def remove_credential(provider_id: str, request: Request) -> Response:
     provider = _api_provider(provider_id)
-    await asyncio.to_thread(delete_credential, _settings(request), provider.id)
+    await asyncio.to_thread(delete_credential, _settings(request), provider.id, _credentials(request))
     return Response(status_code=204)
 
 
@@ -170,7 +173,7 @@ async def send_turn(job_id: str, candidate_id: str, request: TurnRequest, http: 
         raise HTTPException(404, f"No Agent Provider {request.provider!r}")
     credential, model = None, request.model
     if isinstance(provider, ApiProvider):
-        credential = credential_for(_settings(http), provider.id)
+        credential = credential_for(_settings(http), provider.id, _credentials(http))
         if credential is None:
             raise HTTPException(400, f"{provider.label} has no key: add one in the Agent tab's setup")
         model = request.model or credential.model or provider.default_model
@@ -276,22 +279,22 @@ async def get_attachment(job_id: str, candidate_id: str, image_id: str, http: Re
 async def get_threads(job_id: str, candidate_id: str, http: Request) -> list[AgentThread]:
     """The Candidate's Agent Threads, the most recently used first; one is made when it has none."""
     await _existing_candidate(http, job_id, candidate_id)
-    job_dir = _job_dir(http, job_id)
-    await asyncio.to_thread(newest_thread, job_dir, candidate_id)
-    return await asyncio.to_thread(list_threads, job_dir, candidate_id)
+    documents = _documents(http, job_id)
+    await asyncio.to_thread(newest_thread, documents, candidate_id)
+    return await asyncio.to_thread(list_threads, documents, candidate_id)
 
 
 @candidate_router.post("/threads", status_code=201)
 async def post_thread(job_id: str, candidate_id: str, http: Request) -> AgentThread:
     await _existing_candidate(http, job_id, candidate_id)
-    return await asyncio.to_thread(create_thread, _job_dir(http, job_id), candidate_id)
+    return await asyncio.to_thread(create_thread, _documents(http, job_id), candidate_id)
 
 
 @candidate_router.patch("/threads/{thread}")
 async def patch_thread(job_id: str, candidate_id: str, thread: str, body: ThreadRename, http: Request) -> AgentThread:
     await _existing_candidate(http, job_id, candidate_id)
     try:
-        return await asyncio.to_thread(rename_thread, _job_dir(http, job_id), candidate_id, thread, body.title)
+        return await asyncio.to_thread(rename_thread, _documents(http, job_id), candidate_id, thread, body.title)
     except LookupError as error:
         raise HTTPException(404, f"Candidate {candidate_id} has no Agent Thread {thread}") from error
 
@@ -303,7 +306,7 @@ async def remove_thread(job_id: str, candidate_id: str, thread: str, http: Reque
     if _sessions(http).thread_busy(job_id, candidate_id, thread):
         raise HTTPException(409, f"An Agent Turn is running in Agent Thread {thread}")
     try:
-        await asyncio.to_thread(delete_thread, _job_dir(http, job_id), candidate_id, thread)
+        await asyncio.to_thread(delete_thread, _documents(http, job_id), candidate_id, thread)
     except LookupError as error:
         raise HTTPException(404, f"Candidate {candidate_id} has no Agent Thread {thread}") from error
     return Response(status_code=204)
@@ -331,16 +334,20 @@ async def _existing_candidate(request: Request, job_id: str, candidate_id: str) 
 
 async def _thread(request: Request, job_id: str, candidate_id: str, thread: str | None) -> str:
     """The Agent Thread a request names, which must be the Candidate's; the newest when it names none."""
-    job_dir = _job_dir(request, job_id)
+    documents = _documents(request, job_id)
     if thread is None:
-        return (await asyncio.to_thread(newest_thread, job_dir, candidate_id)).id
-    if not any(each.id == thread for each in await asyncio.to_thread(list_threads, job_dir, candidate_id)):
+        return (await asyncio.to_thread(newest_thread, documents, candidate_id)).id
+    if not any(each.id == thread for each in await asyncio.to_thread(list_threads, documents, candidate_id)):
         raise HTTPException(404, f"Candidate {candidate_id} has no Agent Thread {thread}")
     return thread
 
 
 def _job_dir(request: Request, job_id: str) -> Path:
     return workspace_for_request(request).store.job_dir(job_id)
+
+
+def _documents(request: Request, job_id: str) -> Documents:
+    return workspace_for_request(request).store.documents(job_id)
 
 
 def _turn_revisions(request: Request, job_id: str, candidate_id: str, turn: str) -> tuple[int, int]:
@@ -368,6 +375,11 @@ def _api_provider(provider_id: str) -> ApiProvider:
 
 def _settings(request: Request) -> Settings:
     return workspace_for_request(request).settings
+
+
+def _credentials(request: Request) -> Document:
+    """Where the account's Agent Provider keys are saved."""
+    return workspace_for_request(request).agent_credentials
 
 
 def _detection(request: Request) -> DetectionCache:

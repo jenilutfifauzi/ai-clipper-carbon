@@ -3,14 +3,18 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
+from psycopg import OperationalError
+from psycopg_pool import PoolTimeout
 
 from app import api
 from app.agent import routes as agent_routes
 from app.agent.scope import ScopeRegistry
 from app.auth import require_auth
 from app.config import Settings, load_settings
+from app.database import Database
+from app.jobs import JobElsewhere, JobNotFound
 from app.mcp_server import build_mcp
 from app.ports import Ports, real_ports
 from app.settings_api import router as settings_router
@@ -48,6 +52,8 @@ def create_app(
         # The MCP servers are app-wide, while their tool calls resolve an account workspace from
         # authenticated context. Jobs and Agent sessions themselves are owned by each workspace.
         async with app.state.mcp.session_manager.run(), app.state.agent_mcp.session_manager.run():
+            if app.state.database is not None:
+                app.state.database.open()
             if app.state.default_workspace is not None:
                 app.state.default_workspace.start()
             else:
@@ -59,10 +65,14 @@ def create_app(
                     await app.state.default_workspace.stop()
                 else:
                     await app.state.workspace_registry.stop()
+                if app.state.database is not None:
+                    app.state.database.close()
 
     app = FastAPI(title="AI Clipper", lifespan=lifespan)
     app.state.default_workspace = None
     app.state.workspace_registry = None
+    # Tests keep their documents in files, whatever .env names.
+    app.state.database = Database(settings.database_url) if settings.database_url and not test_mode else None
     app.state.agent_scopes = ScopeRegistry()
 
     app.include_router(api.router, dependencies=auth_dependencies)
@@ -119,7 +129,24 @@ def create_app(
             app,
             app.state.agent_scopes,
             ports_factory=ports_factory or real_ports,
+            database=app.state.database,
         )
+
+    @app.exception_handler(OperationalError)
+    @app.exception_handler(PoolTimeout)
+    async def database_unreachable(request: Request, exc: Exception) -> JSONResponse:
+        return JSONResponse({"detail": "The database can't be reached; try again in a moment"}, status_code=503)
+
+    @app.exception_handler(JobElsewhere)
+    async def job_elsewhere(request: Request, exc: JobElsewhere) -> JSONResponse:
+        """A request for a Job's media, or to run or render it, on a machine that hasn't its media."""
+        workspace = getattr(request.state, "workspace", None)
+        try:
+            host = workspace.store.get(exc.job_id).host if workspace else None
+        except JobNotFound:
+            return JSONResponse({"detail": f"No Job {exc.job_id}"}, status_code=404)
+        where = f": they are on {host.name}" if host else ""
+        return JSONResponse({"detail": f"This Job's files aren't on this machine{where}"}, status_code=409)
 
     if (settings.frontend_dir / "index.html").is_file():
         _serve_frontend(app, settings.frontend_dir)

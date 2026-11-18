@@ -203,11 +203,11 @@ class AgentSessionManager:
         task.add_done_callback(self._logins.discard)
 
     def transcript(self, job_id: str, candidate_id: str, thread: str) -> list[TranscriptTurn]:
-        return load_transcript(self._store.job_dir(job_id), candidate_id, thread)
+        return load_transcript(self._store.documents(job_id), candidate_id, thread)
 
     def finished_turn(self, job_id: str, candidate_id: str, turn: str) -> TranscriptTurn | None:
         """A finished turn of any of the Candidate's Threads."""
-        return find_turn(self._store.job_dir(job_id), candidate_id, turn)
+        return find_turn(self._store.documents(job_id), candidate_id, turn)
 
     async def close(self) -> None:
         """Cancel every turn, forget every session's token and end the event streams."""
@@ -300,7 +300,7 @@ class AgentSessionManager:
             first_revision=first, last_revision=last, stop=stop, started_at=started_at,
         )
         # Kept before it is announced, so that whoever hears it finished can Revert it at once.
-        await asyncio.to_thread(append_turn, self._store.job_dir(session.job_id), session.candidate_id, thread, record)
+        await asyncio.to_thread(append_turn, self._store.documents(session.job_id), session.candidate_id, thread, record)
         publish(TurnFinished(turn=turn, stop=stop, first_revision=first, last_revision=last))
 
     async def _context(

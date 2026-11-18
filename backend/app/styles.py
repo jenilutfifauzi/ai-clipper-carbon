@@ -11,7 +11,6 @@ DATA_DIR/presets.json.
 """
 
 import math
-import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
@@ -33,7 +32,7 @@ from pydantic_core import core_schema
 
 from app.canvas import REFERENCE
 from app.fonts import DEFAULT_FONT, registry
-from app.storage import write_atomic
+from app.documents import Document, document_of
 from app.transition_kinds import TRANSITION_DEFAULT_SECS, TRANSITION_SECS, TransitionKind, TransitionSound
 
 # In DATA_DIR.
@@ -567,9 +566,8 @@ def laid_over(defaults: dict, given: dict, at: str = "") -> dict:
 class PresetStore:
     """The built-in Presets and the owner's, in `path`."""
 
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._lock = threading.Lock()
+    def __init__(self, path: Path | Document) -> None:
+        self._doc = document_of(path)
 
     def all(self) -> list[StylePreset]:
         """The built-in Presets, then the owner's in the order they were made."""
@@ -604,7 +602,7 @@ class PresetStore:
         watermark: WatermarkStyle = WatermarkStyle(),
         join_transition: JoinTransition | None = None,
     ) -> StylePreset:
-        with self._lock:
+        with self._doc.changing():
             preset = StylePreset(uuid4().hex[:8], name, caption, hook, watermark=watermark, join_transition=join_transition)
             self._save([*self._saved(), preset])
             return preset
@@ -618,7 +616,7 @@ class PresetStore:
         watermark: WatermarkStyle = WatermarkStyle(),
         join_transition: JoinTransition | None = None,
     ) -> StylePreset:
-        with self._lock:
+        with self._doc.changing():
             saved = self._saved()
             i = self._index(saved, preset_id)
             preset = replace(saved[i], name=name, caption=caption, hook=hook, watermark=watermark, join_transition=join_transition)
@@ -626,7 +624,7 @@ class PresetStore:
             return preset
 
     def delete(self, preset_id: str) -> None:
-        with self._lock:
+        with self._doc.changing():
             saved = self._saved()
             i = self._index(saved, preset_id)
             self._save([*saved[:i], *saved[i + 1 :]])
@@ -640,8 +638,8 @@ class PresetStore:
         raise PresetNotFound(preset_id)
 
     def _saved(self) -> list[StylePreset]:
-        return _PRESETS.validate_json(self.path.read_bytes()) if self.path.is_file() else []
+        saved = self._doc.read()
+        return [] if saved is None else _PRESETS.validate_json(saved)
 
     def _save(self, presets: list[StylePreset]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        write_atomic(self.path, _PRESETS.dump_json(presets, indent=2))
+        self._doc.write(_PRESETS.dump_json(presets, indent=2))
