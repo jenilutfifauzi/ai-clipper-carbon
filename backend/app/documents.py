@@ -154,11 +154,10 @@ class PostgresDocument:
 
     def read(self) -> bytes | None:
         column = sql.SQL("body::text" if self._sealer is None else "ciphertext")
-        with self._database.connection() as connection:
-            row = connection.execute(
-                sql.SQL("SELECT {} FROM {} WHERE account_id = %s AND key = %s").format(column, self._table),
-                (self._account_id, self._key),
-            ).fetchone()
+        row = self._database.execute(
+            sql.SQL("SELECT {} FROM {} WHERE account_id = %s AND key = %s").format(column, self._table),
+            (self._account_id, self._key),
+        ).fetchone()
         if row is None:
             return None
         if self._sealer is None:
@@ -175,33 +174,31 @@ class PostgresDocument:
         else:
             insert = "INSERT INTO secrets (account_id, key, ciphertext) VALUES (%s, %s, %s)"
             kept, value = "ciphertext = EXCLUDED.ciphertext", self._sealer.sealed(data)
-        with self._database.connection() as connection:
-            row = connection.execute(
-                f"{insert} ON CONFLICT (account_id, key) DO UPDATE"
-                f" SET {kept}, version = nextval('document_versions'), updated_at = now()"
-                " RETURNING version",
-                (self._account_id, self._key, value),
-            ).fetchone()
-        self._seen = None if row is None else (time.monotonic(), row[0])
+        self._database.execute(
+            f"{insert} ON CONFLICT (account_id, key) DO UPDATE"
+            f" SET {kept}, version = nextval('document_versions'), updated_at = now()",
+            (self._account_id, self._key, value),
+        )
+        # Its new version is asked when next wanted: reading it here would be a round trip of its
+        # own inside a transaction, whose writes otherwise go with the commit.
+        self._seen = None
 
     def delete(self) -> bool:
-        with self._database.connection() as connection:
-            deleted = connection.execute(
-                sql.SQL("DELETE FROM {} WHERE account_id = %s AND key = %s").format(self._table),
-                (self._account_id, self._key),
-            ).rowcount
+        deleted = self._database.execute(
+            sql.SQL("DELETE FROM {} WHERE account_id = %s AND key = %s RETURNING 1").format(self._table),
+            (self._account_id, self._key),
+        ).fetchone()
         self._seen = (time.monotonic(), None)
-        return deleted > 0
+        return deleted is not None
 
     def version(self) -> object | None:
         seen = self._seen
         if seen is not None and time.monotonic() - seen[0] < VERSION_FRESH_SECS:
             return seen[1]
-        with self._database.connection() as connection:
-            row = connection.execute(
-                sql.SQL("SELECT version FROM {} WHERE account_id = %s AND key = %s").format(self._table),
-                (self._account_id, self._key),
-            ).fetchone()
+        row = self._database.execute(
+            sql.SQL("SELECT version FROM {} WHERE account_id = %s AND key = %s").format(self._table),
+            (self._account_id, self._key),
+        ).fetchone()
         version = None if row is None else row[0]
         self._seen = (time.monotonic(), version)
         return version
@@ -240,21 +237,19 @@ class PostgresDocuments:
 
     def read_named(self, name: str) -> dict[str, bytes]:
         ending = f"/{name}"
-        with self._database.connection() as connection:
-            rows = connection.execute(
-                "SELECT key, body::text FROM documents"
-                " WHERE account_id = %s AND starts_with(key, %s) AND right(key, %s) = %s",
-                (self._account_id, self._prefix, len(ending), ending),
-            ).fetchall()
+        rows = self._database.execute(
+            "SELECT key, body::text FROM documents"
+            " WHERE account_id = %s AND starts_with(key, %s) AND right(key, %s) = %s",
+            (self._account_id, self._prefix, len(ending), ending),
+        ).fetchall()
         folders = ((key[len(self._prefix) : -len(ending)], body) for key, body in rows)
         return {folder: body.encode() for folder, body in folders if folder and "/" not in folder}
 
     def delete_under(self, folder: str) -> None:
-        with self._database.connection() as connection:
-            connection.execute(
-                "DELETE FROM documents WHERE account_id = %s AND starts_with(key, %s)",
-                (self._account_id, f"{self._prefix}{folder}/"),
-            )
+        self._database.execute(
+            "DELETE FROM documents WHERE account_id = %s AND starts_with(key, %s)",
+            (self._account_id, f"{self._prefix}{folder}/"),
+        )
 
 
 def document_of(source: Path | Document) -> Document:

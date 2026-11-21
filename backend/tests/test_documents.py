@@ -19,7 +19,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from psycopg import sql
 
-from app import auth, main as main_module
+from app import auth, database as database_module, main as main_module
 from app.agent.transcript_store import TranscriptTurn, append_turn, create_thread, delete_thread, list_threads, load_transcript
 from app.candidates import Candidate, Descriptions
 from app.database import Database
@@ -292,3 +292,51 @@ def test_a_candidates_agent_threads_are_kept_among_its_jobs_documents(documents)
     delete_thread(again, "cand", thread.id)
     assert list_threads(job, "cand") == []
     assert load_transcript(job, "cand", thread.id) == []
+
+
+@in_postgres
+def test_a_new_connection_that_is_slow_is_given_up_for_another(monkeypatch, schema, caplog):
+    monkeypatch.setattr(database_module, "PROBE_SECS", -1.0)
+    monkeypatch.setattr(database_module, "PROBE_TRIES", 1)
+    database = Database(TEST_DATABASE_URL, schema=schema)
+
+    database.open()
+
+    # Every connection being as slow, the network is: the second is kept, and said to be slow.
+    try:
+        assert "The database is slow from here" in caplog.text
+        PostgresDocuments(database, "account").doc("profile.json").write(b"{}")
+        assert PostgresDocuments(database, "account").doc("profile.json").read() == b"{}"
+    finally:
+        database.close()
+
+
+@in_postgres
+def test_a_statement_postgres_refuses_undoes_its_change_and_leaves_the_connection_usable(database):
+    doc = PostgresDocuments(database, "account").doc("presets.json")
+    doc.write(b'["kept"]')
+
+    with pytest.raises(psycopg.Error), doc.changing():
+        doc.write(b'["lost"]')
+        doc.write(b"{not json")
+
+    assert json.loads(doc.read()) == ["kept"]
+    # Every connection of the pool takes a change again.
+    for number in range(8):
+        with doc.changing():
+            doc.write(json.dumps([number]).encode())
+    assert json.loads(doc.read()) == [7]
+
+
+@in_postgres
+def test_a_statement_whose_connection_died_is_made_again_on_another(database):
+    doc = PostgresDocuments(database, "account").doc("profile.json")
+    doc.write(b"{}")
+    with database.connection() as connection:
+        lent = connection.info.backend_pid
+
+    # Used a moment ago, so lent again unasked; and dead by then.
+    with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as other:
+        other.execute("SELECT pg_terminate_backend(%s)", (lent,))
+
+    assert doc.read() == b"{}"
