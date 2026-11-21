@@ -1,4 +1,4 @@
-import { Check, Circle, Clock, Loader2, X } from "lucide-react";
+import { Check, Circle, Clock, Loader2, Pause, X } from "lucide-react";
 import type { JobProgress } from "../api";
 import { cx } from "../format";
 import { STAGES, stageLabel, stageStates, type StageState } from "../stages";
@@ -8,6 +8,7 @@ const MARKERS: Record<StageState, { Icon: typeof Check; tone: string; spoken: st
   pending: { Icon: Circle, tone: "bg-fill text-muted", spoken: "not started" },
   active: { Icon: Loader2, tone: "bg-surface-raised text-accent-text ring-2 ring-accent", spoken: "in progress" },
   waiting: { Icon: Clock, tone: "bg-waiting-surface text-waiting ring-2 ring-waiting", spoken: "paused" },
+  stopped: { Icon: Pause, tone: "bg-surface-raised text-muted ring-2 ring-border", spoken: "stopped" },
   failed: { Icon: X, tone: "bg-danger-surface text-danger ring-2 ring-danger", spoken: "failed" },
   done: { Icon: Check, tone: "bg-linear-to-b from-accent to-accent-end text-on-accent shadow-accent", spoken: "done" },
 };
@@ -31,7 +32,7 @@ export function StageProgress({
       {STAGES.map((stage, i) => {
         const state = states[i];
         const { Icon, tone, spoken } = MARKERS[state];
-        const current = state === "active" || state === "waiting" || state === "failed";
+        const current = state === "active" || state === "waiting" || state === "stopped" || state === "failed";
         const label = stageLabel(stage.status, uploaded);
         const last = i === STAGES.length - 1;
         return (

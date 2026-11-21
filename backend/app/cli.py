@@ -3,6 +3,8 @@
 Gemini to be less busy. `render <job-id> [<candidate-id> ...]` renders Clips.
 
 `eval` measures Selection against the Reference Set, and `gate` checks an eval report against the gate.
+
+`import-accounts` brings the accounts' documents from their data directories into Postgres (ADR 0033).
 """
 
 import argparse
@@ -11,11 +13,15 @@ import sys
 from pathlib import Path
 
 from app import fonts, looks
+from app.account_import import account_folders, import_account
 from app.candidates import Candidate
 from app.clips import Clip
 from app.config import Settings, load_settings
+from app.database import Database
+from app.documents import PostgresDocuments
 from app.evaluation import EvalError, evaluate, gate, gate_summary, latest_report, summary
 from app.jobs import DEFAULT_LANGUAGE, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore
+from app.machine import this_machine
 from app.matte import MatteRunner, RvmMatter
 from app.media import MEDIA_DIR, MediaStore
 from app.model_download import MODELS_DIR
@@ -26,6 +32,7 @@ from app.profile import PROFILE_FILE, ProfileStore
 from app.references import ReferenceSetError
 from app.rendering import NothingToRender, Renders
 from app.review import CandidateNotFound
+from app.sealing import Sealer
 from app.transcriber import WhisperTranscriber
 from app.transcript import timestamp
 
@@ -64,6 +71,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     check = commands.add_parser("gate", help="check an eval report against the gate, once its postable counts are in")
     check.add_argument("report", nargs="?", type=Path, help="the report's folder (default: the newest report)")
+    bring = commands.add_parser(
+        "import-accounts",
+        help="copy each account's documents and secrets from DATA_DIR/users into the Postgres of DATABASE_URL, "
+        "keeping what is already there; the files and the media stay as they are",
+    )
+    bring.add_argument("--account", help="one account's directory name (default: every account)")
+    bring.add_argument("--dry-run", action="store_true", help="list what would be imported, and write nothing")
+    bring.add_argument("--overwrite", action="store_true", help="replace what Postgres already has with the files' contents")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -72,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
         return _evaluate(settings)
     if args.command == "gate":
         return _gate(args.report)
+    if args.command == "import-accounts":
+        return _import_accounts(settings, args.account, overwrite=args.overwrite, dry_run=args.dry_run)
 
     fonts.use(settings.data_dir / fonts.IMPORTED_DIR)
     looks.use(settings.data_dir / looks.IMPORTED_DIR)
@@ -171,6 +188,41 @@ def _render(settings: Settings, store: JobStore, job_id: str, candidate_ids: lis
         print(f"The app is rendering Job {job_id}: it renders these Clips too")
         return 0
     return 1 if failed else 0
+
+
+def _import_accounts(settings: Settings, account: str | None, *, overwrite: bool, dry_run: bool) -> int:
+    if not settings.database_url:
+        print("Set DATABASE_URL (and SECRETS_KEY) in .env first: there is no Postgres to import into")
+        return 1
+    try:
+        sealer = Sealer(settings.secrets_key)
+    except ValueError as exc:
+        print(exc)
+        return 1
+    folders = account_folders(settings.data_dir, account)
+    if not folders:
+        print(f"No account{f' {account}' if account else ''} in {settings.data_dir / 'users'}")
+        return 1
+    machine = this_machine(settings.data_dir, settings.machine_name)
+    database = Database(settings.database_url)
+    database.open()
+    try:
+        for folder in folders:
+            documents = PostgresDocuments(database, folder.name, sealer)
+            imported = import_account(folder, documents, machine, overwrite=overwrite, dry_run=dry_run)
+            print(
+                f"Account {folder.name[:12]}: {len(imported.written)} {'to import' if dry_run else 'imported'}, "
+                f"{len(imported.kept)} already in Postgres, {len(imported.skipped)} skipped"
+            )
+            for key in imported.written if dry_run else ():
+                print(f"  {key}")
+            for key, why in imported.skipped.items():
+                print(f"  skipped {key}: {why}")
+    finally:
+        database.close()
+    if not dry_run:
+        print(f"Their Jobs' media stay on this machine, {machine.name}")
+    return 0
 
 
 def _evaluate(settings: Settings) -> int:

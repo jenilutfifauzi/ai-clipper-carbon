@@ -14,11 +14,14 @@ from uuid import uuid4
 
 from pydantic import TypeAdapter
 
+from app.documents import Document
 from app.library import Index, shrink
 
 # In DATA_DIR, with its index.
 LOGOS_DIR = "logos"
 INDEX_FILE = "logos.json"
+# The index's key among the account's documents.
+LOGOS_INDEX = f"{LOGOS_DIR}/{INDEX_FILE}"
 # The largest upload taken, and the longest side kept.
 MAX_UPLOAD_BYTES = 5 * 2**20
 MAX_SIDE = 1080
@@ -51,10 +54,10 @@ _LOGOS = TypeAdapter(list[Logo])
 class LogoStore:
     """The owner's Logos, in `folder`: <id>.png each, and their index."""
 
-    def __init__(self, folder: Path, ffmpeg: Path) -> None:
+    def __init__(self, folder: Path, ffmpeg: Path, index: Document | None = None) -> None:
         self.folder = folder
         self.ffmpeg = ffmpeg
-        self._index = Index(folder / INDEX_FILE, _LOGOS)
+        self._index = Index(index or folder / INDEX_FILE, _LOGOS)
 
     def all(self) -> list[Logo]:
         """In the order they were uploaded."""

@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, Clock, Hourglass, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, CirclePause, Clock, Hourglass, Loader2 } from "lucide-react";
 import type { JobStatus } from "../api";
 import { cx } from "../format";
 
@@ -10,6 +10,7 @@ const BADGES: Record<JobStatus, { label: string; tone: string; Icon: typeof Cloc
   review: { label: "Ready for review", tone: "text-success", Icon: CheckCircle2 },
   rendering: { label: "Rendering", tone: "text-accent-text", Icon: Loader2 },
   waiting_quota: { label: "Waiting for quota", tone: "text-waiting", Icon: Clock },
+  stopped: { label: "Stopped", tone: "text-muted", Icon: CirclePause },
   error: { label: "Failed", tone: "text-danger", Icon: AlertCircle },
 };
 

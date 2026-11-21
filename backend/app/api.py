@@ -1,5 +1,6 @@
 """HTTP API routes. Services come from `app.state`, set up by `create_app`."""
 
+import math
 import shutil
 import tempfile
 import time
@@ -70,7 +71,8 @@ from app.effected import EFFECTED_DIR, NoCopy, copies_used as effected_used, eff
 from app.item_sound import NoItem, NoSound, SoundOf, save_item_sound
 from app.kokoro import KokoroBusy, KokoroModel
 from app.person_model import PersonModel, PersonModelBusy
-from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore, JobWarning
+from app.machine import Machine
+from app.jobs import Job, JobConflict, JobNotFound, JobOptions, JobStatus, JobStore, JobWarning, Project
 from app.layer_pictures import OLD_PICTURES_DIR, PICTURES_DIR, pictures_used, sweep as sweep_pictures
 from app import audio_effects, video_effects
 from app.looks import MAX_UPLOAD_BYTES as MAX_LOOK_BYTES, BadCube, ImportedLooks, Look, LookNotFound, all_looks, builtin_looks, get_look
@@ -154,6 +156,9 @@ ADJUSTMENT_LAYERS_MAX = 50
 PICTURES_ROUTE = "texts"
 
 _OPTIONS = TypeAdapter(JobOptions)
+_PROJECT = TypeAdapter(Project)
+# The upload form's field that makes the Job a Project (`Project` as JSON), before the file.
+PROJECT_FIELD = "project"
 _CANDIDATE = TypeAdapter(Candidate)
 _HISTORY_ENTRY = TypeAdapter(HistoryEntry)
 
@@ -798,6 +803,13 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@router.get("/machine")
+def machine(store: Store) -> Machine | None:
+    """This machine, as each Job names its Host: a Job of another Host has its media there, not here.
+    Null when the Jobs' documents are files on this machine, which then has all their media."""
+    return store.machine
+
+
 @router.post("/jobs", status_code=201)
 def create_job(body: JobRequest, store: Store, profiles: Profiles, templates: Templates, worker: JobWorker) -> Job:
     """Create a Job and queue it. 404 for an unknown Template in its options."""
@@ -808,30 +820,42 @@ def create_job(body: JobRequest, store: Store, profiles: Profiles, templates: Te
 
 @router.post("/jobs/upload", status_code=201)
 async def upload_job(
-    request: Request, settings: AppSettings, store: Store, profiles: Profiles, templates: Templates, worker: JobWorker
+    request: Request,
+    settings: AppSettings,
+    store: Store,
+    profiles: Profiles,
+    templates: Templates,
+    library: Media,
+    worker: JobWorker,
 ) -> Job:
     """Create a Job from an uploaded master file: a multipart/form-data body with an `options` field
-    (JobOptions as JSON; optional) and then a `file`. The file is streamed to disk as it comes. 507
+    (JobOptions as JSON; optional), a `project` field (Project as JSON, its videos in the Media
+    Library: optional, and 422 for one that isn't a video there) to make it a Project, and then a `file`. The file is streamed to disk as it comes. 507
     before anything is written when the Content-Length leaves less than Settings.upload_reserve_bytes
     free (the browser asks `check_upload` first), or as soon as free space runs short while it
     comes; 400 for an upload cut short, which leaves nothing behind."""
 
-    def accept(fields: dict[str, str]) -> JobOptions:
+    def accept(fields: dict[str, str]) -> tuple[JobOptions, Project | None]:
         try:
             options = _OPTIONS.validate_json(fields.get(OPTIONS_FIELD) or "{}")
+            project = _PROJECT.validate_json(fields[PROJECT_FIELD]) if PROJECT_FIELD in fields else None
         except ValidationError as exc:
             raise RequestValidationError(exc.errors(include_url=False)) from None
-        return with_template(options, templates)
+        for media in project.media if project else []:
+            item = library.find(media)
+            if item is None or item.kind is not MediaKind.VIDEO:
+                raise HTTPException(422, f"No video {media} in the Media Library")
+        return with_template(options, templates), project
 
     try:
-        received, options = await receive(
+        received, (options, project) = await receive(
             request, settings.data_dir / UPLOADS_DIR, settings.upload_reserve_bytes, accept
         )
     except NotEnoughSpace as exc:
         raise HTTPException(507, str(exc)) from None
     except BadUpload as exc:
         raise HTTPException(400, str(exc)) from None
-    job = store.create("", options, profiles.load(), upload=(received.path, received.name))
+    job = store.create("", options, profiles.load(), upload=(received.path, received.name), project=project)
     worker.submit(job.id)
     return job
 
@@ -861,11 +885,15 @@ def list_jobs(
     store: Store,
     limit: Annotated[int | None, Query(ge=1, le=100)] = None,
     before: AwareDatetime | None = None,
+    project: bool | None = None,
 ) -> list[Job]:
-    """The Jobs, newest first: every one, or a page of `limit`. The next page is the one `before`
-    the last Job's `created_at`, a cursor that neither skips nor repeats a Job when others are
-    started or deleted meanwhile."""
+    """The Jobs, newest first: every one, or a page of `limit`; with `project`, only the Projects
+    (true) or only the others (false). The next page is the one `before` the last Job's
+    `created_at`, a cursor that neither skips nor repeats a Job when others are started or deleted
+    meanwhile."""
     jobs = store.all()
+    if project is not None:
+        jobs = [job for job in jobs if (job.project is not None) is project]
     if before is not None:
         jobs = [job for job in jobs if job.created_at < before]
     return jobs[:limit]
@@ -880,7 +908,9 @@ def get_job(job_id: str, store: Store, library: Media, mattes: MatteMaker, backg
     except JobNotFound:
         raise HTTPException(404, f"No Job {job_id}") from None
     candidates = store.load_candidates(job_id)
-    background.add_task(sweep_unused, store, library, mattes, job_id)
+    # On the machine that has the Job's media only: there is nothing of it to sweep on another.
+    if store.here(job_id):
+        background.add_task(sweep_unused, store, library, mattes, job_id)
     return JobDetail(
         **vars(job),
         transcript=store.load_transcript(job_id),
@@ -997,7 +1027,7 @@ def job_retimed(job: ExistingJob, body: RetimedRequest, store: Store, settings: 
 async def stream_job_events(job: ExistingJob, store: Store) -> AsyncIterator[ServerSentEvent]:
     """The Job's progress (status, stage, percent, message, error, warnings, retry_at) as `job`
     events: one now, then one per change. The stream ends with an `end` event once the Job is in
-    review or error, or is deleted; after a retry, open it again."""
+    review, error or stopped, or is deleted; after a retry or a continue, open it again."""
     async for event in job_events(store, job.id):
         yield event
 
@@ -1022,6 +1052,30 @@ def retry_job(job_id: str, worker: JobWorker) -> Job:
         raise HTTPException(404, f"No Job {job_id}") from None
     except JobConflict as exc:
         raise HTTPException(409, f"{exc}: only a Job in error can be retried") from None
+
+
+@router.post("/jobs/{job_id}/stop")
+def stop_job(job_id: str, worker: JobWorker) -> Job:
+    """Stop a Job on its way to review (queued, in a stage, or waiting for quota). One queued or
+    waiting is `stopped` at once; a running one when its stage next checks, with "Stopping…" as its
+    message meanwhile: follow its events."""
+    try:
+        return worker.stop_job(job_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    except JobConflict as exc:
+        raise HTTPException(409, f"{exc}: only a Job on its way to review can be stopped") from None
+
+
+@router.post("/jobs/{job_id}/continue")
+def continue_job(job_id: str, worker: JobWorker) -> Job:
+    """Queue a `stopped` Job again. It resumes from the stage it stopped in."""
+    try:
+        return worker.resume(job_id)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    except JobConflict as exc:
+        raise HTTPException(409, f"{exc}: only a stopped Job can be continued") from None
 
 
 @router.delete("/jobs/{job_id}", status_code=204)
@@ -1520,8 +1574,16 @@ def _episode(job: Job, transcript: Transcript, settings: Settings) -> Episode:
     """What a Job's edits are checked against (`review.Episode`), but the Media Library's sizes."""
     assert job.source is not None  # a Job with a Transcript has its Source
     metadata = job.source.metadata
+    # A Project's ranges aren't snapped to Words (it has none) nor held to a longest clip.
+    project = job.project is not None
     return Episode(
-        transcript, metadata.duration, job.options.max_secs, settings.selection, job.options.aspect, (metadata.width, metadata.height)
+        transcript,
+        metadata.duration,
+        math.inf if project else job.options.max_secs,
+        settings.selection,
+        job.options.aspect,
+        (metadata.width, metadata.height),
+        snap=not project,
     )
 
 
@@ -1885,7 +1947,7 @@ def create_template(
     Face or a Logo that isn't there, or media it can't use so (`_saveable`)."""
     captured = _saveable(body, store, settings, presets, library, faces, logos)
     template = templates.create(body.name, captured)
-    notices = [*captured.notices, *_poster(template.id, body, store, settings, presets, logos, library, media_words, templates)]
+    notices = [*captured.notices, *_poster(template.id, body, store, settings, presets, logos, library, media_words)]
     return SavedTemplate(**vars(template), notices=notices)
 
 
@@ -1910,21 +1972,21 @@ def save_over_template(
         template = templates.save_over(template_id, body.name, captured)
     except TemplateNotFound:
         raise HTTPException(404, f"No Template {template_id}") from None
-    notices = [*captured.notices, *_poster(template.id, body, store, settings, presets, logos, library, media_words, templates)]
+    notices = [*captured.notices, *_poster(template.id, body, store, settings, presets, logos, library, media_words)]
     return SavedTemplate(**vars(template), notices=notices)
 
 
 @router.get("/templates/{template_id}/poster", response_class=FileResponse)
-def template_poster(template_id: str, templates: Templates) -> FileResponse:
+def template_poster(template_id: str, settings: AppSettings) -> FileResponse:
     """A Template's poster, a PNG; 404 when it has none."""
-    path = _poster_path(templates, template_id)
+    path = _poster_path(settings, template_id)
     if not path.is_file():
         raise HTTPException(404, f"Template {template_id} has no poster")
     return FileResponse(path, media_type="image/png")
 
 
-def _poster_path(templates: TemplateStore, template_id: str) -> Path:
-    return templates.path.parent / POSTERS_DIR / f"{template_id}.png"
+def _poster_path(settings: Settings, template_id: str) -> Path:
+    return settings.data_dir / POSTERS_DIR / f"{template_id}.png"
 
 
 def _poster(
@@ -1936,7 +1998,6 @@ def _poster(
     logos: LogoStore,
     library: MediaStore,
     media_words: MediaWordsStore,
-    templates: TemplateStore,
 ) -> list[str]:
     """Draw the Template's poster from `body`'s draft at `poster_at`, if given, in place of the one it
     had; what the owner is told when it couldn't be (the Template is saved all the same)."""
@@ -1945,7 +2006,7 @@ def _poster(
     planned = _draft_plan(body.job_id, body.candidate_id, store, settings, presets, logos, library, media_words, body.edits)
     job, job_dir = store.get(body.job_id), store.job_dir(body.job_id)
     try:
-        draw_poster(job, job_dir, planned.plan, body.poster_at, _poster_path(templates, template_id), POSTER_SIZE, settings, library, logos)
+        draw_poster(job, job_dir, planned.plan, body.poster_at, _poster_path(settings, template_id), POSTER_SIZE, settings, library, logos)
     except RuntimeError as exc:
         return [f"Its poster couldn't be made: {exc}"]
     return []
@@ -1961,14 +2022,14 @@ def rename_template(template_id: str, body: TemplateName, templates: Templates) 
 
 
 @router.delete("/templates/{template_id}", status_code=204)
-def delete_template(template_id: str, templates: Templates) -> None:
+def delete_template(template_id: str, templates: Templates, settings: AppSettings) -> None:
     """Delete one of the Templates; when it was the default, there is then none. The Candidates it
     was applied to keep their Template items, and Jobs that chose it make their new ones plain."""
     try:
         templates.delete(template_id)
     except TemplateNotFound:
         raise HTTPException(404, f"No Template {template_id}") from None
-    _poster_path(templates, template_id).unlink(missing_ok=True)
+    _poster_path(settings, template_id).unlink(missing_ok=True)
 
 
 @router.post("/jobs/{job_id}/templates/apply")

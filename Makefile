@@ -10,7 +10,7 @@ FFMPEG_FULL := $(or $(FFMPEG_BIN),$(shell command -v ffmpeg))
 INSTALL_HINT := a static ffmpeg build with libass (e.g. BtbN's GPL build) on PATH or FFMPEG_BIN, and deno (https://deno.com)
 endif
 
-.PHONY: setup prerequisites check-ffmpeg dev build test test-whisper analyze reanalyze retry render eval gate update-ytdlp
+.PHONY: setup prerequisites check-ffmpeg dev build test test-whisper analyze reanalyze retry render eval gate import-accounts update-ytdlp
 
 # Install backend and frontend dependencies, download models and font, check ffmpeg.
 setup: prerequisites
@@ -89,6 +89,11 @@ eval:
 # make gate [REPORT=eval/reports/v1/2026-10-13T14-30-00Z]
 gate:
 	$(UV) run python -m app.cli gate $(if $(REPORT),"$(abspath $(REPORT))")
+
+# Copy every account's documents and secrets from DATA_DIR/users into the Postgres of DATABASE_URL, keeping
+# what is already there (docs/adr/0033): make import-accounts [ARGS="--dry-run"]
+import-accounts:
+	$(UV) run python -m app.cli import-accounts $(ARGS)
 
 # Upgrade yt-dlp (and its pinned extras) in uv.lock and the environment.
 update-ytdlp:

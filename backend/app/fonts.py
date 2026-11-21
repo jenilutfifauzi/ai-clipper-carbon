@@ -32,6 +32,7 @@ from pathlib import Path
 from pydantic import TypeAdapter
 
 from app.config import FONTS_DIR
+from app.documents import Document
 from app.library import Index
 from app.listeners import Listeners
 from app.storage import write_atomic
@@ -39,6 +40,8 @@ from app.storage import write_atomic
 # In DATA_DIR, with its index.
 IMPORTED_DIR = "fonts"
 INDEX_FILE = "fonts.json"
+# The index's key among the account's documents.
+IMPORTED_INDEX = f"{IMPORTED_DIR}/{INDEX_FILE}"
 # The largest file taken: a CJK collection is tens of megabytes.
 MAX_UPLOAD_BYTES = 64 * 2**20
 DEFAULT_FONT = "montserrat-extrabold"
@@ -172,13 +175,13 @@ class Faces:
     """The bundled Faces, then those imported into `folder` in the order they were imported: <id>.ttf
     or <id>.otf each, and their index. Without a folder, the bundled ones only."""
 
-    def __init__(self, folder: Path | None = None) -> None:
+    def __init__(self, folder: Path | None = None, index: Document | None = None) -> None:
         self.folder = folder
-        self._index = None if folder is None else Index(folder / INDEX_FILE, _FACES)
+        self._index = None if folder is None else Index(index or folder / INDEX_FILE, _FACES)
         self._lock = threading.Lock()
         self._listeners = Listeners()
         # The imported Faces as last read, and the index's state they were read at.
-        self._read: tuple[tuple[int, int] | None, list[Face]] = (None, [])
+        self._read: tuple[object | None, list[Face]] = (None, [])
 
     def ids(self) -> list[str]:
         return [*BUNDLED_IDS, *(face.id for face in self._imported())]
@@ -288,11 +291,7 @@ class Faces:
         """The imported Faces, read again when the index has changed since they were last read."""
         if self._index is None or self.folder is None:
             return []
-        try:
-            stat = self._index.path.stat()
-            state = (stat.st_mtime_ns, stat.st_size)
-        except FileNotFoundError:
-            state = None
+        state = self._index.version()
         seen, faces = self._read
         if state != seen:
             folder = self.folder

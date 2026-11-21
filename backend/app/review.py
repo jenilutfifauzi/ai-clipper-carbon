@@ -122,6 +122,9 @@ class Episode:
     aspect: Aspect = Aspect.PORTRAIT
     source: tuple[int, int] | None = None
     sizes: Sizes = field(default_factory=dict)
+    # Whether ranges of the Source snap to its Words: not in a Project, which has none (it is never
+    # transcribed), so its ranges are kept as given.
+    snap: bool = True
 
     def bounds(self, start: float, end: float, keep_start: bool = False, keep_end: bool = False) -> tuple[float, float]:
         """`start`..`end` snapped to Words (see selection.snap), but for the ends kept where they are;
@@ -130,7 +133,7 @@ class Episode:
             raise InvalidEdit(
                 f"The range {start:g}–{end:g} s must lie within the Source (0–{self.duration:g} s), start before end"
             )
-        snapped = snap(self.transcript, self.duration, self.tuning, start, end)
+        snapped = snap(self.transcript, self.duration, self.tuning, start, end) if self.snap else (start, end)
         if snapped is None and not (keep_start or keep_end):
             raise InvalidEdit(f"No Words between {start:g} s and {end:g} s")
         snapped = snapped or (start, end)

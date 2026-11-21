@@ -14,7 +14,6 @@ Presets are. There are no built-in ones.
 
 import math
 import re
-import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, datetime
@@ -54,7 +53,7 @@ from app.jobs import DEFAULT_TEMPLATE, JobOptions
 from app.keyframes import rewindow
 from app.review import CandidateChange, Episode, update
 from app.segment_time import overlay_time, segment_time, transition_overlap
-from app.storage import write_atomic
+from app.documents import Document, document_of
 from app.styles import DEFAULT_PRESET, Name, StyleOverrides
 from app.video_effects import VIDEO_EFFECTS_MAX, VideoEffect
 
@@ -912,9 +911,8 @@ _SAVED = TypeAdapter(_Saved)
 class TemplateStore:
     """The owner's Templates, in `path`, in the order they were made."""
 
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._lock = threading.Lock()
+    def __init__(self, path: Path | Document) -> None:
+        self._doc = document_of(path)
 
     def all(self) -> list[Template]:
         return self._saved().templates
@@ -932,7 +930,7 @@ class TemplateStore:
     def use_as_default(self, template_id: str | None) -> None:
         """Make one of the Templates the default, or with None, have none. TemplateNotFound for an
         unknown one."""
-        with self._lock:
+        with self._doc.changing():
             saved = self._saved()
             if template_id is not None:
                 self._index(saved, template_id)
@@ -964,7 +962,7 @@ class TemplateStore:
 
     def create(self, name: str, captured: Captured) -> Template:
         now = datetime.now(UTC)
-        with self._lock:
+        with self._doc.changing():
             saved = self._saved()
             template = Template(uuid4().hex[:8], name, now, now, **captured.contents())
             self._save(replace(saved, templates=[*saved.templates, template]))
@@ -981,14 +979,14 @@ class TemplateStore:
     def delete(self, template_id: str) -> None:
         """Delete one of the Templates, which then is no longer the default. Candidates keep their
         Template items, whose mark then names a missing Template."""
-        with self._lock:
+        with self._doc.changing():
             saved = self._saved()
             i = self._index(saved, template_id)
             default = None if saved.default == template_id else saved.default
             self._save(replace(saved, templates=[*saved.templates[:i], *saved.templates[i + 1 :]], default=default))
 
     def _change(self, template_id: str, change: Callable[[Template], Template]) -> Template:
-        with self._lock:
+        with self._doc.changing():
             saved = self._saved()
             i = self._index(saved, template_id)
             template = replace(change(saved.templates[i]), updated_at=datetime.now(UTC))
@@ -1002,8 +1000,8 @@ class TemplateStore:
         raise TemplateNotFound(template_id)
 
     def _saved(self) -> _Saved:
-        return _SAVED.validate_json(self.path.read_bytes()) if self.path.is_file() else _Saved()
+        saved = self._doc.read()
+        return _Saved() if saved is None else _SAVED.validate_json(saved)
 
     def _save(self, saved: _Saved) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        write_atomic(self.path, _SAVED.dump_json(saved, indent=2))
+        self._doc.write(_SAVED.dump_json(saved, indent=2))

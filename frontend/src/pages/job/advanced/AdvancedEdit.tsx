@@ -249,7 +249,7 @@ export function AdvancedEditPage() {
   }, [jobId]);
 
   const index = job?.candidates?.findIndex((candidate) => candidate.id === candidateId) ?? -1;
-  const back = `/jobs/${jobId}${candidateId ? `?candidate=${candidateId}` : ""}`;
+  const back = job?.project ? "/projects" : `/jobs/${jobId}${candidateId ? `?candidate=${candidateId}` : ""}`;
   if (error || (job && (index < 0 || !job.source || !EDITABLE.has(job.status)))) {
     return (
       <div className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center gap-4 p-4">
@@ -258,7 +258,7 @@ export function AdvancedEditPage() {
           <p className="text-muted">{error ?? (index < 0 ? "This Job has no such clip." : "Clips can be edited once the Job is in review.")}</p>
           <Link to={back} className="inline-flex min-h-11 items-center gap-1.5 self-start text-accent-text hover:underline">
             <ArrowLeft aria-hidden size={16} />
-            Back to the Job
+            {job?.project ? "Back to Projects" : "Back to the Job"}
           </Link>
         </Panel>
       </div>
@@ -689,7 +689,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
         id: Date.now(),
         text: name ? `Rendering this clip with ${name}` : "Rendering this clip",
         action: (
-          <Button size="xs" onClick={() => void close()}>
+          <Button size="xs" onClick={() => void (job.project ? history.flush().then(() => navigate(`/projects/${job.id}/clips`)) : close())}>
             View clip
           </Button>
         ),
@@ -1230,7 +1230,8 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   }
 
   function leave() {
-    navigate(`/jobs/${job.id}?candidate=${candidate.id}`);
+    // A Project has no Job page to go back to: its list is where it was opened from.
+    navigate(job.project ? "/projects" : `/jobs/${job.id}?candidate=${candidate.id}`);
   }
 
   // Whether the Text Layer, Shape or Overlay `id` is one of several picked on the frame, which move with it.
@@ -1876,7 +1877,9 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                       )}
                       {/* Its top space is a spacer, not padding: padding would hold the tabs' sticky shelf
                           headings below the top edge, with the cards scrolling past above them. */}
-                      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 pb-4 before:block before:h-4 before:content-['']">
+                      {/* Relative, so that a hidden input (an upload's, a Switch's) is laid out in this scroll:
+                          laid out in the grid outside, focusing it scrolls the whole workspace off the screen. */}
+                      <div className="relative min-h-0 min-w-0 flex-1 overflow-y-auto px-4 pb-4 before:block before:h-4 before:content-['']">
                         {assets(assetTab)}
                       </div>
                     </div>
@@ -1937,7 +1940,7 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
                 />
               )}
               {!ws.inspectorHidden && (
-                <aside aria-label="Inspector" className="panel min-h-0 overflow-y-auto p-4">
+                <aside aria-label="Inspector" className="panel relative min-h-0 overflow-y-auto p-4">
                   {inspector}
                 </aside>
               )}

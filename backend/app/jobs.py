@@ -1,4 +1,5 @@
-"""Jobs and the Job store: one directory per Job, holding `job.json` and the Job's stage artifacts."""
+"""Jobs and the Job store: one directory per Job, holding the Job's media and stage artifacts, and its
+documents (`job.json`, its transcript, Candidates and Clips), kept there or in Postgres (ADR 0033)."""
 
 import fcntl
 import json
@@ -7,7 +8,7 @@ import re
 import shutil
 import threading
 from collections.abc import Callable, Collection, Iterator, Mapping
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -18,15 +19,16 @@ from uuid import uuid4
 
 from pydantic import Field, TypeAdapter, ValidationError
 
-from app.candidates import Candidate, TemplateId
+from app.candidates import Candidate, MediaId, TemplateId
 from app.canvas import Aspect
 from app.clips import Clip
+from app.documents import Document, Documents, FileDocuments
 from app.llm import ScoreResponse
+from app.machine import Machine
 from app.migration import Sizes, migrated_candidate, migrated_clip
 from app.profile import ChannelProfile
 from app.revisions import Edit, HistoryEntry, recorded
 from app.selection import Selection
-from app.storage import write_atomic
 from app.transcript import Language, Transcript
 from app.video_source import Source
 
@@ -65,11 +67,15 @@ class JobStatus(StrEnum):
     # In review, with Clips queued or being rendered; back to review once they are done.
     RENDERING = "rendering"
     WAITING_QUOTA = "waiting_quota"
+    # Stopped by the owner before review; Continue queues it again, and it resumes where it stopped.
+    STOPPED = "stopped"
     ERROR = "error"
 
 
 # The statuses in which a process is running one of the Job's stages.
 RUNNING = frozenset({JobStatus.DOWNLOADING, JobStatus.TRANSCRIBING, JobStatus.ANALYZING})
+# The statuses in which the owner can stop a Job: on its way to review.
+STOPPABLE = frozenset({JobStatus.QUEUED, JobStatus.WAITING_QUOTA, *RUNNING})
 
 
 # A new Job's Template when none is chosen: the default Template, whichever it is then.
@@ -141,6 +147,15 @@ class Upload:
 
 
 @dataclass(frozen=True)
+class Project:
+    """What makes a Job a Project (GLOSSARY.md): opened straight in the Advanced Edit, its uploaded
+    master file the first video on the Main Track and these Media Library videos after it, in order.
+    It is neither transcribed nor analyzed."""
+
+    media: list[MediaId] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class Job:
     id: str
     # The episode's YouTube URL; empty for an uploaded master file.
@@ -152,7 +167,8 @@ class Job:
     # eval run replaces it with the current profile before analyzing the Job again.
     profile: ChannelProfile = ChannelProfile()
     status: JobStatus = JobStatus.QUEUED
-    # The stage running now, or the one the Job stopped in (with `error` set, or waiting for quota);
+    # The stage running now, or the one the Job stopped in (with `error` set, waiting for quota, or
+    # stopped by the owner);
     # None when queued or done.
     stage: JobStatus | None = None
     error: str | None = None
@@ -165,7 +181,12 @@ class Job:
     quota: QuotaWait | None = None
     # Set when the Source is a master file the owner uploaded.
     upload: Upload | None = None
+    # Set for a Project: an uploaded Job opened straight in the Advanced Edit.
+    project: Project | None = None
     source: Source | None = None
+    # The machine the Job was made on, which has its media (ADR 0033); None for a Job whose documents
+    # are files in its directory.
+    host: Machine | None = None
     # The version of the Selection prompts that produced the Job's Candidates.
     prompt_version: str | None = None
     history: list[StatusChange] = field(default_factory=list)
@@ -189,6 +210,14 @@ class JobConflict(RuntimeError):
     """The Job's status, or another process running it, rules the change out."""
 
 
+class JobElsewhere(RuntimeError):
+    """The Job's media aren't on this machine: its Host alone can read them, run it and render it."""
+
+    def __init__(self, job_id: str) -> None:
+        super().__init__(f"Job {job_id}'s files aren't on this machine")
+        self.job_id = job_id
+
+
 _JOB = TypeAdapter(Job)
 _TRANSCRIPT = TypeAdapter(Transcript)
 _CANDIDATES = TypeAdapter(list[Candidate])
@@ -199,23 +228,40 @@ _HISTORY = TypeAdapter(list[HistoryEntry])
 
 
 class JobStore:
-    def __init__(self, root: Path, media_sizes: Callable[[], Sizes] = dict) -> None:
+    def __init__(
+        self,
+        root: Path,
+        media_sizes: Callable[[], Sizes] = dict,
+        documents: Documents | None = None,
+        machine: Machine | None = None,
+    ) -> None:
         """The Jobs in `root`. `media_sizes` gives the Media Library items' picture sizes, by which
-        Candidates saved in an older shape are read in today's (app/migration.py)."""
+        Candidates saved in an older shape are read in today's (app/migration.py). `documents` keeps
+        each Job's documents under its id; without them, they are files in its directory. `machine`
+        is this one, when other machines read the documents too: the Host of the Jobs made here."""
         self.root = root
+        self.machine = machine
         self._media_sizes = media_sizes
+        self._documents = documents or FileDocuments(root)
         self._lock = threading.Lock()
+        # On a thread inside `_changing`, `untold`: the changes listeners are told once all are saved.
+        self._change = threading.local()
         self._listeners: tuple[JobListener, ...] = ()
         self._listeners_lock = threading.Lock()
         # Who saved each Candidate's latest Revision in this process, and when, by Job and Candidate id.
         self._edits: dict[tuple[str, str], tuple[int, Edit, datetime]] = {}
 
     def create(
-        self, url: str, options: JobOptions, profile: ChannelProfile, upload: tuple[Path, str] | None = None
+        self,
+        url: str,
+        options: JobOptions,
+        profile: ChannelProfile,
+        upload: tuple[Path, str] | None = None,
+        project: Project | None = None,
     ) -> Job:
         """A new queued Job. For an uploaded master file, `upload` is the complete file and its name
         on the owner's machine: the file is moved into the Job's directory (on the same volume) before
-        the Job is saved, so that no Job is ever without its whole upload."""
+        the Job is saved, so that no Job is ever without its whole upload. `project` makes it a Project."""
         now = datetime.now(UTC)
         job = Job(
             id=uuid4().hex[:12],
@@ -224,9 +270,11 @@ class JobStore:
             created_at=now,
             updated_at=now,
             profile=profile,
+            project=project,
+            host=self.machine,
             history=[StatusChange(JobStatus.QUEUED, now)],
         )
-        self.job_dir(job.id).mkdir(parents=True)
+        self._dir(job.id).mkdir(parents=True)
         if upload is not None:
             path, name = upload
             suffix = Path(name).suffix.lower()
@@ -238,23 +286,20 @@ class JobStore:
         return job
 
     def get(self, job_id: str) -> Job:
-        try:
-            return _parse_job((self.job_dir(job_id) / STATE_FILE).read_bytes())
-        except FileNotFoundError:
-            raise JobNotFound(job_id) from None
+        saved = self._doc(job_id, STATE_FILE).read()
+        if saved is None:
+            raise JobNotFound(job_id)
+        return _parse_job(saved)
 
     def all(self) -> list[Job]:
         """Every Job, newest first."""
-        jobs = []
-        for path in self.root.glob(f"*/{STATE_FILE}"):
-            with suppress(FileNotFoundError):  # deleted meanwhile
-                jobs.append(_parse_job(path.read_bytes()))
+        jobs = [_parse_job(saved) for saved in self._documents.read_named(STATE_FILE).values()]
         return sorted(jobs, key=lambda job: job.created_at, reverse=True)
 
     def update(self, job_id: str, *, expect: Collection[JobStatus] | None = None, **changes: Any) -> Job:
         """Apply `changes` to the stored Job; a status change is appended to its history. With
         `expect`, only if the Job's status is one of those: otherwise JobConflict is raised."""
-        with self._lock:
+        with self._changing(job_id):
             job = self.get(job_id)
             if expect is not None and job.status not in expect:
                 raise JobConflict(f"Job {job_id} is {job.status}")
@@ -263,24 +308,28 @@ class JobStore:
             return job
 
     def delete(self, job_id: str) -> None:
-        """Remove the Job's directory with all its files. Refused (JobConflict) while one of its
-        stages runs, here or in another process."""
-        with self._lock:
+        """Remove the Job's directory with all its files, and its documents. Refused (JobConflict)
+        while one of its stages runs, here or in another process."""
+        with self._changing(job_id):
             job = self.get(job_id)
             if job.status in RUNNING:
                 raise JobConflict(f"Job {job_id} is {job.status}")
-            with self.running(job_id):
-                shutil.rmtree(self.job_dir(job_id))
+            # Deleted from another machine than its Host, its media are left on that one.
+            if self._dir(job_id).is_dir():
+                with self.running(job_id):
+                    shutil.rmtree(self._dir(job_id))
+            self._documents.delete_under(job_id)
             self._edits = {key: saved for key, saved in self._edits.items() if key[0] != job_id}
-            self._notify(job_id, None)
+            self._tell(job_id, None)
 
     @contextmanager
     def watch(self, listener: JobListener) -> Iterator[None]:
         """Call `listener` with every change this store makes to a Job, until the block ends.
 
         It is called on the thread making the change (the worker's, mostly), while the store's lock
-        is held, so a Job's changes arrive in order; it must return quickly. Changes made by another
-        process, such as a CLI run, aren't seen: re-read the Job now and then to catch those.
+        is held, so a Job's changes arrive in order, and once the change is saved; it must return
+        quickly. Changes made by another process, such as a CLI run, or on another machine aren't
+        seen: re-read the Job now and then to catch those.
         """
         with self._listeners_lock:
             self._listeners = (*self._listeners, listener)
@@ -289,6 +338,28 @@ class JobStore:
         finally:
             with self._listeners_lock:
                 self._listeners = tuple(other for other in self._listeners if other is not listener)
+
+    @contextmanager
+    def _changing(self, job_id: str) -> Iterator[None]:
+        """A block that reads the Job's documents and writes them back, with no other change to them
+        in between, in this process or on another machine; listeners are told as it ends."""
+        with self._lock:
+            untold: list[tuple[str, Job | None]] = []
+            self._change.untold = untold
+            try:
+                with self._doc(job_id, STATE_FILE).changing():
+                    yield
+            finally:
+                del self._change.untold
+            for told in untold:
+                self._notify(*told)
+
+    def _tell(self, job_id: str, job: Job | None) -> None:
+        untold = getattr(self._change, "untold", None)
+        if untold is None:
+            self._notify(job_id, job)
+        else:
+            untold.append((job_id, job))
 
     def _notify(self, job_id: str, job: Job | None) -> None:
         for listener in self._listeners:
@@ -331,26 +402,51 @@ class JobStore:
             fcntl.flock(lock, fcntl.LOCK_EX)
 
     def job_dir(self, job_id: str) -> Path:
+        """The Job's directory, with its media. JobElsewhere when other machines read the Jobs'
+        documents too and this one hasn't the directory: the Job was made on another."""
+        path = self._dir(job_id)
+        if self.machine is not None and not path.is_dir():
+            raise JobElsewhere(job_id)
+        return path
+
+    def here(self, job_id: str) -> bool:
+        """Whether the Job's media are on this machine."""
+        return self.machine is None or self._dir(job_id).is_dir()
+
+    def _dir(self, job_id: str) -> Path:
         if not _JOB_ID.fullmatch(job_id):
             raise JobNotFound(job_id)
         return self.root / job_id
 
+    def documents(self, job_id: str) -> Documents:
+        """The Job's documents, by their paths in its directory: for what else is kept with a Job."""
+        self._dir(job_id)
+        return self._documents.under(job_id)
+
+    def _doc(self, job_id: str, name: str) -> Document:
+        self._dir(job_id)
+        return self._documents.doc(f"{job_id}/{name}")
+
     def save_transcript(self, job_id: str, transcript: Transcript) -> None:
-        write_atomic(self.job_dir(job_id) / TRANSCRIPT_FILE, _TRANSCRIPT.dump_json(transcript))
+        self._doc(job_id, TRANSCRIPT_FILE).write(_TRANSCRIPT.dump_json(transcript))
 
     def load_transcript(self, job_id: str) -> Transcript | None:
-        path = self.job_dir(job_id) / TRANSCRIPT_FILE
-        return _TRANSCRIPT.validate_json(path.read_bytes()) if path.is_file() else None
+        saved = self._doc(job_id, TRANSCRIPT_FILE).read()
+        return None if saved is None else _TRANSCRIPT.validate_json(saved)
+
+    def has_transcript(self, job_id: str) -> bool:
+        """Whether the Job's transcript is saved, without reading it."""
+        return self._doc(job_id, TRANSCRIPT_FILE).version() is not None
 
     def save_candidates(self, job_id: str, candidates: list[Candidate]) -> None:
-        write_atomic(self.job_dir(job_id) / CANDIDATES_FILE, _CANDIDATES.dump_json(candidates, indent=2))
+        self._doc(job_id, CANDIDATES_FILE).write(_CANDIDATES.dump_json(candidates, indent=2))
 
     def load_candidates(self, job_id: str) -> list[Candidate] | None:
-        path = self.job_dir(job_id) / CANDIDATES_FILE
-        if not path.is_file():
+        saved = self._doc(job_id, CANDIDATES_FILE).read()
+        if saved is None:
             return None
         sizes = self._sizes()
-        return _CANDIDATES.validate_python([migrated_candidate(c, sizes) for c in json.loads(path.read_bytes())])
+        return _CANDIDATES.validate_python([migrated_candidate(c, sizes) for c in json.loads(saved)])
 
     def change_candidates[R](
         self,
@@ -365,7 +461,7 @@ class JobStore:
         other's Candidates. Like any change to the Job, it moves `updated_at` and listeners are told.
         Each Candidate it gives a new Revision is recorded as saved by `edit` (see `edit_of`). With
         `expect`, as `update`."""
-        with self._lock:
+        with self._changing(job_id):
             job = self.get(job_id)
             if expect is not None and job.status not in expect:
                 raise JobConflict(f"Job {job_id} is {job.status}")
@@ -387,16 +483,14 @@ class JobStore:
 
     def revision_history(self, job_id: str, candidate_id: str) -> list[HistoryEntry]:
         """The Candidate's Revision History, oldest first; empty until it is first changed."""
-        path = self.job_dir(job_id) / REVISIONS_DIR / f"{candidate_id}.json"
-        if not path.is_file():
+        saved = self._doc(job_id, f"{REVISIONS_DIR}/{candidate_id}.json").read()
+        if saved is None:
             return []
-        entries, sizes = json.loads(path.read_bytes()), self._sizes()
+        entries, sizes = json.loads(saved), self._sizes()
         return _HISTORY.validate_python([entry | {"candidate": migrated_candidate(entry["candidate"], sizes)} for entry in entries])
 
     def _save_history(self, job_id: str, candidate_id: str, history: list[HistoryEntry]) -> None:
-        directory = self.job_dir(job_id) / REVISIONS_DIR
-        directory.mkdir(exist_ok=True)
-        write_atomic(directory / f"{candidate_id}.json", _HISTORY.dump_json(history, indent=2))
+        self._doc(job_id, f"{REVISIONS_DIR}/{candidate_id}.json").write(_HISTORY.dump_json(history, indent=2))
 
     def edit_of(self, job_id: str, candidate_id: str, revision: int) -> Edit:
         """Who saved this Revision of the Candidate: unknown when it wasn't saved by this process."""
@@ -409,11 +503,11 @@ class JobStore:
         return (edit, at) if saved == candidate.revision else (Edit(), None)
 
     def load_clips(self, job_id: str) -> list[Clip]:
-        path = self.job_dir(job_id) / CLIPS_FILE
-        if not path.is_file():
+        saved = self._doc(job_id, CLIPS_FILE).read()
+        if saved is None:
             return []
         sizes = self._sizes()
-        return _CLIPS.validate_python([migrated_clip(clip, sizes) for clip in json.loads(path.read_bytes())])
+        return _CLIPS.validate_python([migrated_clip(clip, sizes) for clip in json.loads(saved)])
 
     def change_clips[R](
         self,
@@ -425,43 +519,43 @@ class JobStore:
         """Save the Clips `change` makes of the Job's, apply the changes to the Job it also returns (as
         `update`), and return what else it returns, all under the store's lock: so a render request and
         the end of a render queue never miss each other. With `expect`, as `update`."""
-        with self._lock:
+        with self._changing(job_id):
             job = self.get(job_id)
             if expect is not None and job.status not in expect:
                 raise JobConflict(f"Job {job_id} is {job.status}")
             clips, changes, result = change(job, self.load_clips(job_id))
-            write_atomic(self.job_dir(job_id) / CLIPS_FILE, _CLIPS.dump_json(clips, indent=2))
+            self._doc(job_id, CLIPS_FILE).write(_CLIPS.dump_json(clips, indent=2))
             self._save(_changed(job, changes))
             return result
 
     def save_selection(self, job_id: str, selection: Selection) -> None:
-        write_atomic(self.job_dir(job_id) / SELECTION_FILE, _SELECTION.dump_json(selection, indent=2))
+        self._doc(job_id, SELECTION_FILE).write(_SELECTION.dump_json(selection, indent=2))
 
     def load_selection(self, job_id: str) -> Selection | None:
-        path = self.job_dir(job_id) / SELECTION_FILE
-        return _SELECTION.validate_json(path.read_bytes()) if path.is_file() else None
+        saved = self._doc(job_id, SELECTION_FILE).read()
+        return None if saved is None else _SELECTION.validate_json(saved)
 
     def save_scores(self, job_id: str, scores: dict[str, ScoreResponse]) -> None:
-        write_atomic(self.job_dir(job_id) / SCORES_FILE, _SCORES.dump_json(scores))
+        self._doc(job_id, SCORES_FILE).write(_SCORES.dump_json(scores))
 
     def load_scores(self, job_id: str) -> dict[str, ScoreResponse]:
         """The kept Score answers; none when they were kept under response schemas that have changed since."""
-        path = self.job_dir(job_id) / SCORES_FILE
+        saved = self._doc(job_id, SCORES_FILE).read()
         try:
-            return _SCORES.validate_json(path.read_bytes())
-        except (FileNotFoundError, ValidationError):
+            return {} if saved is None else _SCORES.validate_json(saved)
+        except ValidationError:
             return {}
 
     def discard_scores(self, job_id: str) -> None:
-        (self.job_dir(job_id) / SCORES_FILE).unlink(missing_ok=True)
+        self._doc(job_id, SCORES_FILE).delete()
 
     def _sizes(self) -> Sizes:
         """The Media Library's sizes for one read, read only if it holds a Candidate of an older shape."""
         return _MediaSizes(self._media_sizes)
 
     def _save(self, job: Job) -> None:
-        write_atomic(self.job_dir(job.id) / STATE_FILE, _JOB.dump_json(job, indent=2))
-        self._notify(job.id, job)
+        self._doc(job.id, STATE_FILE).write(_JOB.dump_json(job, indent=2))
+        self._tell(job.id, job)
 
 
 class _MediaSizes(Mapping[str, tuple[int, int]]):

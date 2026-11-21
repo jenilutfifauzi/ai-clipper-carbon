@@ -340,6 +340,13 @@ class Settings:
     # Where this backend answers, as an ACP agent's subprocess reaches the scoped MCP server
     # (<origin>/mcp/agent). Its routes take localhost only.
     backend_origin: str = DEFAULT_BACKEND_ORIGIN
+    # The Postgres the accounts' documents are kept in (docs/adr/0033); None: files in each account's
+    # data directory.
+    database_url: str | None = field(default=None, repr=False)
+    # What seals the accounts' secrets in that Postgres (app/sealing.py): the same on every machine.
+    secrets_key: str | None = field(default=None, repr=False)
+    # What the owner calls this machine, read on the others (app/machine.py); None: its host name.
+    machine_name: str | None = None
     # Not read from the environment: the eval points it at the Reference Set it measures against.
     reference_set: Path = REFERENCE_SET
     transcription: TranscriptionTuning = TranscriptionTuning()
@@ -416,6 +423,9 @@ def load_settings(env_file: Path = ENV_FILE) -> Settings:
         elevenlabs_model=get("ELEVENLABS_MODEL", DEFAULT_ELEVENLABS_MODEL),
         anthropic_api_key=get("ANTHROPIC_API_KEY") or None,
         backend_origin=get("BACKEND_ORIGIN", DEFAULT_BACKEND_ORIGIN).rstrip("/"),
+        database_url=get("DATABASE_URL") or None,
+        secrets_key=get("SECRETS_KEY") or None,
+        machine_name=get("MACHINE_NAME") or None,
         quota=QuotaTuning(
             request_interval_secs=_parse_secs("LLM_REQUEST_INTERVAL_SECS", interval)
             if interval

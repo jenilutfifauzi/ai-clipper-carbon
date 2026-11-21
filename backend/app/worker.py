@@ -3,6 +3,8 @@
 A Job that runs out of Gemini quota, or finds Gemini busy, leaves the queue while it waits, so that
 other Jobs' stages can run meanwhile, and is queued again when its wait is over.
 
+The owner can stop a Job on its way to review, and continue it later from where it stopped.
+
 Renders share the queue: a Job asked to render Clips is submitted like a new Job, and when its turn
 comes the worker renders its queued Clips one after another. So only one heavy tool (yt-dlp's
 merge, Whisper, Selection's requests or an ffmpeg encode) runs at a time, which an 8 GB Mac needs.
@@ -11,11 +13,11 @@ merge, Whisper, Selection's requests or an ffmpeg encode) runs at a time, which 
 import logging
 import threading
 from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, nullcontext, suppress
 from datetime import UTC, datetime
 from queue import Queue
 
-from app.jobs import RUNNING, Job, JobConflict, JobNotFound, JobStatus, JobStore
+from app.jobs import RUNNING, STOPPABLE, Job, JobConflict, JobNotFound, JobStatus, JobStore
 from app.pipeline import Pipeline
 from app.renderer import RenderStopped
 from app.rendering import Renders
@@ -44,6 +46,8 @@ class Worker:
         self._queue: Queue[str | None] = Queue()
         self._stopping = threading.Event()
         self._working = threading.Event()
+        # The Job whose turn is running now, if any.
+        self._current: str | None = None
         self._thread = threading.Thread(target=self._loop, name="job-worker", daemon=True)
         self._timers: dict[str, threading.Timer] = {}
         self._timers_lock = threading.Lock()
@@ -53,9 +57,10 @@ class Worker:
         stage are queued again, oldest first, and those waiting for quota wait out what is left of
         their wait. A Job left rendering renders its queued Clips, and the one it was rendering, again.
         A Job that another process (a CLI run, or the previous server still shutting down) is
-        running is left to it, and taken back once that process lets go if it left the Job unfinished."""
+        running is left to it, and taken back once that process lets go if it left the Job unfinished.
+        A Job whose media are on another machine is that machine's to take back."""
         for job in sorted(self._store.all(), key=lambda job: job.created_at):
-            if job.status not in _RESUMED:
+            if job.status not in _RESUMED or not self._store.here(job.id):
                 continue
             if self._store.busy(job.id):
                 threading.Thread(
@@ -75,7 +80,10 @@ class Worker:
 
     def retry(self, job_id: str) -> Job:
         """Queue a Job in `error` again; it resumes from the stage it failed in. Raises JobConflict
-        for a Job in any other status."""
+        for a Job in any other status, and JobElsewhere (as all that follow) for one whose media are
+        on another machine."""
+        self._store.job_dir(job_id)
+        self._pipeline.clear_stop(job_id)
         job = self._store.update(
             job_id,
             expect={JobStatus.ERROR},
@@ -88,18 +96,66 @@ class Worker:
         self.submit(job_id)
         return job
 
+    def stop_job(self, job_id: str) -> Job:
+        """Stop a Job on its way to review. One queued or waiting for quota is `stopped` at once; a
+        running one at its stage's next progress report, LLM request or retry pause (a transcription
+        at once), with "Stopping…" as its message meanwhile. Raises JobConflict for a Job in any
+        other status, or one that another process is running."""
+        job = self._store.get(job_id)
+        self._store.job_dir(job_id)
+        if job.status not in STOPPABLE:
+            raise JobConflict(f"Job {job_id} is {job.status}")
+        if job.status in RUNNING and self._current != job_id:
+            raise JobConflict(f"Job {job_id} is being run by another process")
+        self._pipeline.stop(job_id)
+        with self._timers_lock:
+            if timer := self._timers.pop(job_id, None):
+                timer.cancel()
+        with suppress(JobConflict):
+            return self._store.update(
+                job_id,
+                expect={JobStatus.QUEUED, JobStatus.WAITING_QUOTA},
+                status=JobStatus.STOPPED,
+                progress=None,
+                message=None,
+                quota=None,
+            )
+        with suppress(JobConflict):
+            return self._store.update(job_id, expect=RUNNING, message="Stopping…")
+        return self._store.get(job_id)
+
+    def resume(self, job_id: str) -> Job:
+        """Queue a `stopped` Job again; it resumes from the stage it stopped in, keeping what that
+        stage had kept (the Score answers already in). Raises JobConflict for a Job in any other status."""
+        self._store.job_dir(job_id)
+        self._pipeline.clear_stop(job_id)
+        job = self._store.update(
+            job_id,
+            expect={JobStatus.STOPPED},
+            status=JobStatus.QUEUED,
+            stage=None,
+            error=None,
+            progress=None,
+            message=None,
+        )
+        self.submit(job_id)
+        return job
+
     def render(self, job_id: str, candidate_ids: list[str] | None = None, export_preset_id: str | None = None) -> None:
         """Queue Clips of the Job's Candidates (see Renders.request); they are rendered in the Job's turn."""
+        self._store.job_dir(job_id)
         if self._renders.request(job_id, candidate_ids, export_preset_id):
             self.submit(job_id)
 
     def prepare(self, job_id: str, candidate_id: str) -> None:
         """Queue the Candidate to be prepared for the editor (see Renders.prepare), in the Job's turn."""
+        self._store.job_dir(job_id)
         if self._renders.prepare(job_id, candidate_id):
             self.submit(job_id)
 
     def transcribe_media(self, job_id: str, media_id: str, again: bool = False) -> None:
         """Queue a video's Media Words for the Job to be transcribed (see Renders.transcribe_media), in the Job's turn."""
+        self._store.job_dir(job_id)
         if self._renders.transcribe_media(job_id, media_id, again):
             self.submit(job_id)
 
@@ -140,6 +196,7 @@ class Worker:
     def _loop(self) -> None:
         while (job_id := self._queue.get()) is not None and not self._stopping.is_set():
             self._working.set()
+            self._current = job_id
             try:
                 context = self._workspace_context() if self._workspace_context else nullcontext()
                 with context, _PROCESS_WORK_LOCK:
@@ -162,6 +219,7 @@ class Worker:
                 if job.status is JobStatus.WAITING_QUOTA:
                     self._wake_later(job)
             finally:
+                self._current = None
                 self._working.clear()
 
     def _wake_later(self, job: Job) -> None:

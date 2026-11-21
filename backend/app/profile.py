@@ -11,7 +11,7 @@ from typing import Annotated
 
 from pydantic import StringConstraints, TypeAdapter
 
-from app.storage import write_atomic
+from app.documents import Document, document_of
 
 # In DATA_DIR.
 PROFILE_FILE = "profile.json"
@@ -32,13 +32,13 @@ _PROFILE = TypeAdapter(ChannelProfile)
 
 
 class ProfileStore:
-    def __init__(self, path: Path) -> None:
-        self.path = path
+    def __init__(self, path: Path | Document) -> None:
+        self._doc = document_of(path)
 
     def load(self) -> ChannelProfile:
         """The saved profile, or an empty one before the first save."""
-        return _PROFILE.validate_json(self.path.read_bytes()) if self.path.is_file() else ChannelProfile()
+        saved = self._doc.read()
+        return ChannelProfile() if saved is None else _PROFILE.validate_json(saved)
 
     def save(self, profile: ChannelProfile) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        write_atomic(self.path, _PROFILE.dump_json(profile, indent=2))
+        self._doc.write(_PROFILE.dump_json(profile, indent=2))

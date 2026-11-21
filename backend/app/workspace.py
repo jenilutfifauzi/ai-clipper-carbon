@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import shutil
 import threading
@@ -21,6 +22,15 @@ from typing import Callable
 from fastapi import HTTPException, Request
 
 from app.config import Settings
+from app.database import Database
+from app.documents import Documents, FileDocuments, PostgresDocuments
+from app.machine import Machine, this_machine
+from app.sealing import Sealer
+
+logger = logging.getLogger(__name__)
+
+# Left in an account's directory once it is imported into Postgres (app/account_import.py).
+IMPORTED_MARK = ".imported-to-postgres"
 from app.ports import Ports, real_ports
 
 
@@ -60,6 +70,9 @@ async def bind_workspace(request: Request) -> AsyncIterator[UserWorkspace]:
     """Keep process-level font/look helpers bound to this account for the whole request."""
     workspace = workspace_for_request(request)
     request.state.workspace = workspace
+    # Settings saved on another machine since are this one's too, from its next request on.
+    if workspace.settings_store.refresh():
+        workspace.settings_changed()
     with workspace.activate():
         yield workspace
 
@@ -76,15 +89,18 @@ class UserWorkspace:
         user_id: str,
         ports: Ports | None = None,
         ports_factory: Callable[[Settings], Ports] = real_ports,
+        documents: Documents | None = None,
+        machine: Machine | None = None,
     ) -> None:
         from app import fonts, looks
+        from app.agent.credentials import CREDENTIALS_FILE
         from app.agent.providers import DetectionCache
         from app.agent.sessions import AgentSessionManager
         from app.jobs import JobStore
         from app.kokoro import KokoroSpeech
-        from app.logos import LOGOS_DIR, LogoStore
+        from app.logos import LOGOS_DIR, LOGOS_INDEX, LogoStore
         from app.matte import MatteRunner
-        from app.media import MEDIA_DIR, MediaStore
+        from app.media import MEDIA_DIR, MEDIA_INDEX, MediaStore
         from app.media_words import MediaWordsStore
         from app.narration import NARRATIONS_DIR, VOICE_SAMPLES_DIR, NarrationRunner
         from app.pipeline import Pipeline
@@ -102,8 +118,10 @@ class UserWorkspace:
         self.settings = settings
         self.settings.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.settings.data_dir, 0o700)
+        # The account's documents: rows in Postgres, or without a database, files in its data directory.
+        documents = documents or FileDocuments(self.settings.data_dir)
 
-        self.settings_store = SettingsStore(self.settings)
+        self.settings_store = SettingsStore(self.settings, documents)
         self.settings_store.apply()
         self.ports = ports or ports_factory(self.settings)
 
@@ -112,27 +130,29 @@ class UserWorkspace:
         shutil.rmtree(self.settings.data_dir / UPLOADS_DIR, ignore_errors=True)
         shutil.rmtree(self.settings.data_dir / NARRATIONS_DIR, ignore_errors=True)
 
-        media = MediaStore(self.settings.data_dir / MEDIA_DIR, self.settings.ffmpeg_bin, self.settings.ffprobe_bin)
-        store = JobStore(self.settings.data_dir / "jobs", media.sizes)
+        media = MediaStore(
+            self.settings.data_dir / MEDIA_DIR, self.settings.ffmpeg_bin, self.settings.ffprobe_bin, documents.doc(MEDIA_INDEX)
+        )
+        store = JobStore(self.settings.data_dir / "jobs", media.sizes, documents.under("jobs"), machine)
         media_words = MediaWordsStore(self.settings.data_dir / MEDIA_DIR, self.settings.whisper_model)
         mattes = MatteRunner(self.ports.person_model, self.ports.matter, self.settings.ffmpeg_bin)
-        renders = Renders(store, self.settings, self.ports.transcriber, media_words, mattes)
-        templates = TemplateStore(self.settings.data_dir / TEMPLATES_FILE)
+        renders = Renders(store, self.settings, self.ports.transcriber, media_words, mattes, documents)
+        templates = TemplateStore(documents.doc(TEMPLATES_FILE))
         pipeline = Pipeline(store, self.ports, self.settings, templates, media.lengths)
-        self.faces = fonts.Faces(self.settings.data_dir / fonts.IMPORTED_DIR)
-        self.looks = looks.ImportedLooks(self.settings.data_dir / looks.IMPORTED_DIR)
+        self.faces = fonts.Faces(self.settings.data_dir / fonts.IMPORTED_DIR, documents.doc(fonts.IMPORTED_INDEX))
+        self.looks = looks.ImportedLooks(self.settings.data_dir / looks.IMPORTED_DIR, documents.doc(looks.IMPORTED_INDEX))
         worker = Worker(store, pipeline, renders, workspace_context=self.activate)
 
         self.pipeline = pipeline
         self.store = store
         self.worker = worker
-        self.profiles = ProfileStore(self.settings.data_dir / PROFILE_FILE)
-        self.presets = PresetStore(self.settings.data_dir / PRESETS_FILE)
-        self.text_presets = TextPresetStore(self.settings.data_dir / TEXT_PRESETS_FILE)
+        self.profiles = ProfileStore(documents.doc(PROFILE_FILE))
+        self.presets = PresetStore(documents.doc(PRESETS_FILE))
+        self.text_presets = TextPresetStore(documents.doc(TEXT_PRESETS_FILE))
         self.export_presets = renders.export_presets
         self.templates = templates
-        self.starred = StarredStore(self.settings.data_dir / STARRED_FILE)
-        self.logos = LogoStore(self.settings.data_dir / LOGOS_DIR, self.settings.ffmpeg_bin)
+        self.starred = StarredStore(documents.doc(STARRED_FILE))
+        self.logos = LogoStore(self.settings.data_dir / LOGOS_DIR, self.settings.ffmpeg_bin, documents.doc(LOGOS_INDEX))
         self.media = media
         self.kokoro = self.ports.kokoro
         self.person_model = self.ports.person_model
@@ -146,6 +166,7 @@ class UserWorkspace:
             samples_dir=self.settings.data_dir / VOICE_SAMPLES_DIR,
         )
         self.media_words = media_words
+        self.agent_credentials = documents.secret(CREDENTIALS_FILE.as_posix())
         self.agent_scopes = scopes
         self.agent_sessions = AgentSessionManager(app, self, self.ports.agent_transport)
         self.agent_detection = DetectionCache()
@@ -158,6 +179,15 @@ class UserWorkspace:
 
         with fonts.using_registry(self.faces), looks.using_store(self.looks):
             yield
+
+    def settings_changed(self) -> None:
+        """Have the LLM follow the settings as they are now saved."""
+        refresh = getattr(self.ports.llm, "refresh", None)
+        if refresh:
+            refresh()
+        # Keep future requests paced for the selected provider. The worker is the
+        # only caller that wraps the LLM with PacedLlm.
+        self.pipeline.llm.interval = 13.0 if self.settings.llm_provider == "gemini" else 1.0
 
     def start(self) -> None:
         if not self._started:
@@ -180,8 +210,13 @@ class WorkspaceRegistry:
         app,
         scopes,
         ports_factory: Callable[[Settings], Ports] = real_ports,
+        database: Database | None = None,
     ) -> None:
         self.settings = settings
+        self.database = database
+        # Raises when the accounts' secrets would go to Postgres with no SECRETS_KEY to seal them.
+        self.sealer = Sealer(settings.secrets_key) if database else None
+        self.machine = this_machine(settings.data_dir, settings.machine_name) if database else None
         self.app = app
         self.scopes = scopes
         self.ports_factory = ports_factory
@@ -202,6 +237,11 @@ class WorkspaceRegistry:
                 directory = self.users_dir / digest
                 if directory.is_symlink():
                     raise RuntimeError("Refusing a symlink as an account data directory")
+                if self.database is None and (directory / IMPORTED_MARK).exists():
+                    logger.warning(
+                        "Account %s was imported into Postgres, but DATABASE_URL is unset: showing the files as they were then",
+                        digest[:12],
+                    )
                 account_settings = replace(self.settings, data_dir=directory, ytdlp_cookies_file=None)
                 workspace = UserWorkspace(
                     account_settings,
@@ -209,6 +249,8 @@ class WorkspaceRegistry:
                     self.scopes,
                     user_id=user_id,
                     ports_factory=self.ports_factory,
+                    documents=PostgresDocuments(self.database, digest, self.sealer) if self.database else None,
+                    machine=self.machine,
                 )
                 self._workspaces[digest] = workspace
                 if self._started:

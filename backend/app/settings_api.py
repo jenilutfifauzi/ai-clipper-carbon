@@ -68,12 +68,7 @@ def put_settings(update: SettingsUpdate, request: Request) -> SettingsView:
             values["gemini_api_key"] = key
 
     store.save(values)
-    refresh = getattr(workspace.ports.llm, "refresh", None)
-    if refresh:
-        refresh()
-    # Keep future requests paced for the selected provider. The worker is the
-    # only caller that wraps the LLM with PacedLlm.
-    workspace.pipeline.llm.interval = 13.0 if update.provider == "gemini" else 1.0
+    workspace.settings_changed()
     return _view(request)
 
 

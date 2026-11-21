@@ -108,10 +108,12 @@ def select(
     examples: Sequence[Example] = (),
     progress: Progress = lambda message, percent=None: None,
     window_audio: WindowAudio | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> Selection:
     """Ranked Candidates of `min_secs` to `max_secs` from the Transcript of a `duration`-second Source.
 
     With `window_audio` (audio-signal mode), the Detail pass also gets the shortlisted Windows' audio.
+    `sleep` waits out the pause before a retry (the Pipeline's ends early when the Job is stopped).
     """
     length = max(tuning.window_min_secs, tuning.window_factor * max_secs)
     windows = _windows(transcript.words, length, tuning.window_overlap_secs)
@@ -123,7 +125,7 @@ def select(
         prompt = score_prompt(
             batch, transcript.language, duration, min_secs, max_secs, profile, brief, tuning.profile_summary_chars
         )
-        response = _retrying(llm.score, LlmRequest(prompt, tuning.score_temperature), tuning, progress)
+        response = _retrying(llm.score, LlmRequest(prompt, tuning.score_temperature), tuning, progress, sleep)
         scored += _scores(batch, response)
 
     count = _target_count(duration, tuning)
@@ -148,7 +150,7 @@ def select(
             audio = _audio(shortlist, window_audio, prompt(True), tuning)
         progress(f"Choosing {count} Candidates from {len(shortlist)} shortlisted Windows", 100 * len(batches) / steps)
         request = LlmRequest(prompt(bool(audio)), tuning.detail_temperature, tuple(audio))
-        proposals = _retrying(llm.detail, request, tuning, progress).clips
+        proposals = _retrying(llm.detail, request, tuning, progress, sleep).clips
 
     candidates = _candidates(proposals, cutter, scored, count, min_secs, max_secs)
     return Selection(
@@ -266,7 +268,11 @@ def _audio(
 
 
 def _retrying[R](
-    call: Callable[[LlmRequest], R], request: LlmRequest, tuning: SelectionTuning, progress: Progress
+    call: Callable[[LlmRequest], R],
+    request: LlmRequest,
+    tuning: SelectionTuning,
+    progress: Progress,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> R:
     """`call(request)`, retrying transient errors with exponential backoff. An overload that outlasts
     the retries is raised as it came, for the Job to wait out (see Pipeline._wait_for_gemini)."""
@@ -281,7 +287,7 @@ def _retrying[R](
                 raise TransientLlmError(f"Gave up after {attempt} attempts: {exc}") from exc
             logger.warning("Retrying in %g s: %s", delay, exc)
             progress(f"Retrying in {delay:g} s: {exc}")
-            time.sleep(delay)
+            sleep(delay)
             attempt, delay = attempt + 1, 2 * delay
 
 

@@ -2,16 +2,19 @@ import { FileVideo, Upload } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { cx, formatBytes } from "../../format";
 
-// A file input as a drop zone: drop a master file on it, or click (or press Space) to pick one.
+// A file input as a drop zone: drop a master file on it, or click (or press Space) to pick one. With
+// `onFiles`, it takes several videos at a time and keeps none itself: its owner lists them.
 export function FileDrop({
   id,
   file,
   onFile,
+  onFiles,
   disabled,
 }: {
   id: string;
   file: File | null;
-  onFile: (file: File | null) => void;
+  onFile?: (file: File | null) => void;
+  onFiles?: (files: File[]) => void;
   disabled?: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -27,9 +30,10 @@ export function FileDrop({
     setOver(false);
     const files = event.dataTransfer.files;
     if (disabled || files.length === 0 || !input.current) return;
+    if (onFiles) return onFiles([...files]);
     // The input holds the dropped file too, so that `required` sees it.
     input.current.files = files;
-    onFile(files[0]);
+    onFile?.(files[0]);
   }
 
   return (
@@ -56,10 +60,15 @@ export function FileDrop({
         ref={input}
         id={id}
         type="file"
-        required
+        required={!onFiles}
+        multiple={Boolean(onFiles)}
         disabled={disabled}
         accept="video/*,.mov,.mxf,.mkv"
-        onChange={(event) => onFile(event.target.files?.[0] ?? null)}
+        onChange={(event) => {
+          if (!onFiles) return onFile?.(event.target.files?.[0] ?? null);
+          onFiles([...(event.target.files ?? [])]);
+          event.target.value = "";
+        }}
         className="sr-only"
       />
       {file ? (
@@ -69,6 +78,12 @@ export function FileDrop({
           <span className="text-sm text-muted tabular-nums">
             {formatBytes(file.size)} · drop or pick another to replace it
           </span>
+        </>
+      ) : onFiles ? (
+        <>
+          <Upload aria-hidden size={26} className="text-muted" />
+          <span className="font-medium">Drop videos here, or pick them</span>
+          <span className="text-sm text-muted">Several at a time. They play in the order listed below.</span>
         </>
       ) : (
         <>

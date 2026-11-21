@@ -105,8 +105,8 @@ With a build, `cd backend && uv run uvicorn --factory app.main:create_app` serve
 port 8000, without Vite.
 
 **From your phone**, on the same network: build first, then start the backend with
-`--host 0.0.0.0` added, and open `http://<your Mac's IP>:8000`. The app has no login, so anyone on
-the network can use it while it listens there. Over plain http the browser has no Clipboard API,
+`--host 0.0.0.0` added, and open `http://<your Mac's IP>:8000`. Signing in is required there too:
+add that origin to `CLERK_AUTHORIZED_PARTIES`. Over plain http the browser has no Clipboard API,
 so the copy buttons fall back to the older `execCommand("copy")`.
 
 ## Daily workflow
@@ -173,7 +173,7 @@ them." The server's instructions tell the agent the workflow and the app's words
 its `ai-clipper://glossary` resource). Its edits show in the open browser as they are saved; an edit
 made in the browser at the same moment can be saved over, and the other way round.
 
-It answers only on localhost (other Hosts are refused) and, like the API, has no login. Its tools
+It answers only on localhost (other Hosts are refused) and, like the API, takes a Clerk session. Its tools
 read the files you name by path, as you could.
 
 ## Command line
@@ -276,6 +276,25 @@ eval/reports/                eval reports and postable judgements (committed)
 backend/models/, backend/assets/fonts/
                              face model and caption fonts from `make setup` (git-ignored)
 ~/.cache/huggingface/        the Whisper model
+```
+
+### The same account on two machines
+
+Set `DATABASE_URL` (a Postgres) and `SECRETS_KEY` in `.env` on each machine, the same values on both
+(`.env.example` says how to make the key). The account's documents, which are every JSON file above
+but the caches in `words/` and `analysis/` and the Render Plans, are then rows in that Postgres, and so are
+its saved settings, Agent keys and YouTube cookies, sealed with the key. Each machine shows the same
+Jobs, Candidates, presets and Templates.
+
+The media stay in `DATA_DIR` on the machine a Job was made on, its Host: another machine lists the
+Job and its Candidates and says where its files are, and leaves playing, running and rendering it to
+the Host. See `docs/adr/0033-account-documents-in-postgres-media-on-each-machine.md`.
+
+What an account already has in `DATA_DIR/users/` is brought in once, on the machine that has it:
+
+```
+make import-accounts ARGS="--dry-run"    # lists what would be imported
+make import-accounts                     # imports; what Postgres already has is kept
 ```
 
 Deleting a Job (the trash button on Home) removes its folder. Nothing else outside `DATA_DIR` is

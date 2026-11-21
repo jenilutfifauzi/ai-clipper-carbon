@@ -1,11 +1,16 @@
 """The chats of each Candidate, its Agent Threads: jobs/<job>/agent/<candidate>/index.json lists them,
 and jobs/<job>/agent/<candidate>/<thread>.json keeps each one's finished Agent Turns, written whole as
 each turn finishes (ADR 0030). A Candidate's single chat from before Threads, agent/<candidate>.json,
-becomes its first Thread when first read."""
+becomes its first Thread when first read.
+
+They are among the Job's documents (app/documents.py): each function takes those, or the Job's
+directory for the files in it."""
 
 import re
 import secrets
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
@@ -15,6 +20,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 from app.agent.attachments import SentAttachment
 from app.agent.events import AgentEvent, Stop, TextDelta, ThoughtDelta, ToolFinished, ToolStarted
 from app.agent.ui_spec import is_show_ui, parsed
+from app.documents import Document, Documents, FileDocuments
 from app.storage import write_atomic
 
 TRANSCRIPTS_DIR = "agent"
@@ -101,97 +107,118 @@ def threads_dir(job_dir: Path, candidate_id: str) -> Path:
     return job_dir / TRANSCRIPTS_DIR / candidate_id
 
 
-def transcript_path(job_dir: Path, candidate_id: str, thread_id: str) -> Path:
-    """Raises LookupError for an id that no Thread could have."""
-    if not _THREAD_ID.fullmatch(thread_id):
-        raise LookupError(f"No Agent Thread {thread_id!r}")
-    return threads_dir(job_dir, candidate_id) / f"{thread_id}.json"
-
-
-def list_threads(job_dir: Path, candidate_id: str) -> list[AgentThread]:
+def list_threads(job: Path | Documents, candidate_id: str) -> list[AgentThread]:
     """The Candidate's Threads, the most recently used first; none before its first."""
-    return sorted(_index(job_dir, candidate_id), key=lambda thread: thread.updated_at, reverse=True)
+    return sorted(_index(_documents(job), candidate_id), key=lambda thread: thread.updated_at, reverse=True)
 
 
-def newest_thread(job_dir: Path, candidate_id: str) -> AgentThread:
+def newest_thread(job: Path | Documents, candidate_id: str) -> AgentThread:
     """The Thread a request naming none goes to: the most recently used, made now when there is none."""
-    with _INDEX_LOCK:
-        threads = list_threads(job_dir, candidate_id)
-        return threads[0] if threads else _create(job_dir, candidate_id, NEW_TITLE)
+    job = _documents(job)
+    with _changing(job, candidate_id):
+        threads = list_threads(job, candidate_id)
+        return threads[0] if threads else _create(job, candidate_id, NEW_TITLE)
 
 
-def create_thread(job_dir: Path, candidate_id: str, title: str = NEW_TITLE) -> AgentThread:
-    with _INDEX_LOCK:
-        return _create(job_dir, candidate_id, title)
+def create_thread(job: Path | Documents, candidate_id: str, title: str = NEW_TITLE) -> AgentThread:
+    job = _documents(job)
+    with _changing(job, candidate_id):
+        return _create(job, candidate_id, title)
 
 
-def rename_thread(job_dir: Path, candidate_id: str, thread_id: str, title: str) -> AgentThread:
+def rename_thread(job: Path | Documents, candidate_id: str, thread_id: str, title: str) -> AgentThread:
     """Raises LookupError for a Thread the Candidate hasn't got."""
-    with _INDEX_LOCK:
-        threads = _index(job_dir, candidate_id)
+    job = _documents(job)
+    with _changing(job, candidate_id):
+        threads = _index(job, candidate_id)
         thread = _find(threads, thread_id)
         renamed = thread.model_copy(update={"title": title})
-        _write_index(job_dir, candidate_id, [renamed if each.id == thread_id else each for each in threads])
+        _write_index(job, candidate_id, [renamed if each.id == thread_id else each for each in threads])
         return renamed
 
 
-def delete_thread(job_dir: Path, candidate_id: str, thread_id: str) -> None:
+def delete_thread(job: Path | Documents, candidate_id: str, thread_id: str) -> None:
     """Forget the Thread and its turns. Raises LookupError for one the Candidate hasn't got."""
-    with _INDEX_LOCK:
-        threads = _index(job_dir, candidate_id)
+    job = _documents(job)
+    with _changing(job, candidate_id):
+        threads = _index(job, candidate_id)
         _find(threads, thread_id)
-        _write_index(job_dir, candidate_id, [each for each in threads if each.id != thread_id])
-        transcript_path(job_dir, candidate_id, thread_id).unlink(missing_ok=True)
+        _write_index(job, candidate_id, [each for each in threads if each.id != thread_id])
+        _turns(job, candidate_id, thread_id).delete()
 
 
-def load_transcript(job_dir: Path, candidate_id: str, thread_id: str) -> list[TranscriptTurn]:
+def load_transcript(job: Path | Documents, candidate_id: str, thread_id: str) -> list[TranscriptTurn]:
     """The Thread's finished turns, oldest first; none before its first."""
-    _migrated(job_dir, candidate_id)
-    path = transcript_path(job_dir, candidate_id, thread_id)
-    return _TRANSCRIPT.validate_json(path.read_bytes()) if path.is_file() else []
+    job = _documents(job)
+    _migrated(job, candidate_id)
+    saved = _turns(job, candidate_id, thread_id).read()
+    return [] if saved is None else _TRANSCRIPT.validate_json(saved)
 
 
-def append_turn(job_dir: Path, candidate_id: str, thread_id: str, turn: TranscriptTurn) -> None:
+def append_turn(job: Path | Documents, candidate_id: str, thread_id: str, turn: TranscriptTurn) -> None:
     """Keep the finished turn in its Thread, which becomes the newest; a Thread still titled "New chat"
     takes its title from the turn's prompt. A Thread deleted meanwhile is listed again."""
-    with _INDEX_LOCK:
-        threads = _index(job_dir, candidate_id)
-        path = transcript_path(job_dir, candidate_id, thread_id)
-        write_atomic(path, _TRANSCRIPT.dump_json([*load_transcript(job_dir, candidate_id, thread_id), turn], indent=2))
+    job = _documents(job)
+    with _changing(job, candidate_id):
+        threads = _index(job, candidate_id)
+        kept = _turns(job, candidate_id, thread_id)
+        kept.write(_TRANSCRIPT.dump_json([*load_transcript(job, candidate_id, thread_id), turn], indent=2))
         now = datetime.now(UTC)
         thread = next((each for each in threads if each.id == thread_id), None) or AgentThread(
             id=thread_id, title=NEW_TITLE, created_at=now, updated_at=now
         )
         title = _title(turn.prompt) if thread.title == NEW_TITLE else thread.title
         updated = thread.model_copy(update={"title": title, "updated_at": now})
-        _write_index(job_dir, candidate_id, [updated, *(each for each in threads if each.id != thread_id)])
+        _write_index(job, candidate_id, [updated, *(each for each in threads if each.id != thread_id)])
 
 
-def find_turn(job_dir: Path, candidate_id: str, turn_id: str) -> TranscriptTurn | None:
+def find_turn(job: Path | Documents, candidate_id: str, turn_id: str) -> TranscriptTurn | None:
     """A finished turn of any of the Candidate's Threads: Revert and Restore are per Revision, whichever
     Thread the turn is in (ADR 0028)."""
-    for thread in list_threads(job_dir, candidate_id):
-        if kept := next((turn for turn in load_transcript(job_dir, candidate_id, thread.id) if turn.id == turn_id), None):
+    job = _documents(job)
+    for thread in list_threads(job, candidate_id):
+        if kept := next((turn for turn in load_transcript(job, candidate_id, thread.id) if turn.id == turn_id), None):
             return kept
     return None
 
 
-def _index(job_dir: Path, candidate_id: str) -> list[AgentThread]:
-    _migrated(job_dir, candidate_id)
-    path = threads_dir(job_dir, candidate_id) / INDEX
-    return _THREADS.validate_json(path.read_bytes()) if path.is_file() else []
+def _documents(job: Path | Documents) -> Documents:
+    """The Job's documents: those given, or the files in the directory given."""
+    return FileDocuments(job) if isinstance(job, Path) else job
 
 
-def _write_index(job_dir: Path, candidate_id: str, threads: list[AgentThread]) -> None:
-    folder = threads_dir(job_dir, candidate_id)
-    folder.mkdir(parents=True, exist_ok=True)
-    write_atomic(folder / INDEX, _THREADS.dump_json(threads, indent=2))
+def _index_doc(job: Documents, candidate_id: str) -> Document:
+    return job.doc(f"{TRANSCRIPTS_DIR}/{candidate_id}/{INDEX}")
 
 
-def _create(job_dir: Path, candidate_id: str, title: str) -> AgentThread:
+def _turns(job: Documents, candidate_id: str, thread_id: str) -> Document:
+    """Where the Thread's turns are kept. Raises LookupError for an id that no Thread could have."""
+    if not _THREAD_ID.fullmatch(thread_id):
+        raise LookupError(f"No Agent Thread {thread_id!r}")
+    return job.doc(f"{TRANSCRIPTS_DIR}/{candidate_id}/{thread_id}.json")
+
+
+@contextmanager
+def _changing(job: Documents, candidate_id: str) -> Iterator[None]:
+    """A block that reads the Candidate's index and writes it back, with no other change in between."""
+    with _INDEX_LOCK, _index_doc(job, candidate_id).changing():
+        yield
+
+
+def _index(job: Documents, candidate_id: str) -> list[AgentThread]:
+    _migrated(job, candidate_id)
+    saved = _index_doc(job, candidate_id).read()
+    return [] if saved is None else _THREADS.validate_json(saved)
+
+
+def _write_index(job: Documents, candidate_id: str, threads: list[AgentThread]) -> None:
+    _index_doc(job, candidate_id).write(_THREADS.dump_json(threads, indent=2))
+
+
+def _create(job: Documents, candidate_id: str, title: str) -> AgentThread:
     now = datetime.now(UTC)
     thread = AgentThread(id=secrets.token_hex(6), title=title, created_at=now, updated_at=now)
-    _write_index(job_dir, candidate_id, [thread, *_index(job_dir, candidate_id)])
+    _write_index(job, candidate_id, [thread, *_index(job, candidate_id)])
     return thread
 
 
@@ -206,10 +233,13 @@ def _title(prompt: str) -> str:
     return " ".join(prompt.split())[:TITLE_CHARS] or NEW_TITLE
 
 
-def _migrated(job_dir: Path, candidate_id: str) -> None:
+def _migrated(job: Documents, candidate_id: str) -> None:
     """Make the chat kept before Threads the Candidate's first Thread, titled from its first prompt:
-    the old file is moved into a folder made aside, which then takes the Threads' place whole."""
-    legacy, folder = legacy_transcript_path(job_dir, candidate_id), threads_dir(job_dir, candidate_id)
+    the old file is moved into a folder made aside, which then takes the Threads' place whole. Only
+    files are that old: what Postgres keeps was imported as Threads."""
+    if not isinstance(job, FileDocuments):
+        return
+    legacy, folder = legacy_transcript_path(job.root, candidate_id), threads_dir(job.root, candidate_id)
     if not legacy.is_file() or folder.exists():
         return
     with _INDEX_LOCK:

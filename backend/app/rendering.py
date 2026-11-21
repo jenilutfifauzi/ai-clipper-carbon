@@ -46,11 +46,12 @@ from app.caption_files import CaptionFormat, caption_file
 from app.clips import CLIPS_DIR, Clip, ClipStatus, RenderedClip, caption_paths, clip_files
 from app.config import BLAZE_FACE_MODEL, AnalysisTuning, CameraTuning, Settings
 from app.encoding import ExportSettings
+from app.documents import Documents, FileDocuments
 from app.export_presets import EXPORT_PRESETS_FILE, ExportPresetStore
 from app.jobs import Job, JobConflict, JobStatus, JobStore, JobWarning
 from app.layer_pictures import PICTURES_DIR, make_pictures
-from app.logos import LOGOS_DIR, LogoStore
-from app.media import MEDIA_DIR, MediaItem, MediaKind, MediaNotFound, MediaStore
+from app.logos import LOGOS_DIR, LOGOS_INDEX, LogoStore
+from app.media import MEDIA_DIR, MEDIA_INDEX, MediaItem, MediaKind, MediaNotFound, MediaStore
 from app.matte import MATTES_DIR, MatteRunner, Mattes, ModelAbsent, PieceOrCopy, Reversed, matte_pieces
 from app.media_words import MediaWordsFailed, MediaWordsStatus, MediaWordsStore
 from app.planner import Join, MatteRead, MediaInfo, SegmentInput, RenderPlan, edit_shown, plan_render, reframes
@@ -574,14 +575,16 @@ def drawing_inputs(
 class Renders:
     def __init__(
         self, store: JobStore, settings: Settings, transcriber: Transcriber, media_words: MediaWordsStore | None = None,
-        mattes: MatteRunner | None = None,
+        mattes: MatteRunner | None = None, documents: Documents | None = None,
     ) -> None:
         self.store = store
         self.settings = settings
-        self.presets = PresetStore(settings.data_dir / PRESETS_FILE)
-        self.export_presets = ExportPresetStore(settings.data_dir / EXPORT_PRESETS_FILE)
-        self.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin)
-        self.media = MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin)
+        # The account's documents; without them, the files in its data directory.
+        documents = documents or FileDocuments(settings.data_dir)
+        self.presets = PresetStore(documents.doc(PRESETS_FILE))
+        self.export_presets = ExportPresetStore(documents.doc(EXPORT_PRESETS_FILE))
+        self.logos = LogoStore(settings.data_dir / LOGOS_DIR, settings.ffmpeg_bin, documents.doc(LOGOS_INDEX))
+        self.media = MediaStore(settings.data_dir / MEDIA_DIR, settings.ffmpeg_bin, settings.ffprobe_bin, documents.doc(MEDIA_INDEX))
         # Shared with the API, which reports what is queued.
         self.media_words = media_words or MediaWordsStore(settings.data_dir / MEDIA_DIR, settings.whisper_model)
         self.renderer = Renderer(settings.ffmpeg_bin, settings.render)

@@ -9,7 +9,7 @@ from typing import Annotated
 
 from pydantic import AfterValidator, Field, StringConstraints, TypeAdapter
 
-from app.storage import write_atomic
+from app.documents import Document, document_of
 
 # In DATA_DIR.
 STARRED_FILE = "starred_effects.json"
@@ -30,13 +30,13 @@ _STARRED = TypeAdapter(Starred)
 
 
 class StarredStore:
-    def __init__(self, path: Path) -> None:
-        self.path = path
+    def __init__(self, path: Path | Document) -> None:
+        self._doc = document_of(path)
 
     def load(self) -> list[str]:
         """The starred ids, or none before the first save."""
-        return _STARRED.validate_json(self.path.read_bytes()) if self.path.is_file() else []
+        saved = self._doc.read()
+        return [] if saved is None else _STARRED.validate_json(saved)
 
     def save(self, ids: list[str]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        write_atomic(self.path, _STARRED.dump_json(ids, indent=2))
+        self._doc.write(_STARRED.dump_json(ids, indent=2))

@@ -14,6 +14,9 @@ from fastapi.testclient import TestClient
 
 # Only pytest opts into the unauthenticated single-workspace factory used by unit tests.
 os.environ["AI_CLIPPER_TEST_MODE"] = "1"
+# No test reaches the database .env names: an empty variable wins over it, and means unset.
+os.environ["DATABASE_URL"] = ""
+os.environ["SECRETS_KEY"] = ""
 
 from app import emoji
 from app.config import QuotaTuning, SelectionTuning, Settings, TranscriptionTuning, load_settings

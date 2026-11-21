@@ -2,14 +2,13 @@
 Library (app/media.py). Each keeps its items' files in a folder, with an index of them in a JSON
 file, changed under a lock; and each shrinks what it keeps to a longest side with ffmpeg."""
 
-import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
 from pydantic import TypeAdapter
 
-from app.storage import write_atomic
+from app.documents import Document, document_of
 
 
 class Identified(Protocol):
@@ -18,26 +17,30 @@ class Identified(Protocol):
 
 
 class Index[T: Identified]:
-    """Items by their id, in the order they were added, kept in the JSON file `path`."""
+    """Items by their id, in the order they were added, kept in the JSON document `path`."""
 
-    def __init__(self, path: Path, adapter: TypeAdapter[list[T]]) -> None:
-        self.path = path
+    def __init__(self, path: Path | Document, adapter: TypeAdapter[list[T]]) -> None:
+        self._doc = document_of(path)
         self.adapter = adapter
-        self._lock = threading.Lock()
 
     def all(self) -> list[T]:
-        return self.adapter.validate_json(self.path.read_bytes()) if self.path.is_file() else []
+        saved = self._doc.read()
+        return [] if saved is None else self.adapter.validate_json(saved)
+
+    def version(self) -> object | None:
+        """What differs once the items have changed; None while none were ever added."""
+        return self._doc.version()
 
     def find(self, item_id: str) -> T | None:
         return next((item for item in self.all() if item.id == item_id), None)
 
     def add(self, *items: T) -> None:
-        with self._lock:
+        with self._doc.changing():
             self._save([*self.all(), *items])
 
     def change(self, item_id: str, change: Callable[[T], T]) -> T | None:
         """Replace the item with what `change` makes of it, and return that; None when there is no such item."""
-        with self._lock:
+        with self._doc.changing():
             items = self.all()
             found = next((i for i, item in enumerate(items) if item.id == item_id), None)
             if found is None:
@@ -48,7 +51,7 @@ class Index[T: Identified]:
 
     def remove(self, item_id: str) -> bool:
         """Take the item out; False when there was no such item."""
-        with self._lock:
+        with self._doc.changing():
             items = self.all()
             kept = [item for item in items if item.id != item_id]
             if len(kept) == len(items):
@@ -57,7 +60,7 @@ class Index[T: Identified]:
             return True
 
     def _save(self, items: list[T]) -> None:
-        write_atomic(self.path, self.adapter.dump_json(items, indent=2))
+        self._doc.write(self.adapter.dump_json(items, indent=2))
 
 
 def shrink(side: int, even: bool = False) -> str:
