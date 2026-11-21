@@ -21,6 +21,7 @@ import {
   Redo2,
   Scaling,
   Scissors,
+  SquareSplitHorizontal,
   Shuffle,
   SkipBack,
   SkipForward,
@@ -73,9 +74,9 @@ export const ASSET_TABS: { value: AssetTab; label: string; icon: typeof Type }[]
   { value: "templates", label: "Templates", icon: LayoutTemplate },
 ];
 
-// The phone's: Video Effects are a desktop's to edit (ADR 0014), so it has no Effects tab. Its Templates sheet
-// applies one, or "No Template", only.
-export const PHONE_ASSET_TABS = ASSET_TABS.filter((tab) => tab.value !== "effects");
+// The phone keeps the same compact asset shelf as desktop, including Video Effects. Templates applies
+// one, or "No Template", only; Save as Template remains in the compact top-bar action tray.
+export const PHONE_ASSET_TABS = ASSET_TABS;
 
 // The Asset Panel's tabs, as Concat's: each an icon over its name, the open one on a filled
 // background. Every tab keeps its name: two rows of four in a narrow panel (its default width), one
@@ -275,6 +276,8 @@ export function Toolbar({
   onFilters = null,
   onAdjust = null,
   onAudioEffects = null,
+  onCompare = null,
+  onMeters = null,
   onTracks,
   onPlayback,
   onPicking,
@@ -303,6 +306,10 @@ export function Toolbar({
   // Opens the Audio effects sheet of the Pick's items with sound (AudioEffectsFields'
   // `audioEffectChanges`): null while it has none, as with a Freeze frame or an image.
   onAudioEffects?: (() => void) | null;
+  // Opens the preview's server Compare render controls on a phone.
+  onCompare?: (() => void) | null;
+  // Opens the preview's live audio Meters on a phone.
+  onMeters?: (() => void) | null;
   // Opens the Tracks sheet: their buttons, and the Magnetic timeline's switch.
   onTracks: () => void;
   // Opens the Playback sheet: the rate, the Loop Region and the Edit Point jumps.
@@ -365,6 +372,8 @@ export function Toolbar({
           <SplitButton splitter={splitter} playback={playback} />
           <FreezeButton freezer={freezer} playback={playback} />
           <PlaybackButton playback={playback} onClick={onPlayback} />
+          {onCompare && <ToolButton icon={SquareSplitHorizontal} label="Compare" onClick={onCompare} />}
+          {onMeters && <ToolButton icon={AudioWaveform} label="Meters" onClick={onMeters} />}
           <ToolButton icon={Layers2} label="Tracks" onClick={onTracks} />
           <ToolButton icon={ListChecks} label="Pick" onClick={onPicking} />
         </>
