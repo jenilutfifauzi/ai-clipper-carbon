@@ -1,0 +1,141 @@
+name: Android APK
+
+# Builds the Android app, proves on an emulator that it opens, and (when asked) publishes the APK
+# as a GitHub pre-release. A push only publishes when its commit message contains "[apk]"; a manual
+# run always does.
+on:
+  push:
+    branches:
+      - feat/android-native-full-parity
+      - claude/android-native-parity-review-t9tqyd
+    paths:
+      - "mobile/**"
+      - ".github/workflows/android-release.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      # Public client configuration. Both may be unset: the app then offers only Local Render.
+      EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      EXPO_PUBLIC_API_BASE_URL: ${{ vars.EXPO_PUBLIC_API_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm run test:unit
+
+      - name: Generate the Android project
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Describe this build
+        id: meta
+        env:
+          HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          version=$(node -p "require('./app.json').expo.version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=android-v$version-build.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "apk=ai-clipper-carbon-$version-build.${{ github.run_number }}.apk" >> "$GITHUB_OUTPUT"
+          if [ "$HAS_KEYSTORE" = "true" ]; then echo "signing=release" >> "$GITHUB_OUTPUT"; else echo "signing=debug" >> "$GITHUB_OUTPUT"; fi
+          if [ -n "$EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY" ] && [ -n "$EXPO_PUBLIC_API_BASE_URL" ]; then echo "account=yes" >> "$GITHUB_OUTPUT"; else echo "account=no" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Build the release APK
+        working-directory: mobile/android
+        env:
+          # Optional. Without a keystore the APK is signed with the debug key, for testing only.
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          args="-PreactNativeArchitectures=arm64-v8a,armeabi-v7a,x86_64 -Pandroid.injected.version.code=${{ github.run_number }}"
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+            args="$args -Pandroid.injected.signing.store.file=$RUNNER_TEMP/release.jks"
+            args="$args -Pandroid.injected.signing.store.password=$ANDROID_KEYSTORE_PASSWORD"
+            args="$args -Pandroid.injected.signing.key.alias=$ANDROID_KEY_ALIAS"
+            args="$args -Pandroid.injected.signing.key.password=$ANDROID_KEY_PASSWORD"
+          fi
+          ./gradlew assembleRelease --no-daemon $args
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/${{ steps.meta.outputs.apk }}"
+          ls -lh "$RUNNER_TEMP/${{ steps.meta.outputs.apk }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: ${{ runner.temp }}/${{ steps.meta.outputs.apk }}
+          retention-days: 14
+
+      - name: Allow the emulator to use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Open the app on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: bash mobile/scripts/smoke-test.sh "${{ runner.temp }}/${{ steps.meta.outputs.apk }}" "${{ steps.meta.outputs.account }}"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-test
+          path: ${{ runner.temp }}/smoke
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Publish the pre-release
+        if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[apk]')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Android ${{ steps.meta.outputs.version }} (build ${{ github.run_number }})
+          prerelease: true
+          files: ${{ runner.temp }}/${{ steps.meta.outputs.apk }}
+          body: |
+            Test build of the Android app from `${{ github.ref_name }}` at ${{ github.sha }}.
+
+            - **Signing:** ${{ steps.meta.outputs.signing == 'release' && 'release keystore' || 'debug key. For testing only; uninstall it before installing a build signed with another key.' }}
+            - **Sign-in and AI Jobs:** ${{ steps.meta.outputs.account == 'yes' && 'configured' || 'not configured in this build. Only Local Render (trim, 9:16 crop, captions, hook, watermark on the phone) works.' }}
+            - **ABIs:** arm64-v8a, armeabi-v7a, x86_64. Android 7.0 or later.
+            - **Checked automatically:** type check, unit tests, and that the app opens to its home and Local Render screens on an Android 14 emulator. Rendering a real video, saving to the gallery and sharing have not been run on a device.
+
+            Install: download the `.apk` on the phone, open it, and allow installing from that source.
