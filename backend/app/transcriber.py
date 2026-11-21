@@ -55,8 +55,10 @@ class TranscriptionStalled(RuntimeError):
 class Watchdog:
     """Runs any Transcriber with a time budget per call, derived from the range's duration.
 
-    A call past its budget is stopped and retried once. If the retry runs out too,
-    `TranscriptionStalled` is raised, and the caller skips the range.
+    A call past its budget is stopped and retried once, with twice the budget: the retry starts
+    cold (a new Whisper worker loads the model again), on a Mac that was already slow. If the retry
+    runs out too, `TranscriptionStalled` is raised, and the caller skips the range. A call that
+    finishes while it is being stopped keeps its Transcript.
     """
 
     def __init__(self, transcriber: Transcriber, tuning: TranscriptionTuning) -> None:
@@ -69,11 +71,12 @@ class Watchdog:
             budget = self.tuning.budget_secs + self.tuning.budget_factor * (end - start)
         span = f"{clock(start)}–{clock(end)}"
         for attempt in range(2):
-            transcript = self._within(budget, media, language, start, end)
+            allowed = budget * (attempt + 1)
+            transcript = self._within(allowed, media, language, start, end)
             if transcript is not None:
                 return transcript
-            retrying = "; retrying" if not attempt else ""
-            logger.warning("Transcribing %s ran past its %.1f s budget%s", span, budget, retrying)
+            retrying = f"; retrying within {2 * budget:.1f} s" if not attempt else ""
+            logger.warning("Transcribing %s ran past its %.1f s budget%s", span, allowed, retrying)
         raise TranscriptionStalled(f"Skipped {span}: transcription stalled twice (budget {budget:.1f} s)")
 
     def _within(self, budget: float, media: Path, language: str, start: float, end: float) -> Transcript | None:
@@ -92,6 +95,9 @@ class Watchdog:
             return outcome.result()
         self.transcriber.stop()
         thread.join(_STOP_GRACE_SECS)
+        # A worker past the end of its range replies before it reads the request to exit.
+        if outcome.done() and outcome.exception() is None:
+            return outcome.result()
         return None
 
 
