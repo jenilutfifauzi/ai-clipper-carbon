@@ -8,6 +8,7 @@ import pytest
 from app.agent.scope import ALLOWED_TOOLS, AgentScope
 from conftest import wait_for
 from test_jobs_api import create_job
+from test_media_library import make
 
 MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json", "Host": "127.0.0.1:8000"}
 
@@ -118,3 +119,32 @@ def test_a_save_through_the_scoped_server_names_its_agent_turn_in_its_revision(c
     between, turn, *_ = client.get(path).json()["revisions"]
     assert (turn["source"], turn["tab"]) == ("agent", "agent:t1")
     assert (between["source"], between["tab"]) == ("agent", "agent:s1")
+
+
+def test_an_agent_adds_a_picture_a_song_and_a_video_to_the_media_library_and_puts_them_on_its_candidate(client, scope, token, tmp_path):
+    lavfi = ("-f", "lavfi", "-i")
+    picture, song, video = tmp_path / "made.png", tmp_path / "whoosh.wav", tmp_path / "clip.mp4"
+    make(picture, *lavfi, "color=c=blue:size=64x64", "-frames:v", "1")
+    make(song, *lavfi, "sine=frequency=880:duration=1")
+    make(video, *lavfi, "color=c=green:size=320x180:rate=25:duration=1", "-c:v", "libx264")
+    added = {path.name: result(call(client, token, "add_asset", kind="media", path=str(path))) for path in (picture, song, video)}
+
+    assert [item["kind"] for item in added.values()] == ["image", "audio", "video"]
+    listed = {item["id"] for item in result(call(client, token, "list_assets", kind="media"))["media"]}
+    assert listed == {item["id"] for item in added.values()}
+    ids = {"job_id": scope.job_id, "candidate_id": scope.candidate_id}
+    merged = result(call(client, token, "merge_candidate_items", **ids,
+                         overlays=[{"id": "o", "media": added["made.png"]["id"], "start": 0, "secs": 0.5}],
+                         music=[{"id": "m", "media": added["whoosh.wav"]["id"], "start": 0, "secs": 0.5}]))
+    assert merged["overlays"][0]["media"] == added["made.png"]["id"]
+    assert merged["music"][0]["media"] == added["whoosh.wav"]["id"]
+
+
+def test_an_agent_is_told_why_a_file_cant_be_added_and_adds_no_logo_font_or_look(client, token, tmp_path):
+    assert "No file" in refused(call(client, token, "add_asset", kind="media", path=str(tmp_path / "missing.png")))
+    text = tmp_path / "notes.png"
+    text.write_text("not a picture")
+    assert "PNG, JPEG or WebP image" in refused(call(client, token, "add_asset", kind="media", path=str(text)))
+    for kind in ("logo", "font", "look"):
+        assert "adds only media" in refused(call(client, token, "add_asset", kind=kind, path=str(text)))
+    assert result(call(client, token, "list_assets", kind="media"))["media"] == []
