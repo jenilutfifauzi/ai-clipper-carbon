@@ -27,7 +27,8 @@ from app.agent.prompt import system_prompt
 from app.agent.providers import AcpProvider, ApiProvider, launch_command
 from app.agent.scope import AgentScope, ScopeRegistry
 from app.agent.transcript_store import ToolPart, TranscriptTurn, TurnPart, append_turn, find_turn, load_transcript, turn_text, with_event
-from app.jobs import JobStore
+from app.export_files import EXPORTS_DIR
+from app.jobs import JobElsewhere, JobStore
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +245,11 @@ class AgentSessionManager:
             await session.acp.close()
         scope = self._scopes.resolve(session.token)
         sandbox = self._workspace.settings.data_dir / SANDBOX_DIR / scope.session_id
-        session.acp = AcpAgent(provider, command, sandbox)
+        frames = None
+        # Its Job's frames, which it may read; none of a Job whose media are on another machine.
+        with suppress(JobElsewhere):
+            frames = self._workspace.store.job_dir(scope.job_id) / EXPORTS_DIR
+        session.acp = AcpAgent(provider, command, sandbox, frames)
         return session.acp
 
     async def _run(self, session: AgentSession, turn: str, driver: Driver, prompt: str, attached: ResolvedAttachments) -> None:

@@ -5,7 +5,8 @@ a subprocess speaking JSON-RPC 2.0 over newline-delimited JSON on stdio.
 notifications and the agent's own requests to their handlers. `AcpAgent` is one Agent Session's
 agent: launched on its first turn, kept between turns, started afresh after it exits; its `run_turn`
 is the session's driver. Its permission requests are answered without a dialog: allowed for the
-scoped MCP server's tools, rejected for everything else."""
+scoped MCP server's tools and for its own reading of a frame save_frame saved for its Job, rejected
+for everything else."""
 
 import asyncio
 import itertools
@@ -198,7 +199,8 @@ class AcpConnection:
 
 
 def client_capabilities() -> dict[str, Any]:
-    """No file system and no terminal: the agent reaches the Candidate through the scoped server only."""
+    """No file system and no terminal: the agent reaches the Candidate through the scoped server only
+    (and reads, with a tool of its own, the frames save_frame saved: `reads_frames`)."""
     return {"fs": {"readTextFile": False, "writeTextFile": False}, "terminal": False}
 
 
@@ -268,17 +270,52 @@ def names_scoped_tool(*values: Any) -> bool:
     return any(prefix in text for value in values for text in _strings(value) for prefix in MCP_TOOL_PREFIXES)
 
 
-def permission_outcome(params: dict[str, Any], known: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """The answer to `session/request_permission`: an allow option for a scoped tool, else a reject
-    option, else `cancelled`. `known` holds the turn's tool calls by id, whose title or `_meta` names
-    the tool when the request carries its id only."""
+# The tools of its own an agent reads a file with (Antigravity's), besides those of kind `read`, and
+# the keys of their input that hold its path.
+READ_TOOLS = frozenset({"read_file", "view_file"})
+PATH_KEYS = frozenset({"path", "file_path", "filepath", "absolutepath", "absolute_path"})
+
+
+def reads_frames(tool_call: dict[str, Any], earlier: dict[str, Any], frames: Path | None) -> bool:
+    """Whether the tool call (as the request and its announcement, `earlier`, tell it) only reads
+    PNGs in `frames`, a Job's Export files: the frames save_frame saved, which an agent that isn't
+    shown a tool result's image (Antigravity keeps it in a file) reads with a tool of its own."""
+    calls = (tool_call, earlier)
+    if frames is None or not any(call.get("kind") == "read" or tool_name(call).lower() in READ_TOOLS for call in calls):
+        return False
+    paths = [
+        *(location.get("path") for call in calls for location in call.get("locations") or [] if isinstance(location, dict)),
+        *(
+            value
+            for call in calls
+            if isinstance(call.get("rawInput"), dict)
+            for key, value in call["rawInput"].items()
+            if key.lower() in PATH_KEYS
+        ),
+    ]
+    inside = frames.resolve()
+    return bool(paths) and all(
+        isinstance(path, str) and Path(path).is_absolute() and path.lower().endswith(".png") and Path(path).resolve().is_relative_to(inside)
+        for path in paths
+    )
+
+
+def permission_outcome(params: dict[str, Any], known: dict[str, dict[str, Any]], frames: Path | None = None) -> dict[str, Any]:
+    """The answer to `session/request_permission`: an allow option for a scoped tool, or (this once)
+    for reading a frame in `frames`; else a reject option, else `cancelled`. `known` holds the turn's
+    tool calls by id, whose title or `_meta` names the tool when the request carries its id only."""
     tool_call = params.get("toolCall") or {}
     earlier = known.get(tool_call.get("toolCallId"), {})
     is_scoped = names_scoped_tool(
         *(call.get(key) for call in (tool_call, earlier) for key in ("name", "title", "_meta"))
     )
     options = params.get("options") or []
-    kinds = ("allow_once", "allow_always") if is_scoped else ("reject_once", "reject_always")
+    if is_scoped:
+        kinds: tuple[str, ...] = ("allow_once", "allow_always")
+    elif reads_frames(tool_call, earlier, frames):
+        kinds = ("allow_once",)
+    else:
+        kinds = ("reject_once", "reject_always")
     chosen = next((option for kind in kinds for option in options if option.get("kind") == kind), None)
     if chosen is None:
         return {"outcome": {"outcome": "cancelled"}}
@@ -345,12 +382,14 @@ async def _refuse(method: str, params: dict[str, Any]) -> Any:
 class AcpAgent:
     """One Agent Session's ACP agent: one process, kept between its turns."""
 
-    def __init__(self, provider: AcpProvider, command: list[str], sandbox: Path) -> None:
+    def __init__(self, provider: AcpProvider, command: list[str], sandbox: Path, frames: Path | None = None) -> None:
         self.provider_id = provider.id
         self._provider = provider
         self._label = provider.label
         self._command = command
         self._sandbox = sandbox
+        # Its Job's Export files, whose frames it may read with a tool of its own.
+        self._frames = frames
         self._connection: AcpConnection | None = None
         self._session_id: str | None = None
         # Whether its prompts take images, as its `initialize` answer said.
@@ -459,7 +498,7 @@ class AcpAgent:
             raise MethodNotFound(method)
         if self._turn is None:
             return {"outcome": {"outcome": "cancelled"}}
-        return permission_outcome(params, self._tool_calls)
+        return permission_outcome(params, self._tool_calls, self._frames)
 
     def _events(self, turn: str, update: dict[str, Any]) -> list[AgentEvent]:
         kind = update.get("sessionUpdate")
@@ -482,7 +521,7 @@ class AcpAgent:
             earlier = self._tool_calls.setdefault(call, {})
             if earlier.get("finished"):
                 return []
-            earlier.update({key: value for key, value in update.items() if key in ("name", "title", "_meta", "rawInput")})
+            earlier.update({key: value for key, value in update.items() if key in ("name", "title", "_meta", "rawInput", "kind", "locations")})
             return self._finished(turn, call, update)
         return []
 

@@ -214,6 +214,43 @@ def test_permissions_are_given_to_the_scoped_tools_only(served, job, fake_agent)
     ]
 
 
+def test_an_agent_reads_the_frames_save_frame_saved_for_its_job_and_no_other_file(served, job, fake_agent, tmp_path):
+    candidate = job["candidates"][0]
+    saved = served.post(f"/api/jobs/{job['id']}/candidates/{candidate['id']}/frame", json={"at": 0.5})
+    assert saved.status_code == 200, saved.text
+    frame = Path(saved.json()["path"])
+    elsewhere = tmp_path / "other.png"
+    elsewhere.write_bytes(frame.read_bytes())
+    kinds = ("allow_once", "allow_always", "reject_once")
+
+    def read(call: str, path: str, tool: str = "read_file") -> list[dict]:
+        # As Antigravity asks: the tool call announced with its input, then the request with its id.
+        announced = {"sessionUpdate": "tool_call", "toolCallId": call, "title": tool, "status": "pending", "rawInput": {"Path": path}}
+        return [{"update": announced}, permission(call, tool, *kinds)]
+
+    fake_agent.turns([[
+        *read("r1", str(frame)),
+        *read("r2", str(elsewhere)),
+        *read("r3", str(frame.parent / ".." / "job.json")),
+        *read("r4", str(frame.with_suffix(".srt"))),
+        *read("r5", str(frame.parent / ".." / ".." / frame.parent.parent.name / "exports" / ".." / "preview.png")),
+        *read("r6", str(frame), tool="Bash"),
+        # A tool of kind `read`, its file among its locations.
+        {"permission": {"toolCall": {"toolCallId": "r7", "title": "Read", "kind": "read", "locations": [{"path": str(frame)}]},
+                        "options": [{"optionId": "once", "name": "Allow", "kind": "allow_once"}]}},
+        says("Seen."),
+    ]])
+    stream = agent_events(served, job, candidate)
+    next(stream)
+
+    send(served, job, candidate, "Look at it")
+    until_finished(stream)
+
+    answers = [message["result"]["outcome"].get("optionId") for message in fake_agent.received() if "result" in message]
+    # Allowed this once, never always.
+    assert answers == ["allow_once-id", *["reject_once-id"] * 5, "once"]
+
+
 def test_stop_sends_cancel_and_the_turn_ends_cancelled(served, job, fake_agent):
     candidate = job["candidates"][0]
     fake_agent.turns([[says("Working…"), {"hold": True}]])

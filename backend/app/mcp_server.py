@@ -941,7 +941,7 @@ def build_mcp(app: FastAPI, scoped: bool = False, authenticated: bool = True) ->
     async def save_frame(job_id: str, candidate_id: str, at: float, export_preset_id: str | None = None) -> list:
         """Save the Candidate's frame at `at` (Timeline seconds) as a PNG, as its render would draw it,
         at an Export Preset's size (else the default's), e.g. for a thumbnail. Quick, not queued.
-        Gives its path and the PNG itself, so it can be seen without reading the file."""
+        Gives its path and the PNG itself: where the picture isn't shown, read the file at its path."""
         body = {"at": at, "export_preset_id": export_preset_id}
         saved = await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/frame", json=body)
         # The file is under data/, which some agents (Antigravity) may not read, being gitignored.
