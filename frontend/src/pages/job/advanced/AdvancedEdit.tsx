@@ -274,10 +274,21 @@ export function AdvancedEditPage() {
       </div>
     );
   }
-  return <Workspace key={candidateId} job={job} initial={job.candidates[index]} index={index} />;
+  return <Workspace key={candidateId} job={job} initial={job.candidates[index]} index={index} onJob={setJob} />;
 }
 
-function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate; index: number }) {
+function Workspace({
+  job,
+  initial,
+  index,
+  onJob,
+}: {
+  job: JobDetail;
+  initial: Candidate;
+  index: number;
+  // The Job as a change to it here (Auto captions) leaves it.
+  onJob: (change: (job: JobDetail | null) => JobDetail | null) => void;
+}) {
   const navigate = useNavigate();
   const [candidate, setCandidate] = useState(initial);
   const [saving, setSaving] = useState(0);
@@ -618,13 +629,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
   const draft: CandidateChange = { ...candidateDraft(candidate), ...edits };
   // Counted up to plan again while a media Segment's Media Words are being transcribed.
   const [replan, setReplan] = useState(0);
-  // Planned again on a change of aspect too: the draft doesn't hold it, and a Candidate with nothing to
+  // Planned again on a change of aspect too, and of the Job's captions (Auto captions): the draft doesn't hold it, and a Candidate with nothing to
   // rescale comes back from it with the same draft, on a Canvas the old plan doesn't show.
   const { preview, error: previewError, planned: plannedDraft } = usePreviewPlan(
     job.id,
     candidate.id,
     heardDraft(draft, tracks),
-    `${job.status} ${replan} ${candidate.aspect}`,
+    `${job.status} ${replan} ${candidate.aspect} ${job.options.captions}`,
   );
   // The plan's items with Audio Effects heard from their Effected copies, as they are made.
   useEffectedCopies(job.id, candidate.id, plannedDraft, preview?.plan ?? null);
@@ -1662,6 +1673,13 @@ function Workspace({ job, initial, index }: { job: JobDetail; initial: Candidate
       library={library}
       transcript={job.transcript}
       near={edits.segments[0]}
+      autoCaptions={{
+        on: job.options.captions,
+        onChange: async (on) => {
+          const changed = await api.setJobCaptions(job.id, on);
+          onJob((current) => current && { ...current, options: changed.options });
+        },
+      }}
       transitions={transitionPanel(true)}
       templates={<TemplatesPanel phone={!wide} onApply={applyTemplate} />}
       narrate={<NarratePanel flow={narrateFlow} language={job.options.language} atEnd={narrateAtEnd} title={narrated} />}

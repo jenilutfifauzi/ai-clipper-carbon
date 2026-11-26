@@ -80,7 +80,8 @@ KITA_SOAL = (1.6, 2.6)
 # apply_template, and JobOptions' `template` in both create_job tools; the rest is in the instructions.
 # 97_949 with Canvas Aspects, Background removal and Templates all in (merged).
 # Raised for stopping and continuing a Job: the stop_job and continue_job tools (99_018 with them).
-TOOLS_BUDGET_BYTES = 99_500
+# Raised for Auto captions: the set_job_captions tool (99_536 with it).
+TOOLS_BUDGET_BYTES = 100_000
 INITIALIZE = {
     "jsonrpc": "2.0", "id": 1, "method": "initialize",
     "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
@@ -1117,6 +1118,20 @@ async def test_get_captions_is_refused_for_a_job_with_captions_off(mcp):
     job = await reviewed(mcp, captions=False)
     candidate = await manual(mcp, job, *HALO_KABAR)
     assert "captions off" in await fails(mcp, "get_captions", job_id=job["id"], candidate_id=candidate["id"], format="srt")
+
+
+@pytest.mark.anyio
+async def test_set_job_captions_turns_a_jobs_captions_on_and_off(mcp):
+    job = await reviewed(mcp, captions=False)
+    ids = {"job_id": job["id"], "candidate_id": (await manual(mcp, job, *HALO_KABAR))["id"]}
+
+    turned_on = await call(mcp, "set_job_captions", job_id=job["id"], captions=True)
+    assert (turned_on["id"], turned_on["captions"]) == (job["id"], True)
+    assert (await call(mcp, "get_captions", **ids, format="srt"))["text"]
+
+    assert (await call(mcp, "set_job_captions", job_id=job["id"], captions=False))["captions"] is False
+    assert "captions off" in await fails(mcp, "get_captions", **ids, format="srt")
+    assert "No Job nope" in await fails(mcp, "set_job_captions", job_id="nope", captions=True)
 
 
 # 08: agent guidance

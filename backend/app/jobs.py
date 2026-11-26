@@ -307,6 +307,16 @@ class JobStore:
             self._save(job)
             return job
 
+    def set_captions(self, job_id: str, captions: bool) -> Job:
+        """Turn the Job's captions on or off. Refused (JobConflict) while one of its stages runs."""
+        with self._changing(job_id):
+            job = self.get(job_id)
+            if job.status in RUNNING:
+                raise JobConflict(f"Job {job_id} is {job.status}")
+            job = _changed(job, {"options": replace(job.options, captions=captions)})
+            self._save(job)
+            return job
+
     def delete(self, job_id: str) -> None:
         """Remove the Job's directory with all its files, and its documents. Refused (JobConflict)
         while one of its stages runs, here or in another process."""

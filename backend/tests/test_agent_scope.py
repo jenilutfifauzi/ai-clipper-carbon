@@ -109,6 +109,13 @@ def test_edits_reach_the_scoped_candidate_only(client, job, scope, token):
     assert second == other
 
 
+def test_an_agent_turns_its_jobs_captions_on_and_no_other_jobs(client, scope, token):
+    turned = call(client, token, "set_job_captions", job_id=scope.job_id, captions=False)
+    assert result(turned)["captions"] is False
+    assert client.get(f"/api/jobs/{scope.job_id}").json()["options"]["captions"] is False
+    assert "Job" in refused(call(client, token, "set_job_captions", job_id="other", captions=True))
+
+
 def test_a_save_through_the_scoped_server_names_its_agent_turn_in_its_revision(client, scope, token):
     ids = {"job_id": scope.job_id, "candidate_id": scope.candidate_id}
     call(client, token, "edit_candidate", **ids, changes={"hook_text": "In the turn"})

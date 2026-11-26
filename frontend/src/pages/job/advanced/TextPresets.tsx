@@ -1,4 +1,4 @@
-import { Check, MoreHorizontal, Plus, Save, X } from "lucide-react";
+import { Captions, Check, MoreHorizontal, Plus, Save, X } from "lucide-react";
 import { useId, useState, type CSSProperties } from "react";
 import type { FontInfo, TextPreset, TextStyle } from "../../../api";
 import { Button, buttonClass } from "../../../components/Button";
@@ -22,16 +22,27 @@ export function fromPreset(preset: TextPreset, frame: Size): UntimedTextLayer {
 }
 
 /**
- * The Text tab: Add text, in the Preset used for new titles; the Presets on their shelves ("Mine",
- * then the built-in ones by kind), each drawn in its Text Style and adding a Text Layer at the playhead,
- * or where it is dropped on the timeline; and Import font, whose Faces every font picker then lists.
+ * The Text tab: Auto captions, the Job's captions on or off; Add text, in the Preset used for new
+ * titles; the Presets on their shelves ("Mine", then the built-in ones by kind), each drawn in its Text
+ * Style and adding a Text Layer at the playhead, or where it is dropped on the timeline; and Import
+ * font, whose Faces every font picker then lists.
  */
-export function TextAssets({ fonts, onAdd }: { fonts: FontInfo[] | null; onAdd: (made: UntimedTextLayer) => void }) {
+export function TextAssets({
+  fonts,
+  onAdd,
+  autoCaptions,
+}: {
+  fonts: FontInfo[] | null;
+  onAdd: (made: UntimedTextLayer) => void;
+  // The Job's captions, and turning them on or off.
+  autoCaptions?: AutoCaptionsState;
+}) {
   const presets = useTextPresets();
   const canvas = useCanvas();
   const forNew = presets && forNewTitles(presets);
   return (
     <div className="flex flex-col gap-3">
+      {autoCaptions && <AutoCaptions {...autoCaptions} />}
       <Button variant="primary" size="sm" className="self-start" disabled={!forNew} onClick={() => forNew && onAdd(fromPreset(forNew, canvas))}>
         <Plus aria-hidden size={16} />
         Add text
@@ -53,6 +64,55 @@ export function TextAssets({ fonts, onAdd }: { fonts: FontInfo[] | null; onAdd: 
         ))}
       <ImportFont />
     </div>
+  );
+}
+
+export type AutoCaptionsState = { on: boolean; onChange: (on: boolean) => Promise<void> };
+
+/** Auto captions, as CapCut's: the Job's captions, from what is said in its clips, turned on or off. */
+function AutoCaptions({ on, onChange }: AutoCaptionsState) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const turn = (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    onChange(next).then(
+      () => setBusy(false),
+      (reason: Error) => {
+        setBusy(false);
+        setError(reason.message);
+      },
+    );
+  };
+  return (
+    <section className="flex flex-col gap-2" aria-label="Auto captions">
+      {on ? (
+        <div className="flex items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-sm">
+            <Captions aria-hidden size={16} />
+            Auto captions on
+          </p>
+          <Button size="xs" disabled={busy} onClick={() => turn(false)}>
+            Turn off
+          </Button>
+        </div>
+      ) : (
+        <>
+          <Button size="sm" className="self-start" disabled={busy} onClick={() => turn(true)}>
+            <Captions aria-hidden size={16} />
+            Auto captions
+          </Button>
+          <Hint more="The Clips rendered before keep theirs until they are rendered again.">
+            Captions from what is said in the clip, in its Caption Style.
+          </Hint>
+        </>
+      )}
+      {error && (
+        <p role="alert" className="text-sm text-danger">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
 

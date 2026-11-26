@@ -447,7 +447,7 @@ export function CandidateEditor({
               </section>
             )}
             {tab === "text" && !job.options.captions && (
-              <p className="text-sm text-muted">This Job's captions are off: turn them on in a new Job to caption its clips.</p>
+              <p className="text-sm text-muted">This Job's captions are off: turn them on with Auto captions in the Advanced Edit's Text tab.</p>
             )}
             {tab === "captions" && (
               <section aria-labelledby="captions-heading" className="flex flex-col gap-3">

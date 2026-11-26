@@ -1067,6 +1067,27 @@ def stop_job(job_id: str, worker: JobWorker) -> Job:
         raise HTTPException(409, f"{exc}: only a Job on its way to review can be stopped") from None
 
 
+class JobChange(BaseModel):
+    """A change to a Job after it is made."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    captions: bool
+
+
+@router.patch("/jobs/{job_id}")
+def change_job(job_id: str, body: JobChange, store: Store) -> Job:
+    """Turn the Job's captions on or off (Auto captions). The preview, preparations and renders from
+    now on follow it; Clips rendered before keep theirs (they aren't stale) until rendered again.
+    409 while one of its stages runs."""
+    try:
+        return store.set_captions(job_id, body.captions)
+    except JobNotFound:
+        raise HTTPException(404, f"No Job {job_id}") from None
+    except JobConflict as exc:
+        raise HTTPException(409, f"{exc}: its captions can be changed once its stage is done") from None
+
+
 @router.post("/jobs/{job_id}/continue")
 def continue_job(job_id: str, worker: JobWorker) -> Job:
     """Queue a `stopped` Job again. It resumes from the stage it stopped in."""

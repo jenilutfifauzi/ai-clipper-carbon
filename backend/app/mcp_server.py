@@ -329,7 +329,7 @@ Edits:
   other languages are kept. The dry run gives each Segment's `words_status`: clip or transcript (the
   episode's), media (ready), pending (no Cues yet: get_captions is refused meanwhile), failed (with
   `words_error`; get_media_words retries), off (its Captions switch) or none (not queued, silent,
-  reversed, a Freeze frame or captions off).
+  reversed, a Freeze frame or captions off: set_job_captions turns a Job's on).
 - A Segment plays its range at its `speed`, 0.0625..16 (1 by default; 2 is twice as fast): it
   lasts (end - start) / speed in the Clip, `start` and `end` staying Source time (a video's: seconds
   into it). Its sound keeps its pitch; with `pitch` true it rises and falls with the speed instead,
@@ -731,6 +731,13 @@ def build_mcp(app: FastAPI, scoped: bool = False, authenticated: bool = True) ->
     async def continue_job(job_id: str) -> dict:
         """Queue a stopped Job again, from the stage it stopped in."""
         return _job_view(await api("POST", f"/jobs/{job_id}/continue"))
+
+    @tool()
+    async def set_job_captions(job_id: str, captions: bool) -> dict:
+        """Turn a Job's captions on or off (Auto captions); on, its videos' Media Words can be
+        transcribed. Clips rendered before keep theirs until rendered again."""
+        job = await api("PATCH", f"/jobs/{job_id}", json={"captions": captions})
+        return _job_view(job) | {"captions": job["options"]["captions"]}
 
     @tool(destructive=True)
     async def delete_job(job_id: str) -> dict:

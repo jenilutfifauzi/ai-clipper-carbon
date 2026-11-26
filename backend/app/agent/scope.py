@@ -12,7 +12,7 @@ COMPACT_TOOLS_HEADER = "X-Agent-Tools"
 # The MCP server's tools an Agent may call: reading and editing its Candidate (edit_candidate's
 # dry_run is its dry run), its Revisions, the Job's Transcript, the Media Library (adding a video,
 # song or image from a file on this Mac too) and the other assets, the Presets, Templates and Looks,
-# Narration and the Channel Profile; and show_ui, which only the scoped server has (an Agent UI in
+# Narration and the Channel Profile, and turning the Job's captions on or off; and show_ui, which only the scoped server has (an Agent UI in
 # the chat). None creates, deletes or retries a Job, renders or exports, deletes an asset or a
 # Preset, adds a Logo, font or Look (ADDABLE_KINDS), or sets the Channel Profile.
 ALLOWED_TOOLS = (
@@ -26,6 +26,7 @@ ALLOWED_TOOLS = (
     "list_assets",
     "add_asset",
     "get_media_words",
+    "set_job_captions",
     "list_presets",
     "apply_template",
     "generate_speech",

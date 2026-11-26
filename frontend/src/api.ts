@@ -1985,6 +1985,9 @@ export const api = {
   // Stop a Job on its way to review (a running stage stops soon after), and queue a stopped one again.
   stopJob: (id: string) => request<Job>(`/jobs/${id}/stop`, { method: "POST" }),
   continueJob: (id: string) => request<Job>(`/jobs/${id}/continue`, { method: "POST" }),
+  // Auto captions: turn a Job's captions on or off. Clips rendered before keep theirs until rendered again.
+  setJobCaptions: (id: string, captions: boolean) =>
+    request<Job>(`/jobs/${id}`, { method: "PATCH", body: JSON.stringify({ captions }) }),
   deleteJob: (id: string) => request<void>(`/jobs/${id}`, { method: "DELETE" }),
   // Rejects with the backend's message (507) when an upload this size wouldn't fit on the disk.
   checkUpload: (size: number) => request<void>(`/jobs/upload/check?size=${size}`),

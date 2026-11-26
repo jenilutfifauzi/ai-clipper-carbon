@@ -5,7 +5,7 @@ import { SourcePicker } from "./MainTrack";
 import { MediaAssets, mediaSections, type MediaCategory, type MediaLanguages, type MediaLibrary } from "./MediaLibrary";
 import { ShapeAssets } from "./Shapes";
 import type { UntimedTextLayer } from "./TextLayers";
-import { TextAssets } from "./TextPresets";
+import { TextAssets, type AutoCaptionsState } from "./TextPresets";
 
 /**
  * An asset tab's content: the Text Presets; the Shapes (the Stickers tab); the Media tab, by its
@@ -33,6 +33,7 @@ export function AssetPanel({
   onAddVideo,
   onAddOverlay,
   languages,
+  autoCaptions,
 }: {
   tab: AssetTab;
   // The Media tab's category (MediaCategories).
@@ -56,8 +57,10 @@ export function AssetPanel({
   onAddOverlay: (item: MediaItem) => void;
   // Each video's language for its Media Words, set from its card.
   languages?: MediaLanguages;
+  // The Text tab's Auto captions: the Job's captions, and turning them on or off.
+  autoCaptions?: AutoCaptionsState;
 }) {
-  if (tab === "text") return <TextAssets fonts={fonts} onAdd={onAddText} />;
+  if (tab === "text") return <TextAssets fonts={fonts} onAdd={onAddText} autoCaptions={autoCaptions} />;
   if (tab === "stickers") return <ShapeAssets onAdd={onAddShape} />;
   if (tab === "media") {
     const shown = mediaSections(category);
