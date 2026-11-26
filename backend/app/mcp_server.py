@@ -23,7 +23,7 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin, get_typ
 import httpx
 from anyio import to_thread
 from fastapi import FastAPI, HTTPException, Request
-from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver import Context, Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ListToolsResult, PaginatedRequestParams, ToolAnnotations
 from pydantic import AwareDatetime, BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError, WithJsonSchema, create_model
@@ -931,12 +931,14 @@ def build_mcp(app: FastAPI, scoped: bool = False, authenticated: bool = True) ->
         return {"clips": clips(job_id, await api("GET", f"/jobs/{job_id}/clips"))}
 
     @tool()
-    async def save_frame(job_id: str, candidate_id: str, at: float, export_preset_id: str | None = None) -> dict:
+    async def save_frame(job_id: str, candidate_id: str, at: float, export_preset_id: str | None = None) -> list:
         """Save the Candidate's frame at `at` (Timeline seconds) as a PNG, as its render would draw it,
-        at an Export Preset's size (else the default's), e.g. for a thumbnail. Quick, not queued."""
+        at an Export Preset's size (else the default's), e.g. for a thumbnail. Quick, not queued.
+        Gives its path and the PNG itself, so it can be seen without reading the file."""
         body = {"at": at, "export_preset_id": export_preset_id}
         saved = await api("POST", f"/jobs/{job_id}/candidates/{candidate_id}/frame", json=body)
-        return {"path": saved["path"]}
+        # The file is under data/, which some agents (Antigravity) may not read, being gitignored.
+        return [{"path": saved["path"]}, Image(path=saved["path"])]
 
     @tool()
     async def export_audio(

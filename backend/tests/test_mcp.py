@@ -2,6 +2,7 @@
 to the app's MCP server, on the app with fake ports, its Worker running. The tools go through the
 app's real routes. One test posts to /mcp over HTTP."""
 
+import base64
 import json
 import re
 import subprocess
@@ -491,10 +492,17 @@ async def test_save_frame_gives_the_path_of_a_png_on_this_mac_of_the_saved_revis
     job = await reviewed(mcp)
     candidate = await manual(mcp, job, *HALO_KABAR)
 
-    saved = await call(mcp, "save_frame", job_id=job["id"], candidate_id=candidate["id"], at=0.5, export_preset_id="small")
-    path = Path(saved["path"])
+    result = await mcp.call_tool(
+        "save_frame", {"job_id": job["id"], "candidate_id": candidate["id"], "at": 0.5, "export_preset_id": "small"}
+    )
+    assert not result.is_error, result.content
+    saved, image = result.content
+    path = Path(json.loads(saved.text)["path"])
     assert path.is_absolute() and path.is_file() and path.suffix == ".png"
     assert path.name == f"{candidate['id']}-00.00.12.png"
+    # The PNG itself, for an agent that may not read the file.
+    assert image.type == "image" and image.mime_type == "image/png"
+    assert base64.b64decode(image.data) == path.read_bytes()
     assert (await call(mcp, "get_job", job_id=job["id"]))["status"] == "review"
     assert "No Export Preset nope" in await fails(
         mcp, "save_frame", job_id=job["id"], candidate_id=candidate["id"], at=0.5, export_preset_id="nope",
